@@ -10,7 +10,7 @@ type Config struct {
 // DefaultConfig returns the default manager configuration
 func DefaultConfig() Config {
 	return Config{
-		Port:  1337,
+		Port:  1338,
 		Lease: DefaultLeaseConfig(),
 	}
 }

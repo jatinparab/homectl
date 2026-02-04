@@ -7,14 +7,17 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 // AgentInfo represents a registered agent
 type AgentInfo struct {
-	Name         string    `json:"name"`
-	IP           string    `json:"ip"`
-	LastSeen     time.Time `json:"last_seen"`
-	RegisteredAt time.Time `json:"registered_at"`
+	Name         string               `json:"name"`
+	IP           string               `json:"ip"`
+	LastSeen     time.Time            `json:"last_seen"`
+	RegisteredAt time.Time            `json:"registered_at"`
+	AppReports   []common.AppReport   `json:"app_reports,omitempty"`
 }
 
 // LeaseManager manages agent leases
@@ -83,7 +86,7 @@ func (lm *LeaseManager) cleanupExpired() {
 }
 
 // Register registers or renews an agent's lease
-func (lm *LeaseManager) Heartbeat(name, ip string) {
+func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -91,15 +94,17 @@ func (lm *LeaseManager) Heartbeat(name, ip string) {
 	if existing, ok := lm.agents[name]; ok {
 		existing.LastSeen = now
 		existing.IP = ip
-		log.Printf("Agent %s renewed lease", name)
+		existing.AppReports = reports
+		log.Printf("Agent %s renewed lease (%d app reports)", name, len(reports))
 	} else {
 		lm.agents[name] = &AgentInfo{
 			Name:         name,
 			IP:           ip,
 			LastSeen:     now,
 			RegisteredAt: now,
+			AppReports:   reports,
 		}
-		log.Printf("Agent %s registered (IP: %s)", name, ip)
+		log.Printf("Agent %s registered (IP: %s, %d app reports)", name, ip, len(reports))
 	}
 }
 
@@ -147,8 +152,9 @@ func (lm *LeaseManager) Stop() {
 
 // HeartbeatRequest is the request body for agent heartbeat
 type HeartbeatRequest struct {
-	Name string `json:"name"`
-	IP   string `json:"ip"`
+	Name    string             `json:"name"`
+	IP      string             `json:"ip"`
+	Reports []common.AppReport `json:"reports,omitempty"`
 }
 
 // HTTP Handlers
@@ -170,7 +176,7 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.leaseManager.Heartbeat(req.Name, req.IP)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

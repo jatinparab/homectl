@@ -36,9 +36,11 @@ type Agent struct {
 	runtime   map[common.AppID]*AppRuntime
 	runtimeMu sync.RWMutex
 
-	// Executor and Restic
-	executor *Executor
-	restic   Restic
+	// Executor, Restic, Traefik, and Ready
+	executor    *Executor
+	restic      Restic
+	traefikSync *TraefikSync
+	readyServer *ReadyServer
 
 	// Connection state
 	connected   bool
@@ -137,6 +139,11 @@ func (a *Agent) tryConnect() {
 		a.executor.docker = a.docker
 	}
 
+	// Initialize traefik sync if not already done
+	if a.traefikSync == nil {
+		a.traefikSync = NewTraefikSync(a.appdataDir, a.name, a.managerClient)
+	}
+
 	a.setConnected(true)
 	log.Printf("Connected to manager at %s", a.managerURL)
 }
@@ -155,19 +162,30 @@ func (a *Agent) IsConnected() bool {
 	return a.connected
 }
 
-// Start starts all background loops (heartbeat, reconnection, reconcile, sensor)
+// Start starts all background loops (heartbeat, reconnection, reconcile, sensor, ready server)
 func (a *Agent) Start() {
-	a.wg.Add(4)
+	a.wg.Add(5)
 
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
 	go a.sensorLoop(a.sensorCtx)
+	go a.readyServerLoop()
 
 	log.Printf("Agent started (heartbeat: %v, retry: %v, reconcile: %v)",
 		a.agentConfig.RenewalInterval,
 		a.agentConfig.RetryInterval,
 		a.agentConfig.ReconcileInterval)
+}
+
+// readyServerLoop runs the ready server for keepalived health checks
+func (a *Agent) readyServerLoop() {
+	defer a.wg.Done()
+
+	a.readyServer = NewReadyServer(a)
+	if err := a.readyServer.Start(); err != nil {
+		log.Printf("Ready server stopped: %s", err)
+	}
 }
 
 // heartbeatLoop sends periodic heartbeats to the manager.
@@ -183,8 +201,7 @@ func (a *Agent) heartbeatLoop() {
 		case <-ticker.C:
 			if a.IsConnected() {
 				reports := a.GetAppReports()
-				fmt.Println(reports)
-				if err := a.managerClient.Heartbeat(a.name, a.ip); err != nil {
+				if err := a.managerClient.Heartbeat(a.name, a.ip, reports); err != nil {
 					log.Printf("Heartbeat failed: %s", err)
 					a.setConnected(false)
 				}
@@ -281,6 +298,13 @@ func (a *Agent) reconcileOnce() {
 			a.executor.Submit(action)
 		}
 	}
+
+	// Sync traefik config
+	if a.traefikSync != nil {
+		if err := a.traefikSync.Sync(); err != nil {
+			log.Printf("Reconcile: traefik sync failed: %s", err)
+		}
+	}
 }
 
 // reconcileApp determines what action to take for an app
@@ -355,6 +379,11 @@ func (a *Agent) Stop() {
 	// Stop executor
 	if a.executor != nil {
 		a.executor.Stop()
+	}
+
+	// Stop ready server
+	if a.readyServer != nil {
+		a.readyServer.Stop()
 	}
 
 	close(a.stopChan)

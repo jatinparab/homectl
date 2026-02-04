@@ -167,6 +167,8 @@ func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "desired":
 		m.handleDesiredApps(w, r, agentID)
+	case "traefik-config":
+		m.handleTraefikConfig(w, r, agentID)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
@@ -183,9 +185,14 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	// Hardcoded desired apps for now
 	response := common.DesiredAppsResponse{
 		Apps: []common.DesiredApp{
-			// {AppID: "adguard", DesiredState: common.DesiredRunning},
+			{AppID: "adguard", DesiredState: common.DesiredRunning},
 			{AppID: "stash", DesiredState: common.DesiredRunning},
 			{AppID: "traefik", DesiredState: common.DesiredRunning},
+			{AppID: "immich", DesiredState: common.DesiredRunning},
+			{AppID: "authentik", DesiredState: common.DesiredRunning},
+			{AppID: "vaultwarden", DesiredState: common.DesiredRunning},
+			{AppID: "budget", DesiredState: common.DesiredRunning},
+			{AppID: "newt", DesiredState: common.DesiredRunning},
 		},
 	}
 
@@ -196,6 +203,25 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		log.Printf("Failed to encode desired apps response: %s", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// handleTraefikConfig returns the traefik config for an agent
+// GET /agents/{id}/traefik-config
+func (m *Manager) handleTraefikConfig(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	config, err := m.GenerateTraefikConfig(agentID)
+	if err != nil {
+		log.Printf("Failed to generate traefik config for %s: %s", agentID, err)
+		http.Error(w, "Failed to generate config", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/yaml")
+	w.Write([]byte(config))
 }
 
 // handleDockerSync returns the docker/v2 folder as a tar.gz archive
