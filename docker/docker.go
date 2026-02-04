@@ -1,15 +1,19 @@
 package docker
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jatinparab/homectl/common"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,9 +48,12 @@ func (l *LocalFileReader) ListDir(path string) ([]string, error) {
 
 type Docker struct {
 	rootDir    string
+	appdataDir string
+	user       string
 	httpClient *http.Client
 	dockerApps map[string]DockerApp
 	fileReader FileReader
+	ctx        context.Context
 }
 
 type DockerApp struct {
@@ -54,15 +61,23 @@ type DockerApp struct {
 	Ports []int
 }
 
-func NewDocker(rootDir string) *Docker {
+func NewDocker(rootDir, appdataDir, user string) *Docker {
 	return &Docker{
-		rootDir: rootDir,
+		rootDir:    rootDir,
+		appdataDir: appdataDir,
+		user:       user,
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second,
 		},
 		dockerApps: make(map[string]DockerApp),
 		fileReader: &LocalFileReader{},
+		ctx:        context.Background(),
 	}
+}
+
+// SetContext sets the context for cancellation
+func (d *Docker) SetContext(ctx context.Context) {
+	d.ctx = ctx
 }
 
 // NewDockerWithFileReader creates a Docker instance with a custom FileReader
@@ -75,15 +90,6 @@ func NewDockerWithFileReader(rootDir string, reader FileReader) *Docker {
 		dockerApps: make(map[string]DockerApp),
 		fileReader: reader,
 	}
-}
-
-// dockerComposeFile represents the structure of a docker-compose.yml file
-type dockerComposeFile struct {
-	Services map[string]dockerComposeService `yaml:"services"`
-}
-
-type dockerComposeService struct {
-	Ports []string `yaml:"ports"`
 }
 
 // parsePort extracts the host port from a port mapping string.
@@ -104,30 +110,90 @@ func parsePort(portStr string) (int, error) {
 	return port, nil
 }
 
-// analyzeDockerComposeContent parses docker-compose content and extracts app info
+// dockerComposeFile represents the structure of a docker-compose.yml file
+type dockerComposeFile struct {
+	Services map[string]dockerComposeService `yaml:"services"`
+}
+
+type dockerComposeService struct {
+	Ports []string `yaml:"ports"`
+}
+
+// analyzeDockerComposeContent parses docker-compose content and extracts app info.
+// Ports are returned in the order they appear in the compose file (first occurrence wins).
 func analyzeDockerComposeContent(appName string, content []byte) (DockerApp, error) {
 	dockerApp := DockerApp{Name: appName}
 
+	// Parse into a typed struct for service details
 	var composeFile dockerComposeFile
 	if err := yaml.Unmarshal(content, &composeFile); err != nil {
 		return DockerApp{}, fmt.Errorf("failed to parse docker compose file: %w", err)
 	}
 
-	// Collect all unique ports from all services
-	portSet := make(map[int]struct{})
-	for _, service := range composeFile.Services {
+	// Also parse into a YAML node tree so we can preserve service order
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return DockerApp{}, fmt.Errorf("failed to parse docker compose file tree: %w", err)
+	}
+
+	// Find the "services" mapping node in document order
+	var servicesNode *yaml.Node
+	if len(root.Content) > 0 {
+		// Root should be a document node with a single mapping child
+		doc := root.Content[0]
+		if doc.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(doc.Content); i += 2 {
+				key := doc.Content[i]
+				val := doc.Content[i+1]
+				if key.Value == "services" && val.Kind == yaml.MappingNode {
+					servicesNode = val
+					break
+				}
+			}
+		}
+	}
+
+	// Fallback: no services node found, preserve old behavior (unordered)
+	if servicesNode == nil {
+		portSet := make(map[int]struct{})
+		for _, service := range composeFile.Services {
+			for _, portMapping := range service.Ports {
+				port, err := parsePort(portMapping)
+				if err != nil {
+					continue
+				}
+				if _, exists := portSet[port]; exists {
+					continue
+				}
+				portSet[port] = struct{}{}
+				dockerApp.Ports = append(dockerApp.Ports, port)
+			}
+		}
+		return dockerApp, nil
+	}
+
+	// Walk services in YAML order and accumulate ports in first-seen order
+	seenPorts := make(map[int]struct{})
+	for i := 0; i+1 < len(servicesNode.Content); i += 2 {
+		keyNode := servicesNode.Content[i]
+		serviceName := keyNode.Value
+
+		service, ok := composeFile.Services[serviceName]
+		if !ok {
+			continue
+		}
+
 		for _, portMapping := range service.Ports {
 			port, err := parsePort(portMapping)
 			if err != nil {
 				continue // Skip invalid port mappings
 			}
-			portSet[port] = struct{}{}
+			if _, exists := seenPorts[port]; exists {
+				continue // Deduplicate while preserving first occurrence order
+			}
+			seenPorts[port] = struct{}{}
+			dockerApp.Ports = append(dockerApp.Ports, port)
 		}
-	}
-
-	// Convert set to slice
-	for port := range portSet {
-		dockerApp.Ports = append(dockerApp.Ports, port)
 	}
 
 	return dockerApp, nil
@@ -254,13 +320,21 @@ func ping(url string) error {
 	return nil
 }
 
-func waitForService(port int, tries int, interval time.Duration) error {
+func waitForService(ctx context.Context, port int, tries int, interval time.Duration) error {
 	url := fmt.Sprintf("http://localhost:%d", port)
 	for i := 0; i < tries; i++ {
-		if err := ping(url); err == nil {
+		if err := ping(url); err != nil {
+			log.Printf("Service %s not ready: %v (try %d of %d)", url, err, i+1, tries)
+		} else {
 			return nil
 		}
-		time.Sleep(interval)
+
+		// Wait with cancellation support
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
 	}
 	return fmt.Errorf("service not ready after %d tries", tries)
 }
@@ -289,16 +363,126 @@ func (d *Docker) GetPorts(service string) ([]int, error) {
 	return app.Ports, nil
 }
 
+// composeEnv returns the environment variables for docker compose commands
+func (d *Docker) composeEnv() []string {
+	env := os.Environ()
+	env = append(env, "APPDATA="+d.appdataDir)
+
+	// Get current user's UID
+	if u, err := user.Current(); err == nil {
+		env = append(env, "LABCTL_USER="+u.Uid)
+	}
+
+	return env
+}
+
 func (d *Docker) RunDockerComposeUp(service string) error {
 	path := filepath.Join(d.rootDir, service, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
 	command := exec.Command("docker", "compose", "-f", path, "up", "-d")
+	command.Env = d.composeEnv()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose up: %s", string(output))
 	}
 
+	// Wait for the service to be ready on its first port
+	ports, err := d.GetPorts(service)
+	if err != nil {
+		// Log but don't fail - service started successfully
+		return nil
+	}
+	if len(ports) > 0 {
+		if err := waitForService(d.ctx, ports[0], 1, 30*time.Second); err != nil {
+			// Log but don't fail - service started, just not responding yet
+			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
+		}
+	}
+
 	return nil
+}
+
+// Start starts a docker compose application
+func (d *Docker) Start(appID string) error {
+	return d.RunDockerComposeUp(appID)
+}
+
+// Stop stops a docker compose application
+func (d *Docker) Stop(appID string) error {
+	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("docker compose file not found: %s", path)
+	}
+	command := exec.Command("docker", "compose", "-f", path, "down")
+	command.Env = d.composeEnv()
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to run docker compose down: %s", string(output))
+	}
+	return nil
+}
+
+// IsRunning checks if a docker compose application is running
+func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
+	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return common.RunningStatusStopped, fmt.Errorf("docker compose file not found: %s", path)
+	}
+
+	// Use docker compose ps to check if containers are running
+	command := exec.Command("docker", "compose", "-f", path, "ps", "--status=running", "-q")
+	command.Env = d.composeEnv()
+	output, err := command.Output()
+	if err != nil {
+		// If command fails, assume not running
+		return common.RunningStatusStopped, nil
+	}
+
+	command = exec.Command("docker", "compose", "-f", path, "ps", "--status=restarting", "-q")
+	command.Env = d.composeEnv()
+	outputRestarting, errRestarting := command.Output()
+	if errRestarting == nil {
+		if len(strings.TrimSpace(string(outputRestarting))) > 0 {
+			return common.RunningStatusRestarting, nil
+		}
+	}
+
+	// If there's any output, at least one container is running
+	if len(strings.TrimSpace(string(output))) > 0 {
+		return common.RunningStatusRunning, nil
+	}
+	return common.RunningStatusStopped, nil
+}
+
+// ListManaged returns a map of app IDs to their running status
+func (d *Docker) ListManaged() (map[string]common.RunningStatus, error) {
+	result := make(map[string]common.RunningStatus)
+
+	entries, err := d.fileReader.ListDir(d.rootDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list directory %s: %w", d.rootDir, err)
+	}
+
+	for _, entry := range entries {
+		// Check if it's a directory (ends with /)
+		if !strings.HasSuffix(entry, "/") {
+			continue
+		}
+
+		appID := strings.TrimSuffix(entry, "/")
+		composePath := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+
+		// Check if docker-compose.yml exists
+		if _, err := d.fileReader.ReadFile(composePath); err != nil {
+			continue // No docker-compose.yml
+		}
+
+		// Check if running
+		running, _ := d.IsRunning(appID)
+		result[appID] = running
+	}
+
+	return result, nil
 }

@@ -17,7 +17,7 @@ import (
 func main() {
 	hostname := utils.GetHostname()
 	repoDir := config.GetGitRepoDir(hostname)
-	port := 8080
+	port := 1337
 
 	mgr := manager.NewManager(repoDir, port)
 
