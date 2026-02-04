@@ -1,6 +1,9 @@
 package manager
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -8,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 // NewServer creates and returns an HTTP server (for graceful shutdown support)
@@ -16,8 +21,10 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/files/", m.handleFiles)
 	mux.HandleFunc("/sync", m.handleSync)
+	mux.HandleFunc("/docker/sync", m.handleDockerSync)
 	mux.HandleFunc("/agents", m.handleListAgents)
 	mux.HandleFunc("/agents/heartbeat", m.handleHeartbeat)
+	mux.HandleFunc("/agents/", m.handleAgentRoutes)
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", m.port),
@@ -141,4 +148,127 @@ func (m *Manager) serveDirectory(w http.ResponseWriter, fullPath, relativePath s
 			fmt.Fprintf(w, "%s\n", entryPath)
 		}
 	}
+}
+
+// handleAgentRoutes handles routes under /agents/{id}/...
+func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
+	// Parse path: /agents/{id}/desired
+	path := strings.TrimPrefix(r.URL.Path, "/agents/")
+	parts := strings.SplitN(path, "/", 2)
+
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	agentID := parts[0]
+	action := parts[1]
+
+	switch action {
+	case "desired":
+		m.handleDesiredApps(w, r, agentID)
+	default:
+		http.Error(w, "Unknown action", http.StatusNotFound)
+	}
+}
+
+// handleDesiredApps returns the desired apps for an agent
+// GET /agents/{id}/desired
+func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Hardcoded desired apps for now
+	response := common.DesiredAppsResponse{
+		Apps: []common.DesiredApp{
+			// {AppID: "adguard", DesiredState: common.DesiredRunning},
+			{AppID: "stash", DesiredState: common.DesiredRunning},
+			{AppID: "traefik", DesiredState: common.DesiredRunning},
+		},
+	}
+
+	log.Printf("Returning desired apps for agent %s: %d apps", agentID, len(response.Apps))
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Failed to encode desired apps response: %s", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// handleDockerSync returns the docker/v2 folder as a tar.gz archive
+// GET /docker/sync
+func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	dockerDir := filepath.Join(m.repoDir, "docker", "v2")
+	if _, err := os.Stat(dockerDir); os.IsNotExist(err) {
+		http.Error(w, "Docker directory not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", "attachment; filename=docker.tar.gz")
+
+	gw := gzip.NewWriter(w)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	err := filepath.Walk(dockerDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Get relative path from dockerDir
+		relPath, err := filepath.Rel(dockerDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip the root directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		// Create tar header
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = relPath
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// If it's a file, write its contents
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			if _, err := io.Copy(tw, file); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("Error creating docker sync archive: %s", err)
+		// Can't send error to client as we've already started writing
+		return
+	}
+
+	log.Printf("Docker sync archive sent successfully")
 }
