@@ -58,6 +58,7 @@ type AppReport struct {
 	LastError     string        `json:"last_error,omitempty"`
 	RestartCount  int           `json:"restart_count"`
 	Quarantined   bool          `json:"quarantined"`
+	Port          int           `json:"port,omitempty"`
 }
 
 // DesiredApp is sent from manager to agent with desired state

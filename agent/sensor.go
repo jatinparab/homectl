@@ -23,6 +23,7 @@ type appStatus struct {
 	appID   string
 	running common.RunningStatus
 	health  common.HealthStatus
+	port    int
 }
 
 // sensorLoop runs the sensor loop that observes docker container state
@@ -87,6 +88,7 @@ func (a *Agent) sample() {
 		rt := a.getOrCreateRuntimeLocked(appID)
 		rt.SetRunning(status.running)
 		rt.SetHealth(status.health)
+		rt.SetPort(status.port)
 		if status.health == common.HealthHealthy {
 			rt.SetLastError("")
 			rt.ResetRestartCount()
@@ -158,6 +160,7 @@ func (a *Agent) checkApp(appID string) appStatus {
 
 	// Health check on first port if available
 	if len(ports) > 0 {
+		status.port = ports[0]
 		status.health = a.healthCheck(ports[0])
 	}
 

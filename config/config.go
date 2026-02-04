@@ -16,6 +16,10 @@ type AgentConfig struct {
 }
 
 func (c *Config) GetManagerURL() string {
+	hostname := utils.GetHostname()
+	if hostname == "Jatins-MacBook-Pro.local" {
+		return "http://localhost:1338"
+	}
 	return c.managerURL
 }
 
@@ -46,7 +50,7 @@ func GetGitRepoDir(hostname string) string {
 
 func NewConfig() *Config {
 	return &Config{
-		managerURL: "http://localhost:1337",
+		managerURL: "http://192.168.1.11:1338",
 		agents: map[string]AgentConfig{
 			"k8s-node-1": {
 				Name:          "k8s-node-1",
@@ -72,3 +76,5 @@ func NewConfig() *Config {
 		},
 	}
 }
+
+var Conf = NewConfig()

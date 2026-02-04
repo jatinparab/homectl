@@ -19,6 +19,7 @@ type AppRuntime struct {
 	Quarantined  bool                 // Set when RestartCount >= MaxRestarts
 	InFlight     bool                 // Action in progress
 	LastError    string               // Last error message
+	Port         int                  // First exposed port (for traefik routing)
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
@@ -78,6 +79,13 @@ func (r *AppRuntime) SetLastError(err string) {
 	r.LastError = err
 }
 
+// SetPort sets the exposed port
+func (r *AppRuntime) SetPort(port int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Port = port
+}
+
 // RunningStatus returns whether the app is running (thread-safe)
 func (r *AppRuntime) RunningStatus() common.RunningStatus {
 	r.mu.RLock()
@@ -126,6 +134,7 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 		Quarantined:  r.Quarantined,
 		InFlight:     r.InFlight,
 		LastError:    r.LastError,
+		Port:         r.Port,
 	}
 }
 
@@ -160,5 +169,6 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		LastError:     r.LastError,
 		RestartCount:  r.RestartCount,
 		Quarantined:   r.Quarantined,
+		Port:          r.Port,
 	}
 }

@@ -395,7 +395,7 @@ func (d *Docker) RunDockerComposeUp(service string) error {
 		return nil
 	}
 	if len(ports) > 0 {
-		if err := waitForService(d.ctx, ports[0], 1, 30*time.Second); err != nil {
+		if err := waitForService(d.ctx, ports[0], 5, 30*time.Second); err != nil {
 			// Log but don't fail - service started, just not responding yet
 			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
 		}
