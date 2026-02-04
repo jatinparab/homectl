@@ -1,0 +1,44 @@
+services:
+  stash:
+    image: stashapp/stash:latest
+    container_name: stash
+    # user: $LABCTL_USER
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "2m"
+    environment:
+      - STASH_STASH=/data/
+      - STASH_GENERATED=/generated/
+      - STASH_METADATA=/metadata/
+      - STASH_CACHE=/cache/
+      ## Adjust below to change default port (9999)
+      - STASH_PORT=9999
+    ports:
+      - 9999:9999
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      ## Adjust below paths (the left part) to your liking.
+      ## E.g. you can change ./config:/root/.stash to ./stash:/root/.stash
+      
+      ## Keep configs, scrapers, and plugins here.
+      - ${APPDATA:?'environment variable not set'}/stash/config:/root/.stash
+      ## Point this at your collection.
+      - stash-library:/data
+      ## This is where your stash's metadata lives
+      - ${APPDATA:?'environment variable not set'}/stash/metadata:/metadata
+      ## Any other cache content.
+      - ${APPDATA:?'environment variable not set'}/stash/cache:/cache
+      ## Where to store binary blob data (scene covers, images)
+      - ${APPDATA:?'environment variable not set'}/stash/blobs:/blobs
+      ## Where to store generated content (screenshots,previews,transcodes,sprites)
+      - ${APPDATA:?'environment variable not set'}/stash/generated:/generated
+
+volumes:
+  stash-library:
+    driver_opts:
+      type: cifs 
+      o: username=jatin,password=${SMB_PASSWORD:?add smb password to .env},uid=1021,gid=100,vers=3.0
+      device: //192.168.1.100/nas-share/qbt/downloads/stash
