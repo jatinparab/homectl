@@ -18,13 +18,29 @@ import (
 // NewServer creates and returns an HTTP server (for graceful shutdown support)
 func (m *Manager) NewServer() *http.Server {
 	mux := http.NewServeMux()
+
+	// Health check
 	mux.HandleFunc("/health", m.handleHealth)
+
+	// File serving
 	mux.HandleFunc("/files/", m.handleFiles)
 	mux.HandleFunc("/sync", m.handleSync)
 	mux.HandleFunc("/docker/sync", m.handleDockerSync)
+
+	// Agent APIs (internal)
 	mux.HandleFunc("/agents", m.handleListAgents)
 	mux.HandleFunc("/agents/heartbeat", m.handleHeartbeat)
 	mux.HandleFunc("/agents/", m.handleAgentRoutes)
+
+	// UI APIs
+	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
+	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
+	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
+	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
+	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppLogs)
+
+	// UI static files (catch-all)
+	mux.Handle("/", m.ServeUI())
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", m.port),
@@ -167,6 +183,8 @@ func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "desired":
 		m.handleDesiredApps(w, r, agentID)
+	case "traefik-config":
+		m.handleTraefikConfig(w, r, agentID)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
@@ -183,9 +201,15 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	// Hardcoded desired apps for now
 	response := common.DesiredAppsResponse{
 		Apps: []common.DesiredApp{
-			// {AppID: "adguard", DesiredState: common.DesiredRunning},
+			{AppID: "adguard", DesiredState: common.DesiredRunning},
 			{AppID: "stash", DesiredState: common.DesiredRunning},
 			{AppID: "traefik", DesiredState: common.DesiredRunning},
+			{AppID: "immich", DesiredState: common.DesiredRunning},
+			{AppID: "authentik", DesiredState: common.DesiredRunning},
+			{AppID: "vaultwarden", DesiredState: common.DesiredRunning},
+			{AppID: "budget", DesiredState: common.DesiredRunning},
+			{AppID: "newt", DesiredState: common.DesiredRunning},
+			{AppID: "jellyfin", DesiredState: common.DesiredRunning},
 		},
 	}
 
@@ -196,6 +220,25 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		log.Printf("Failed to encode desired apps response: %s", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// handleTraefikConfig returns the traefik config for an agent
+// GET /agents/{id}/traefik-config
+func (m *Manager) handleTraefikConfig(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	config, err := m.GenerateTraefikConfig(agentID)
+	if err != nil {
+		log.Printf("Failed to generate traefik config for %s: %s", agentID, err)
+		http.Error(w, "Failed to generate config", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/yaml")
+	w.Write([]byte(config))
 }
 
 // handleDockerSync returns the docker/v2 folder as a tar.gz archive

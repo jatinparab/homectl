@@ -363,8 +363,8 @@ func (d *Docker) GetPorts(service string) ([]int, error) {
 	return app.Ports, nil
 }
 
-// composeEnv returns the environment variables for docker compose commands
-func (d *Docker) composeEnv() []string {
+// ComposeEnv returns the environment variables for docker compose commands
+func (d *Docker) ComposeEnv() []string {
 	env := os.Environ()
 	env = append(env, "APPDATA="+d.appdataDir)
 
@@ -382,7 +382,7 @@ func (d *Docker) RunDockerComposeUp(service string) error {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
 	command := exec.Command("docker", "compose", "-f", path, "up", "-d")
-	command.Env = d.composeEnv()
+	command.Env = d.ComposeEnv()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose up: %s", string(output))
@@ -395,7 +395,7 @@ func (d *Docker) RunDockerComposeUp(service string) error {
 		return nil
 	}
 	if len(ports) > 0 {
-		if err := waitForService(d.ctx, ports[0], 1, 30*time.Second); err != nil {
+		if err := waitForService(d.ctx, ports[0], 5, 30*time.Second); err != nil {
 			// Log but don't fail - service started, just not responding yet
 			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
 		}
@@ -416,7 +416,7 @@ func (d *Docker) Stop(appID string) error {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
 	command := exec.Command("docker", "compose", "-f", path, "down")
-	command.Env = d.composeEnv()
+	command.Env = d.ComposeEnv()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose down: %s", string(output))
@@ -433,7 +433,7 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 
 	// Use docker compose ps to check if containers are running
 	command := exec.Command("docker", "compose", "-f", path, "ps", "--status=running", "-q")
-	command.Env = d.composeEnv()
+	command.Env = d.ComposeEnv()
 	output, err := command.Output()
 	if err != nil {
 		// If command fails, assume not running
@@ -441,7 +441,7 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 	}
 
 	command = exec.Command("docker", "compose", "-f", path, "ps", "--status=restarting", "-q")
-	command.Env = d.composeEnv()
+	command.Env = d.ComposeEnv()
 	outputRestarting, errRestarting := command.Output()
 	if errRestarting == nil {
 		if len(strings.TrimSpace(string(outputRestarting))) > 0 {
