@@ -50,25 +50,25 @@ func GetGitRepoDir(hostname string) string {
 
 func NewConfig() *Config {
 	return &Config{
-		managerURL: "http://192.168.1.11:1338",
+		managerURL: "http://10.42.1.100:1338",
 		agents: map[string]AgentConfig{
 			"k8s-node-1": {
 				Name:          "k8s-node-1",
-				IP:            "192.168.1.101",
+				IP:            "10.42.1.101",
 				User:          "jatin",
 				AppdataDir:    "/mnt/ssd-512/homectl/storage",
 				DockerRootDir: "/mnt/ssd-512/homectl/docker",
 			},
 			"rpi-1": {
 				Name:          "rpi-1",
-				IP:            "192.168.1.102",
+				IP:            "10.42.1.102",
 				User:          "jatin",
 				AppdataDir:    "/home/jatin/homectl/storage",
 				DockerRootDir: "/home/jatin/homectl/docker",
 			},
 			"windranger": {
 				Name:          "windranger",
-				IP:            "192.168.1.103",
+				IP:            "10.42.1.103",
 				User:          "jatin",
 				AppdataDir:    "/home/jatin/homectl/storage",
 				DockerRootDir: "/home/jatin/homectl/docker",

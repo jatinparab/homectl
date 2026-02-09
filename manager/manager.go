@@ -1,5 +1,10 @@
 package manager
 
+import (
+	"net/http"
+	"time"
+)
+
 // Config holds manager configuration
 type Config struct {
 	RepoDir string
@@ -20,6 +25,7 @@ type Manager struct {
 	repoDir      string
 	port         int
 	leaseManager *LeaseManager
+	httpClient   *http.Client
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -37,6 +43,9 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		repoDir:      cfg.RepoDir,
 		port:         cfg.Port,
 		leaseManager: NewLeaseManager(cfg.Lease),
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
