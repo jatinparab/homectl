@@ -18,13 +18,29 @@ import (
 // NewServer creates and returns an HTTP server (for graceful shutdown support)
 func (m *Manager) NewServer() *http.Server {
 	mux := http.NewServeMux()
+
+	// Health check
 	mux.HandleFunc("/health", m.handleHealth)
+
+	// File serving
 	mux.HandleFunc("/files/", m.handleFiles)
 	mux.HandleFunc("/sync", m.handleSync)
 	mux.HandleFunc("/docker/sync", m.handleDockerSync)
+
+	// Agent APIs (internal)
 	mux.HandleFunc("/agents", m.handleListAgents)
 	mux.HandleFunc("/agents/heartbeat", m.handleHeartbeat)
 	mux.HandleFunc("/agents/", m.handleAgentRoutes)
+
+	// UI APIs
+	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
+	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
+	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
+	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
+	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppLogs)
+
+	// UI static files (catch-all)
+	mux.Handle("/", m.ServeUI())
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", m.port),
@@ -193,6 +209,7 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 			{AppID: "vaultwarden", DesiredState: common.DesiredRunning},
 			{AppID: "budget", DesiredState: common.DesiredRunning},
 			{AppID: "newt", DesiredState: common.DesiredRunning},
+			{AppID: "jellyfin", DesiredState: common.DesiredRunning},
 		},
 	}
 

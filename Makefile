@@ -1,4 +1,4 @@
-.PHONY: help build test agent manager clean deploy deploy-manager deploy-1 deploy-2 deploy-3 logs logs-1 logs-2 logs-3 status stop stop-1 stop-2 stop-3 stop-manager stop-all restart-1 restart-2 restart-3 restart-manager sync sync-1 sync-2 sync-3 setup-secrets setup-secrets-1 setup-secrets-2 setup-secrets-3
+.PHONY: help build test agent manager clean deploy deploy-manager deploy-1 deploy-2 deploy-3 logs logs-1 logs-2 logs-3 status stop stop-1 stop-2 stop-3 stop-manager stop-all restart-1 restart-2 restart-3 restart-manager sync sync-1 sync-2 sync-3 setup-secrets setup-secrets-1 setup-secrets-2 setup-secrets-3 build-web web-dev
 
 # Node configuration
 NODE_1_HOST ?= 192.168.50.101
@@ -17,6 +17,8 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  build          Build agent and manager binaries"
+	@echo "  build-web      Build web UI (into manager/ui/dist)"
+	@echo "  web-dev        Run web UI dev server (with proxy to manager)"
 	@echo "  test           Run tests"
 	@echo "  agent          Run agent locally"
 	@echo "  manager        Run manager locally"
@@ -61,7 +63,7 @@ build-agent:
 	@echo "$(GREEN)Building agent (linux/amd64)...$(NC)"
 	GOOS=linux GOARCH=amd64 go build -o ./bin/agent-amd64 ./agent/cmd
 
-build-manager:
+build-manager: build-web
 	@echo "$(GREEN)Building manager (linux/amd64)...$(NC)"
 	GOOS=linux GOARCH=amd64 go build -o ./bin/manager-amd64 ./manager/cmd
 
@@ -128,19 +130,19 @@ sync-manager: build-manager
 deploy: deploy-manager deploy-1 deploy-2 deploy-3
 	@echo "$(GREEN)All services deployed!$(NC)"
 
-deploy-1: sync-1
+deploy-1: stop-1 sync-1
 	@echo "$(GREEN)Deploying agent to node 1...$(NC)"
 	ssh jatin@$(NODE_1_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
-deploy-2: sync-2
+deploy-2: stop-2 sync-2
 	@echo "$(GREEN)Deploying agent to node 2...$(NC)"
 	ssh jatin@$(NODE_2_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
-deploy-3: sync-3
+deploy-3: stop-3 sync-3
 	@echo "$(GREEN)Deploying agent to node 3...$(NC)"
 	ssh jatin@$(NODE_3_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
-deploy-manager: sync-manager
+deploy-manager: stop-manager sync-manager
 	@echo "$(GREEN)Deploying manager...$(NC)"
 	ssh -tt jatin@$(MANAGER_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-manager.sh'
 
@@ -227,7 +229,20 @@ setup-secrets-3:
 	@echo "$(GREEN)Deploying secrets to node 3...$(NC)"
 	./scripts/setup-secrets.sh $(NODE_3_HOST) $(SECRETS_FILE)
 
+# Web UI
+build-web:
+	@echo "$(GREEN)Building web UI...$(NC)"
+	cd web && npm install && npm run build
+	rm -rf manager/ui/dist
+	mkdir -p manager/ui
+	cp -r web/dist manager/ui/
+
+web-dev:
+	@echo "$(GREEN)Starting web dev server...$(NC)"
+	cd web && npm run dev
+
 # Clean
 clean:
 	rm -rf ./bin
+	rm -rf manager/ui/dist
 	go clean -cache
