@@ -114,8 +114,9 @@ func (c *Client) TriggerSync() error {
 
 // HeartbeatRequest is the request body for agent heartbeat
 type HeartbeatRequest struct {
-	Name string `json:"name"`
-	IP   string `json:"ip"`
+	Name    string             `json:"name"`
+	IP      string             `json:"ip"`
+	Reports []common.AppReport `json:"reports,omitempty"`
 }
 
 // AgentInfo represents a registered agent
@@ -126,9 +127,9 @@ type AgentInfo struct {
 	RegisteredAt time.Time `json:"registered_at"`
 }
 
-// Heartbeat sends a heartbeat to the manager
-func (c *Client) Heartbeat(name, ip string) error {
-	req := HeartbeatRequest{Name: name, IP: ip}
+// Heartbeat sends a heartbeat to the manager with app reports
+func (c *Client) Heartbeat(name, ip string, reports []common.AppReport) error {
+	req := HeartbeatRequest{Name: name, IP: ip, Reports: reports}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
@@ -186,6 +187,28 @@ func (c *Client) FetchDesiredApps(agentID string) ([]common.DesiredApp, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	return response.Apps, nil
+}
+
+// FetchTraefikConfig fetches the traefik config for an agent from the manager
+func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
+	url := fmt.Sprintf("%s/agents/%s/traefik-config", c.baseURL, agentID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("fetch traefik config request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("fetch traefik config failed: %s", string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return string(data), nil
 }
 
 // SyncDockerConfigs fetches docker configs from manager and extracts to local directory
