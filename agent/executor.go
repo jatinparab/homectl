@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/docker"
@@ -23,6 +24,7 @@ const (
 	ActionTypeRestart
 	ActionTypeStop
 	ActionTypeQuarantine
+	ActionTypeBackup
 )
 
 func (t ActionType) String() string {
@@ -37,6 +39,8 @@ func (t ActionType) String() string {
 		return "stop"
 	case ActionTypeQuarantine:
 		return "quarantine"
+	case ActionTypeBackup:
+		return "backup"
 	default:
 		return "unknown"
 	}
@@ -71,6 +75,11 @@ func ActionStop(appID common.AppID) Action {
 // ActionQuarantine returns a quarantine action for the app
 func ActionQuarantine(appID common.AppID) Action {
 	return Action{Type: ActionTypeQuarantine, AppID: appID}
+}
+
+// ActionBackup returns a quarantine action for the app
+func ActionBackup(appID common.AppID) Action {
+	return Action{Type: ActionTypeBackup, AppID: appID}
 }
 
 // Executor executes actions on applications
@@ -187,6 +196,8 @@ func (e *Executor) execute(action Action) {
 		err = e.executeStop(appID, rt)
 	case ActionTypeQuarantine:
 		e.executeQuarantine(appID, rt)
+	case ActionTypeBackup:
+		err = e.executeBackup(appID, rt)
 	}
 
 	if err != nil {
@@ -246,4 +257,44 @@ func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
 func (e *Executor) executeQuarantine(appID common.AppID, rt *AppRuntime) {
 	rt.SetQuarantined(true)
 	log.Printf("Executor: QUARANTINED %s (too many restarts)", appID)
+}
+
+// executeBackup runs the restic backup. The global lease is already held (acquired by reconcile).
+// The executor does NOT restart the app — reconcile handles that on its next cycle.
+func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
+	// Step 1: Mark backup in progress
+	rt.SetPhase(common.PhaseBackingUp)
+	e.agent.runtimeMu.Lock()
+	rt.Backup.InProgress = true
+	e.agent.runtimeMu.Unlock()
+
+	log.Printf("Executor: starting backup for %s", appID)
+
+	// Step 2: Run restic backup (serialized via backupMu)
+	e.agent.backupMu.Lock()
+	backupErr := e.restic.Backup(appID)
+	e.agent.backupMu.Unlock()
+
+	// Step 3: Update backup state
+	e.agent.runtimeMu.Lock()
+	if backupErr != nil {
+		rt.Backup.LastError = backupErr.Error()
+		log.Printf("Executor: backup failed for %s: %s", appID, backupErr)
+	} else {
+		rt.Backup.LastBackupAt = time.Now()
+		rt.Backup.LastError = ""
+		log.Printf("Executor: backup completed for %s", appID)
+	}
+	rt.Backup.InProgress = false
+	e.agent.runtimeMu.Unlock()
+
+	// Step 4: Release global backup lease
+	if releaseErr := e.agent.managerClient.ReleaseBackupLease(e.agent.name); releaseErr != nil {
+		log.Printf("Executor: failed to release backup lease for %s: %s", appID, releaseErr)
+	}
+
+	// Step 5: Reset phase — reconcile will restart the app
+	rt.SetPhase(common.PhaseEmpty)
+
+	return backupErr
 }

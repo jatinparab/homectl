@@ -15,6 +15,11 @@ import (
 )
 
 func main() {
+	// Load .env file if present (local dev)
+	if err := utils.LoadEnv(".env"); err != nil {
+		log.Printf("Warning: failed to load .env: %s", err)
+	}
+
 	hostname := utils.GetHostname()
 	repoDir := config.GetGitRepoDir(hostname)
 	port := 1338
