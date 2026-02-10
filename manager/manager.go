@@ -3,6 +3,8 @@ package manager
 import (
 	"net/http"
 	"time"
+
+	"github.com/jatinparab/homectl/config"
 )
 
 // Config holds manager configuration
@@ -26,6 +28,7 @@ type Manager struct {
 	port         int
 	leaseManager *LeaseManager
 	httpClient   *http.Client
+	config       *config.Config
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -46,6 +49,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		config: config.NewConfig(),
 	}
 }
 

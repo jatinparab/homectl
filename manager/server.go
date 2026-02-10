@@ -38,6 +38,10 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
 	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
 	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppLogs)
+	mux.HandleFunc("/api/v1/system-logs", m.handleAPISystemLogSources)
+	mux.HandleFunc("/api/v1/system-logs/", m.handleAPISystemLogStream)
+	mux.HandleFunc("/api/v1/containers", m.handleAPIContainers)
+	mux.HandleFunc("/api/v1/containers/", m.handleAPIContainerLogs)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())

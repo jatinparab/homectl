@@ -1,4 +1,4 @@
-import type { Agent, AppStatus } from './types'
+import type { Agent, AppStatus, NodeContainers } from './types'
 
 const API_BASE = '/api/v1'
 
@@ -16,4 +16,12 @@ export async function fetchApps(): Promise<AppStatus[]> {
 
 export async function fetchAgents(): Promise<Agent[]> {
   return fetchJSON<Agent[]>(`${API_BASE}/agents`)
+}
+
+export async function fetchSystemLogSources(): Promise<string[]> {
+  return fetchJSON<string[]>(`${API_BASE}/system-logs`)
+}
+
+export async function fetchContainers(): Promise<NodeContainers[]> {
+  return fetchJSON<NodeContainers[]>(`${API_BASE}/containers`)
 }
