@@ -1,11 +1,17 @@
 package manager
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
+	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
 )
 
@@ -334,15 +340,16 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the agent
-	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok {
-		http.Error(w, "Node not found", http.StatusNotFound)
+	// Look up agent IP from config
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
 		return
 	}
 
 	// Check if agent is online
-	if time.Since(agent.LastSeen) > 30*time.Second {
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -359,8 +366,8 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy logs from agent
-	agentLogsURL := "http://" + agent.IP + ":8081/logs/" + appID
+	// Proxy logs from agent using config IP
+	agentLogsURL := fmt.Sprintf("http://%s:%d/logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
 	resp, err := m.httpClient.Get(agentLogsURL)
 	if err != nil {
 		// Send error as SSE event
@@ -386,6 +393,292 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				// Parse lines and send as SSE events
+				lines := strings.Split(string(buf[:n]), "\n")
+				for _, line := range lines {
+					if line != "" {
+						w.Write([]byte("data: " + line + "\n\n"))
+					}
+				}
+				flusher.Flush()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+// handleAPISystemLogSources returns a list of available system log sources
+// GET /api/v1/system-logs
+func (m *Manager) handleAPISystemLogSources(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agents := m.leaseManager.ListAgents()
+	now := time.Now()
+
+	sources := []string{"manager"}
+	for _, a := range agents {
+		if now.Sub(a.LastSeen) < 30*time.Second {
+			sources = append(sources, a.Name)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sources)
+}
+
+// handleAPISystemLogStream streams system logs from a source as SSE
+// GET /api/v1/system-logs/{source}
+func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	source := strings.TrimPrefix(r.URL.Path, "/api/v1/system-logs/")
+	source = strings.TrimSuffix(source, "/")
+
+	if source == "" {
+		http.Error(w, "Source required", http.StatusBadRequest)
+		return
+	}
+
+	// Set up SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	if source == "manager" {
+		// Run journalctl locally for manager
+		cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "homectl-manager", "-f", "--output=short-iso", "-n", "100")
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			w.Write([]byte("data: Error creating pipe: " + err.Error() + "\n\n"))
+			flusher.Flush()
+			return
+		}
+
+		if err := cmd.Start(); err != nil {
+			w.Write([]byte("data: Error starting journalctl: " + err.Error() + "\n\n"))
+			flusher.Flush()
+			return
+		}
+
+		done := make(chan struct{})
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				w.Write([]byte("data: " + scanner.Text() + "\n\n"))
+				flusher.Flush()
+			}
+			close(done)
+		}()
+
+		select {
+		case <-r.Context().Done():
+			cmd.Process.Kill()
+		case <-done:
+		}
+		cmd.Wait()
+		return
+	}
+
+	// Proxy to agent
+	agentCfg := m.config.GetAgentConfig(source)
+	if agentCfg == nil {
+		w.Write([]byte("data: Error: source not found in config\n\n"))
+		flusher.Flush()
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/system-logs", agentCfg.IP, agentpkg.ReadyServerPort)
+	resp, err := m.httpClient.Get(agentURL)
+	if err != nil {
+		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
+		flusher.Flush()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+		flusher.Flush()
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				lines := strings.Split(string(buf[:n]), "\n")
+				for _, line := range lines {
+					if line != "" {
+						w.Write([]byte("data: " + line + "\n\n"))
+					}
+				}
+				flusher.Flush()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+// NodeContainers represents containers from a single node
+type NodeContainers struct {
+	Node       string                `json:"node"`
+	Online     bool                  `json:"online"`
+	Containers []agentpkg.ContainerInfo `json:"containers"`
+	Error      string                `json:"error,omitempty"`
+}
+
+// handleAPIContainers returns containers from all agents
+// GET /api/v1/containers
+func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agents := m.leaseManager.ListAgents()
+	now := time.Now()
+
+	results := make([]NodeContainers, len(agents))
+	var wg sync.WaitGroup
+
+	for i, a := range agents {
+		online := now.Sub(a.LastSeen) < 30*time.Second
+		results[i] = NodeContainers{
+			Node:       a.Name,
+			Online:     online,
+			Containers: []agentpkg.ContainerInfo{},
+		}
+
+		if !online {
+			continue
+		}
+
+		agentCfg := m.config.GetAgentConfig(a.Name)
+		if agentCfg == nil {
+			results[i].Error = "not in config"
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, ip string) {
+			defer wg.Done()
+
+			url := fmt.Sprintf("http://%s:%d/containers", ip, agentpkg.ReadyServerPort)
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Get(url)
+			if err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+
+			var containers []agentpkg.ContainerInfo
+			if err := json.Unmarshal(body, &containers); err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+			results[idx].Containers = containers
+		}(i, agentCfg.IP)
+	}
+
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// handleAPIContainerLogs streams container logs from a specific agent as SSE
+// GET /api/v1/containers/{containerId}/logs?node={node}&all=false
+func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract containerId from path: /api/v1/containers/{containerId}/logs
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/containers/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "logs" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	containerID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	showAll := r.URL.Query().Get("all")
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	// Set up SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/container-logs/%s?all=%s", agentCfg.IP, agentpkg.ReadyServerPort, containerID, showAll)
+	resp, err := m.httpClient.Get(agentURL)
+	if err != nil {
+		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
+		flusher.Flush()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+		flusher.Flush()
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {
 					if line != "" {

@@ -26,34 +26,8 @@ fi
 cd "$INSTALL_DIR"
 chmod +x bin/manager
 
-# Create data directory with correct ownership
-sudo mkdir -p /var/lib/homectl
-sudo chown jatin:jatin /var/lib/homectl
-sudo mkdir -p /etc/traefik/dynamic
-
-# Create systemd service file
-echo "Creating systemd service..."
-sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
-[Unit]
-Description=Homectl Manager
-After=network.target
-
-[Service]
-Type=simple
-User=jatin
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/bin/manager
-Restart=always
-RestartSec=10
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=homectl-manager
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# Run privileged setup via helper script
+sudo ${INSTALL_DIR}/scripts/deploy-manager-root.sh
 
 # Reload systemd and restart service
 echo "Reloading systemd..."

@@ -54,7 +54,7 @@ func NewConfig() *Config {
 		agents: map[string]AgentConfig{
 			"k8s-node-1": {
 				Name:          "k8s-node-1",
-				IP:            "10.42.1.101",
+				IP:            "10.42.1.103",
 				User:          "jatin",
 				AppdataDir:    "/mnt/ssd-512/homectl/storage",
 				DockerRootDir: "/mnt/ssd-512/homectl/docker",
@@ -68,7 +68,7 @@ func NewConfig() *Config {
 			},
 			"node-3": {
 				Name:          "node-3",
-				IP:            "10.42.1.103",
+				IP:            "10.42.1.101",
 				User:          "jatin",
 				AppdataDir:    "/home/jatin/homectl/storage",
 				DockerRootDir: "/home/jatin/homectl/docker",

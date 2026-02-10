@@ -41,7 +41,6 @@ type Agent struct {
 	restic      Restic
 	traefikSync *TraefikSync
 	readyServer *ReadyServer
-	logsServer  *LogsServer
 
 	// Connection state
 	connected   bool
@@ -165,14 +164,13 @@ func (a *Agent) IsConnected() bool {
 
 // Start starts all background loops (heartbeat, reconnection, reconcile, sensor, ready server, logs server)
 func (a *Agent) Start() {
-	a.wg.Add(6)
+	a.wg.Add(5)
 
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
 	go a.sensorLoop(a.sensorCtx)
 	go a.readyServerLoop()
-	go a.logsServerLoop()
 
 	log.Printf("Agent started (heartbeat: %v, retry: %v, reconcile: %v)",
 		a.agentConfig.RenewalInterval,
@@ -187,16 +185,6 @@ func (a *Agent) readyServerLoop() {
 	a.readyServer = NewReadyServer(a)
 	if err := a.readyServer.Start(); err != nil {
 		log.Printf("Ready server stopped: %s", err)
-	}
-}
-
-// logsServerLoop runs the logs server for log streaming
-func (a *Agent) logsServerLoop() {
-	defer a.wg.Done()
-
-	a.logsServer = NewLogsServer(a)
-	if err := a.logsServer.Start(); err != nil {
-		log.Printf("Logs server stopped: %s", err)
 	}
 }
 
@@ -396,11 +384,6 @@ func (a *Agent) Stop() {
 	// Stop ready server
 	if a.readyServer != nil {
 		a.readyServer.Stop()
-	}
-
-	// Stop logs server
-	if a.logsServer != nil {
-		a.logsServer.Stop()
 	}
 
 	close(a.stopChan)

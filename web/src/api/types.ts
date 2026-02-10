@@ -30,3 +30,20 @@ export interface Agent {
   registered_at: string
   online: boolean
 }
+
+export interface ContainerInfo {
+  id: string
+  name: string
+  image: string
+  status: string
+  state: string
+  ports: string
+  created: string
+}
+
+export interface NodeContainers {
+  node: string
+  online: boolean
+  containers: ContainerInfo[]
+  error?: string
+}
