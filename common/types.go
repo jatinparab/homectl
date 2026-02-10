@@ -1,5 +1,7 @@
 package common
 
+import "time"
+
 // AppID is a unique identifier for an application
 type AppID string
 
@@ -42,11 +44,14 @@ const (
 type Phase string
 
 const (
-	PhaseEmpty     Phase = "empty"
-	PhaseRestoring Phase = "restoring"
-	PhaseReady     Phase = "ready"
-	PhaseRunning   Phase = "running"
-	PhaseError     Phase = "error"
+	PhaseEmpty          Phase = "empty"
+	PhaseRestoring      Phase = "restoring"
+	PhaseReady          Phase = "ready"
+	PhaseRunning        Phase = "running"
+	PhaseError          Phase = "error"
+	PhaseBackupStopping Phase = "backup_stopping"
+	PhaseBackupStopped  Phase = "backup_stopped"
+	PhaseBackingUp      Phase = "backing_up"
 )
 
 // AppReport is sent from agent to manager in heartbeats
@@ -59,6 +64,15 @@ type AppReport struct {
 	RestartCount  int           `json:"restart_count"`
 	Quarantined   bool          `json:"quarantined"`
 	Port          int           `json:"port,omitempty"`
+	BackupBusy    bool          `json:"backup_busy,omitempty"`
+}
+
+// BackupLeaseResponse is the manager's response to a backup lease request
+type BackupLeaseResponse struct {
+	Granted           bool      `json:"granted"`
+	LeaseExpiresAt    time.Time `json:"lease_expires_at,omitempty"`
+	Holder            string    `json:"holder,omitempty"`
+	RetryAfterSeconds int       `json:"retry_after_seconds,omitempty"`
 }
 
 // DesiredApp is sent from manager to agent with desired state

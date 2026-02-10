@@ -52,6 +52,9 @@ type Agent struct {
 	sensorCtx     context.Context
 	sensorCancel  context.CancelFunc
 	wg            sync.WaitGroup
+
+	// Backup fields
+	backupMu sync.Mutex
 }
 
 // NewAgent creates a new Agent instance
@@ -68,7 +71,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		user:          user,
 		managerClient: client.NewClient(managerURL),
 		runtime:       make(map[common.AppID]*AppRuntime),
-		restic:        NewDummyRestic(),
+		restic:        NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
 		stopChan:      make(chan struct{}),
 		sensorCtx:     sensorCtx,
 		sensorCancel:  sensorCancel,
@@ -309,6 +312,28 @@ func (a *Agent) reconcileOnce() {
 
 // reconcileApp determines what action to take for an app
 func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
+	// === BACKUP PHASE HANDLING (takes priority) ===
+	phase := rt.GetPhase()
+
+	switch phase {
+	case common.PhaseBackupStopping:
+		// Waiting for sensor to confirm container stopped
+		log.Printf("Reconcile: %s in BackupStopping, waiting for sensor confirmation", app.AppID)
+		return ActionNone()
+
+	case common.PhaseBackupStopped:
+		// Container confirmed stopped by sensor — emit backup action
+		log.Printf("Reconcile: %s in BackupStopped, emitting backup action", app.AppID)
+		return ActionBackup(app.AppID)
+
+	case common.PhaseBackingUp:
+		// Backup execution in progress
+		log.Printf("Reconcile: %s in BackingUp, waiting for completion", app.AppID)
+		return ActionNone()
+	}
+
+	// === NORMAL LIFECYCLE ===
+
 	// Desired stopped
 	if app.DesiredState == common.DesiredStopped {
 		if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
@@ -347,7 +372,34 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 		return ActionQuarantine(app.AppID)
 	}
 
+	// Running + healthy: check if backup is due
+	if rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy {
+		if a.shouldBackup(rt) {
+			// Acquire global backup lease BEFORE stopping the app.
+			// If denied, skip — don't stop the app just to fail at lease acquisition.
+			granted, err := a.managerClient.AcquireBackupLease(a.name)
+			if err != nil {
+				log.Printf("Reconcile: %s backup lease request failed: %s", app.AppID, err)
+				return ActionNone()
+			}
+			if !granted {
+				log.Printf("Reconcile: %s backup lease denied, deferring", app.AppID)
+				return ActionNone()
+			}
+			log.Printf("Reconcile: %s backup lease acquired, transitioning to BackupStopping", app.AppID)
+			rt.SetPhase(common.PhaseBackupStopping)
+			return ActionStop(app.AppID)
+		}
+	}
+
 	return ActionNone()
+}
+
+func (a *Agent) shouldBackup(rt *AppRuntime) bool {
+	if rt.Backup.InProgress {
+		return false
+	}
+	return time.Since(rt.Backup.LastBackupAt) > time.Hour
 }
 
 // canRestart checks if an app can be restarted
