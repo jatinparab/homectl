@@ -4,11 +4,19 @@ import { Header } from './components/Header'
 import { AppsTable } from './components/AppsTable'
 import { NodeCards } from './components/NodeCards'
 import { LogPanel } from './components/LogPanel'
+import { SystemLogViewer } from './components/SystemLogViewer'
+import { ContainersSection } from './components/ContainersSection'
+import { ContainerLogPanel } from './components/ContainerLogPanel'
+
+type LogPanelState =
+  | { type: 'app'; node: string; appId: string }
+  | { type: 'container'; node: string; containerId: string; containerName: string }
+  | null
 
 function App() {
   const { data: apps, isLoading } = useApps()
   const { data: agents } = useAgents()
-  const [logPanel, setLogPanel] = useState<{ node: string; appId: string } | null>(null)
+  const [logPanel, setLogPanel] = useState<LogPanelState>(null)
 
   const sortedApps = useMemo(() => {
     if (!apps) return []
@@ -32,8 +40,16 @@ function App() {
     })
   }, [apps])
 
-  const handleShowLogs = (node: string, appId: string) => {
-    setLogPanel({ node, appId })
+  const handleShowAppLogs = (node: string, appId: string) => {
+    setLogPanel({ type: 'app', node, appId })
+  }
+
+  const handleShowContainerLogs = (node: string, containerId: string, containerName: string) => {
+    setLogPanel({ type: 'container', node, containerId, containerName })
+  }
+
+  const handleClosePanel = () => {
+    setLogPanel(null)
   }
 
   return (
@@ -45,15 +61,30 @@ function App() {
 
         {/* Main Apps Table */}
         <h2 className="text-lg font-semibold text-white mb-4">Applications</h2>
-        <AppsTable apps={sortedApps} isLoading={isLoading} onShowLogs={handleShowLogs} />
+        <AppsTable apps={sortedApps} isLoading={isLoading} onShowLogs={handleShowAppLogs} />
+
+        {/* System Logs */}
+        <SystemLogViewer />
+
+        {/* Docker Containers */}
+        <ContainersSection onShowLogs={handleShowContainerLogs} />
       </main>
 
-      {/* Log Side Panel */}
+      {/* App Log Side Panel */}
       <LogPanel
-        isOpen={!!logPanel}
-        onClose={() => setLogPanel(null)}
-        node={logPanel?.node ?? ''}
-        appId={logPanel?.appId ?? ''}
+        isOpen={logPanel?.type === 'app'}
+        onClose={handleClosePanel}
+        node={logPanel?.type === 'app' ? logPanel.node : ''}
+        appId={logPanel?.type === 'app' ? logPanel.appId : ''}
+      />
+
+      {/* Container Log Side Panel */}
+      <ContainerLogPanel
+        isOpen={logPanel?.type === 'container'}
+        onClose={handleClosePanel}
+        node={logPanel?.type === 'container' ? logPanel.node : ''}
+        containerId={logPanel?.type === 'container' ? logPanel.containerId : ''}
+        containerName={logPanel?.type === 'container' ? logPanel.containerName : ''}
       />
     </div>
   )

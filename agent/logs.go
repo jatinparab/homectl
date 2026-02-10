@@ -2,57 +2,35 @@ package agent
 
 import (
 	"bufio"
-	"fmt"
-	"log"
 	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-const (
-	// LogsServerPort is the port for the logs server
-	LogsServerPort = 8081
-)
-
-// LogsServer provides log streaming for docker compose apps
-type LogsServer struct {
-	agent  *Agent
-	server *http.Server
+// LogsHandler provides log streaming handlers for docker compose apps
+type LogsHandler struct {
+	agent *Agent
 }
 
-// NewLogsServer creates a new logs server
-func NewLogsServer(agent *Agent) *LogsServer {
-	return &LogsServer{
+// NewLogsHandler creates a new logs handler
+func NewLogsHandler(agent *Agent) *LogsHandler {
+	return &LogsHandler{
 		agent: agent,
 	}
 }
 
-// Start starts the logs server
-func (ls *LogsServer) Start() error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/logs/", ls.handleLogs)
-
-	ls.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", LogsServerPort),
-		Handler: mux,
-	}
-
-	log.Printf("Logs server starting on :%d", LogsServerPort)
-	return ls.server.ListenAndServe()
-}
-
-// Stop stops the logs server
-func (ls *LogsServer) Stop() error {
-	if ls.server != nil {
-		return ls.server.Close()
-	}
-	return nil
+// RegisterRoutes registers all log-related routes on the given mux
+func (lh *LogsHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/logs/", lh.handleLogs)
+	mux.HandleFunc("/system-logs", lh.handleSystemLogs)
+	mux.HandleFunc("/containers", lh.handleContainers)
+	mux.HandleFunc("/container-logs/", lh.handleContainerLogs)
 }
 
 // handleLogs streams docker compose logs for an app
 // GET /logs/{appId}
-func (ls *LogsServer) handleLogs(w http.ResponseWriter, r *http.Request) {
+func (lh *LogsHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -67,19 +45,19 @@ func (ls *LogsServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ls.agent == nil || ls.agent.docker == nil {
+	if lh.agent == nil || lh.agent.docker == nil {
 		http.Error(w, "Agent not connected", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Get the docker compose file path
-	composePath := filepath.Join(ls.agent.dockerRootDir, appID, "docker-compose.yml")
+	composePath := filepath.Join(lh.agent.dockerRootDir, appID, "docker-compose.yml")
 
 	// Execute docker compose logs -f --tail=100
 	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", composePath, "logs", "-f", "--tail=100")
 
 	// Set environment variables including APPDATA
-	cmd.Env = ls.agent.docker.ComposeEnv()
+	cmd.Env = lh.agent.docker.ComposeEnv()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -130,6 +108,57 @@ func (ls *LogsServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Wait for context cancellation or command completion
+	select {
+	case <-r.Context().Done():
+		cmd.Process.Kill()
+	case <-done:
+	}
+
+	cmd.Wait()
+}
+
+// handleSystemLogs streams journalctl logs for the homectl-agent service
+// GET /system-logs
+func (lh *LogsHandler) handleSystemLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "homectl-agent", "-f", "--output=short-iso", "-n", "100")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, "Failed to create stdout pipe: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		http.Error(w, "Failed to start journalctl: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			w.Write([]byte(scanner.Text() + "\n"))
+			flusher.Flush()
+		}
+		close(done)
+	}()
+
 	select {
 	case <-r.Context().Done():
 		cmd.Process.Kill()

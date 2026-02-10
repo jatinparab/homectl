@@ -144,7 +144,7 @@ deploy-3: stop-3 sync-3
 
 deploy-manager: stop-manager sync-manager
 	@echo "$(GREEN)Deploying manager...$(NC)"
-	ssh -tt jatin@$(MANAGER_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-manager.sh'
+	ssh jatin@$(MANAGER_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-manager.sh'
 
 # Logs
 logs:
@@ -206,7 +206,7 @@ stop-3:
 
 stop-manager:
 	@echo "$(YELLOW)Stopping manager...$(NC)"
-	ssh -tt jatin@$(MANAGER_HOST) 'sudo systemctl stop homectl-manager'
+	ssh jatin@$(MANAGER_HOST) 'sudo systemctl stop homectl-manager'
 
 stop-all: stop-manager stop
 	@echo "$(GREEN)All services stopped!$(NC)"
