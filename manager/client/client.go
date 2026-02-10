@@ -211,6 +211,46 @@ func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
 	return string(data), nil
 }
 
+// AcquireBackupLease requests a backup lease from the manager.
+// Returns true if the lease was granted.
+func (c *Client) AcquireBackupLease(agentID string) (bool, error) {
+	url := fmt.Sprintf("%s/backup/lease?agent_id=%s", c.baseURL, agentID)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return false, fmt.Errorf("backup lease request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("backup lease request failed: %s", string(body))
+	}
+
+	var leaseResp common.BackupLeaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&leaseResp); err != nil {
+		return false, fmt.Errorf("failed to decode backup lease response: %w", err)
+	}
+
+	return leaseResp.Granted, nil
+}
+
+// ReleaseBackupLease releases the backup lease held by this agent.
+func (c *Client) ReleaseBackupLease(agentID string) error {
+	url := fmt.Sprintf("%s/backup/lease/release?agent_id=%s", c.baseURL, agentID)
+	resp, err := c.httpClient.Post(url, "application/json", nil)
+	if err != nil {
+		return fmt.Errorf("backup lease release request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("backup lease release failed: %s", string(body))
+	}
+
+	return nil
+}
+
 // SyncDockerConfigs fetches docker configs from manager and extracts to local directory
 func (c *Client) SyncDockerConfigs(destDir string) error {
 	// Fetch the tar.gz archive

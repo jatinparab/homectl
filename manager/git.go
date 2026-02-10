@@ -27,5 +27,19 @@ func (m *Manager) GitSync() error {
 	}
 
 	log.Printf("Git sync completed: %s", strings.TrimSpace(string(output)))
+
+	// Decrypt secrets after sync (.env.enc → .env files)
+	decryptScript := filepath.Join(m.repoDir, "scripts", "decrypt-secrets")
+	if _, err := os.Stat(decryptScript); err == nil {
+		decryptCmd := exec.Command(decryptScript)
+		decryptCmd.Dir = m.repoDir
+		decryptOutput, err := decryptCmd.CombinedOutput()
+		if err != nil {
+			log.Printf("Warning: decrypt-secrets failed: %s, output: %s", err, string(decryptOutput))
+		} else {
+			log.Printf("Secrets decrypted: %s", strings.TrimSpace(string(decryptOutput)))
+		}
+	}
+
 	return nil
 }

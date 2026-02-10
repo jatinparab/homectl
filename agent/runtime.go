@@ -7,11 +7,18 @@ import (
 	"github.com/jatinparab/homectl/common"
 )
 
+type BackupState struct {
+	LastBackupAt time.Time
+	InProgress   bool
+	LastError    string
+}
+
 // AppRuntime tracks the runtime state of a single application
 type AppRuntime struct {
 	mu sync.RWMutex
 
 	AppID        common.AppID
+	Phase        common.Phase         // Stored lifecycle phase
 	Running      common.RunningStatus // From sensor: is container running?
 	Health       common.HealthStatus  // From health check
 	LastSeen     time.Time            // Last time sensor saw this app
@@ -20,6 +27,7 @@ type AppRuntime struct {
 	InFlight     bool                 // Action in progress
 	LastError    string               // Last error message
 	Port         int                  // First exposed port (for traefik routing)
+	Backup       BackupState
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
@@ -27,7 +35,24 @@ func NewAppRuntime(appID common.AppID) *AppRuntime {
 	return &AppRuntime{
 		AppID:  appID,
 		Health: common.HealthUnknown,
+		Backup: BackupState{
+			LastBackupAt: time.Now(), // Defer first backup by 1 hour
+		},
 	}
+}
+
+// SetPhase updates the lifecycle phase
+func (r *AppRuntime) SetPhase(phase common.Phase) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Phase = phase
+}
+
+// GetPhase returns the current lifecycle phase (thread-safe)
+func (r *AppRuntime) GetPhase() common.Phase {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Phase
 }
 
 // SetRunning updates the running state
@@ -127,6 +152,7 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 	defer r.mu.RUnlock()
 	return AppRuntime{
 		AppID:        r.AppID,
+		Phase:        r.Phase,
 		Running:      r.Running,
 		Health:       r.Health,
 		LastSeen:     r.LastSeen,
@@ -135,6 +161,7 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 		InFlight:     r.InFlight,
 		LastError:    r.LastError,
 		Port:         r.Port,
+		Backup:       r.Backup,
 	}
 }
 
@@ -154,11 +181,15 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		observed = common.ObservedError
 	}
 
-	phase := common.PhaseEmpty
-	if r.Running == common.RunningStatusRunning {
-		phase = common.PhaseRunning
-	} else if r.LastError != "" {
-		phase = common.PhaseError
+	phase := r.Phase
+	if phase == "" || phase == common.PhaseEmpty {
+		if r.Running == common.RunningStatusRunning {
+			phase = common.PhaseRunning
+		} else if r.LastError != "" {
+			phase = common.PhaseError
+		} else {
+			phase = common.PhaseEmpty
+		}
 	}
 
 	return common.AppReport{
@@ -170,5 +201,6 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		RestartCount:  r.RestartCount,
 		Quarantined:   r.Quarantined,
 		Port:          r.Port,
+		BackupBusy:    r.Backup.InProgress,
 	}
 }

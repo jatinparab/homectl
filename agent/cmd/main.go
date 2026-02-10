@@ -8,9 +8,15 @@ import (
 	"syscall"
 
 	"github.com/jatinparab/homectl/agent"
+	"github.com/jatinparab/homectl/utils"
 )
 
 func main() {
+	// Load .env file if present (local dev)
+	if err := utils.LoadEnv(".env"); err != nil {
+		log.Printf("Warning: failed to load .env: %s", err)
+	}
+
 	a, err := agent.Init()
 	if err != nil {
 		log.Fatalf("Failed to initialize agent: %s", err)

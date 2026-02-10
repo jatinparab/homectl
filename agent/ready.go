@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
@@ -33,6 +36,9 @@ func (rs *ReadyServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ready", rs.handleReady)
 	mux.HandleFunc("/health", rs.handleHealth)
+
+	// Backup trigger endpoint
+	mux.HandleFunc("/backup/", rs.handleTriggerBackup)
 
 	// Register logs, system-logs, containers, container-logs routes
 	logsHandler := NewLogsHandler(rs.agent)
@@ -72,6 +78,37 @@ func (rs *ReadyServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(fmt.Sprintf("not ready: %s\n", message)))
 	}
+}
+
+// handleTriggerBackup triggers an immediate backup for an app
+// POST /backup/{appId}
+func (rs *ReadyServer) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	appID := strings.TrimPrefix(r.URL.Path, "/backup/")
+	if appID == "" {
+		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+
+	rt := rs.agent.getRuntime(common.AppID(appID))
+	if rt == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	// Reset LastBackupAt to zero so shouldBackup() returns true immediately
+	rs.agent.runtimeMu.Lock()
+	rt.Backup.LastBackupAt = time.Time{}
+	rs.agent.runtimeMu.Unlock()
+
+	log.Printf("Backup triggered for %s via API", appID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "backup_triggered"})
 }
 
 // checkTraefikReady checks if traefik app is running and healthy

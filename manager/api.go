@@ -316,6 +316,82 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// handleAPIAppRoutes dispatches /api/v1/apps/{appId}/... sub-routes
+func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	switch parts[1] {
+	case "logs":
+		m.handleAPIAppLogs(w, r)
+	case "backup":
+		m.handleAPITriggerBackup(w, r)
+	default:
+		http.Error(w, "Unknown action", http.StatusNotFound)
+	}
+}
+
+// handleAPITriggerBackup proxies a backup trigger request to the appropriate agent
+// POST /api/v1/apps/{appId}/backup?node={nodeName}
+func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract appId from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	// Check if agent is online
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Forward to agent's ready server
+	agentURL := fmt.Sprintf("http://%s:%d/backup/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
 // handleAPIAppLogs streams logs from an agent for a specific app via SSE
 // GET /api/v1/apps/{appId}/logs?node={nodeName}
 func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
@@ -541,10 +617,10 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 
 // NodeContainers represents containers from a single node
 type NodeContainers struct {
-	Node       string                `json:"node"`
-	Online     bool                  `json:"online"`
+	Node       string                   `json:"node"`
+	Online     bool                     `json:"online"`
 	Containers []agentpkg.ContainerInfo `json:"containers"`
-	Error      string                `json:"error,omitempty"`
+	Error      string                   `json:"error,omitempty"`
 }
 
 // handleAPIContainers returns containers from all agents

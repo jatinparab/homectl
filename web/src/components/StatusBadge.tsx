@@ -1,34 +1,37 @@
-import type { ObservedState, HealthStatus } from '../api/types'
+import type { ObservedState, HealthStatus } from "../api/types";
 
 const statusColors: Record<ObservedState, string> = {
-  running: 'bg-green-500',
-  stopped: 'bg-gray-500',
-  restarting: 'bg-yellow-500',
-  error: 'bg-red-500',
-  unknown: 'bg-gray-500',
-}
+  running: "bg-green-500",
+  stopped: "bg-gray-500",
+  restarting: "bg-yellow-500",
+  error: "bg-red-500",
+  unknown: "bg-gray-500",
+};
 
 const healthColors: Record<HealthStatus, string> = {
-  healthy: 'bg-green-500',
-  unhealthy: 'bg-red-500',
-  unknown: 'bg-yellow-500',
-}
+  healthy: "bg-green-500",
+  unhealthy: "bg-red-500",
+  unknown: "bg-yellow-500",
+};
 
 const phaseColors: Record<string, string> = {
-  running: 'bg-green-500',
-  ready: 'bg-blue-500',
-  restoring: 'bg-yellow-500',
-  error: 'bg-red-500',
-  empty: 'bg-gray-500',
-}
+  running: "bg-green-500",
+  ready: "bg-blue-500",
+  restoring: "bg-yellow-500",
+  error: "bg-red-500",
+  empty: "bg-gray-500",
+  backup_stopping: "bg-amber-500",
+  backup_stopped: "bg-amber-500",
+  backing_up: "bg-amber-500",
+};
 
 const desiredColors: Record<string, string> = {
-  running: 'bg-green-600',
-  stopped: 'bg-gray-600',
-}
+  running: "bg-green-600",
+  stopped: "bg-gray-600",
+};
 
 interface StatusBadgeProps {
-  status: ObservedState
+  status: ObservedState;
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
@@ -38,11 +41,11 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     >
       {status}
     </span>
-  )
+  );
 }
 
 interface HealthBadgeProps {
-  health: HealthStatus
+  health: HealthStatus;
 }
 
 export function HealthBadge({ health }: HealthBadgeProps) {
@@ -52,62 +55,62 @@ export function HealthBadge({ health }: HealthBadgeProps) {
     >
       {health}
     </span>
-  )
+  );
 }
 
 interface PhaseBadgeProps {
-  phase: string
+  phase: string;
 }
 
 export function PhaseBadge({ phase }: PhaseBadgeProps) {
   if (!phase) {
-    return <span className="text-gray-500">-</span>
+    return <span className="text-gray-500">-</span>;
   }
-  const color = phaseColors[phase] || 'bg-gray-500'
+  const color = phaseColors[phase] || "bg-gray-500";
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
     >
       {phase}
     </span>
-  )
+  );
 }
 
 interface DesiredBadgeProps {
-  state: string
+  state: string;
 }
 
 export function DesiredBadge({ state }: DesiredBadgeProps) {
-  const color = desiredColors[state] || 'bg-gray-600'
+  const color = desiredColors[state] || "bg-gray-600";
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
     >
       {state}
     </span>
-  )
+  );
 }
 
 const containerStateColors: Record<string, string> = {
-  running: 'bg-green-500',
-  exited: 'bg-red-500',
-  restarting: 'bg-yellow-500',
-  created: 'bg-gray-500',
-  paused: 'bg-yellow-500',
-  dead: 'bg-red-500',
-}
+  running: "bg-green-500",
+  exited: "bg-red-500",
+  restarting: "bg-yellow-500",
+  created: "bg-gray-500",
+  paused: "bg-yellow-500",
+  dead: "bg-red-500",
+};
 
 interface ContainerStateBadgeProps {
-  state: string
+  state: string;
 }
 
 export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
-  const color = containerStateColors[state] || 'bg-gray-500'
+  const color = containerStateColors[state] || "bg-gray-500";
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
     >
       {state}
     </span>
-  )
+  );
 }
