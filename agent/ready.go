@@ -34,6 +34,10 @@ func (rs *ReadyServer) Start() error {
 	mux.HandleFunc("/ready", rs.handleReady)
 	mux.HandleFunc("/health", rs.handleHealth)
 
+	// Register logs, system-logs, containers, container-logs routes
+	logsHandler := NewLogsHandler(rs.agent)
+	logsHandler.RegisterRoutes(mux)
+
 	rs.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", ReadyServerPort),
 		Handler: mux,

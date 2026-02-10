@@ -87,3 +87,27 @@ export function DesiredBadge({ state }: DesiredBadgeProps) {
     </span>
   )
 }
+
+const containerStateColors: Record<string, string> = {
+  running: 'bg-green-500',
+  exited: 'bg-red-500',
+  restarting: 'bg-yellow-500',
+  created: 'bg-gray-500',
+  paused: 'bg-yellow-500',
+  dead: 'bg-red-500',
+}
+
+interface ContainerStateBadgeProps {
+  state: string
+}
+
+export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
+  const color = containerStateColors[state] || 'bg-gray-500'
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
+    >
+      {state}
+    </span>
+  )
+}
