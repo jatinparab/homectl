@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
@@ -32,12 +33,16 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/agents/heartbeat", m.handleHeartbeat)
 	mux.HandleFunc("/agents/", m.handleAgentRoutes)
 
+	// Backup lease endpoints
+	mux.HandleFunc("/backup/lease", m.handleBackupLease)
+	mux.HandleFunc("/backup/lease/release", m.handleBackupLeaseRelease)
+
 	// UI APIs
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
 	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
-	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppLogs)
+	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppRoutes)
 	mux.HandleFunc("/api/v1/system-logs", m.handleAPISystemLogSources)
 	mux.HandleFunc("/api/v1/system-logs/", m.handleAPISystemLogStream)
 	mux.HandleFunc("/api/v1/containers", m.handleAPIContainers)
@@ -170,6 +175,62 @@ func (m *Manager) serveDirectory(w http.ResponseWriter, fullPath, relativePath s
 	}
 }
 
+// handleBackupLease handles backup lease acquisition requests
+// GET /backup/lease?agent_id=X
+func (m *Manager) handleBackupLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "agent_id is required", http.StatusBadRequest)
+		return
+	}
+
+	granted := m.TryAcquireBackupLease(agentID)
+
+	response := common.BackupLeaseResponse{
+		Granted: granted,
+	}
+
+	if granted {
+		m.backupLease.mu.Lock()
+		response.LeaseExpiresAt = m.backupLease.ExpiresAt
+		m.backupLease.mu.Unlock()
+	} else {
+		m.backupLease.mu.Lock()
+		response.Holder = m.backupLease.Holder
+		remaining := time.Until(m.backupLease.ExpiresAt)
+		response.RetryAfterSeconds = int(remaining.Seconds()) + 1
+		m.backupLease.mu.Unlock()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleBackupLeaseRelease handles backup lease release requests
+// POST /backup/lease/release?agent_id=X
+func (m *Manager) handleBackupLeaseRelease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "agent_id is required", http.StatusBadRequest)
+		return
+	}
+
+	m.ReleaseBackupLease(agentID)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "released"})
+}
+
 // handleAgentRoutes handles routes under /agents/{id}/...
 func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
 	// Parse path: /agents/{id}/desired
@@ -208,12 +269,12 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 			{AppID: "adguard", DesiredState: common.DesiredRunning},
 			{AppID: "stash", DesiredState: common.DesiredRunning},
 			{AppID: "traefik", DesiredState: common.DesiredRunning},
-			{AppID: "immich", DesiredState: common.DesiredRunning},
-			{AppID: "authentik", DesiredState: common.DesiredRunning},
-			{AppID: "vaultwarden", DesiredState: common.DesiredRunning},
-			{AppID: "budget", DesiredState: common.DesiredRunning},
-			{AppID: "newt", DesiredState: common.DesiredRunning},
-			{AppID: "jellyfin", DesiredState: common.DesiredRunning},
+			// {AppID: "immich", DesiredState: common.DesiredRunning},
+			// {AppID: "authentik", DesiredState: common.DesiredRunning},
+			// {AppID: "vaultwarden", DesiredState: common.DesiredRunning},
+			// {AppID: "budget", DesiredState: common.DesiredRunning},
+			// {AppID: "newt", DesiredState: common.DesiredRunning},
+			// {AppID: "jellyfin", DesiredState: common.DesiredRunning},
 		},
 	}
 

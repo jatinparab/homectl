@@ -13,11 +13,11 @@ import (
 
 // AgentInfo represents a registered agent
 type AgentInfo struct {
-	Name         string               `json:"name"`
-	IP           string               `json:"ip"`
-	LastSeen     time.Time            `json:"last_seen"`
-	RegisteredAt time.Time            `json:"registered_at"`
-	AppReports   []common.AppReport   `json:"app_reports,omitempty"`
+	Name         string             `json:"name"`
+	IP           string             `json:"ip"`
+	LastSeen     time.Time          `json:"last_seen"`
+	RegisteredAt time.Time          `json:"registered_at"`
+	AppReports   []common.AppReport `json:"app_reports,omitempty"`
 }
 
 // LeaseManager manages agent leases
@@ -177,6 +177,9 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports)
+
+	// Extend backup lease if this agent is the holder
+	m.ExtendBackupLeaseIfHolder(req.Name)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

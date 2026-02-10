@@ -1,34 +1,51 @@
-import { useQuery } from '@tanstack/react-query'
-import { fetchApps, fetchAgents, fetchSystemLogSources, fetchContainers } from './client'
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchApps,
+  fetchAgents,
+  fetchSystemLogSources,
+  fetchContainers,
+  triggerBackup,
+} from "./client";
 
 export function useApps() {
   return useQuery({
-    queryKey: ['apps'],
+    queryKey: ["apps"],
     queryFn: fetchApps,
     refetchInterval: 2000,
-  })
+  });
 }
 
 export function useAgents() {
   return useQuery({
-    queryKey: ['agents'],
+    queryKey: ["agents"],
     queryFn: fetchAgents,
     refetchInterval: 2000,
-  })
+  });
 }
 
 export function useSystemLogSources() {
   return useQuery({
-    queryKey: ['system-log-sources'],
+    queryKey: ["system-log-sources"],
     queryFn: fetchSystemLogSources,
     refetchInterval: 10000,
-  })
+  });
 }
 
 export function useContainers() {
   return useQuery({
-    queryKey: ['containers'],
+    queryKey: ["containers"],
     queryFn: fetchContainers,
     refetchInterval: 5000,
-  })
+  });
+}
+
+export function useTriggerBackup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
+      triggerBackup(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
 }

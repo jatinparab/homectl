@@ -89,9 +89,25 @@ func (a *Agent) sample() {
 		rt.SetRunning(status.running)
 		rt.SetHealth(status.health)
 		rt.SetPort(status.port)
+
+		// Advance backup phase: container confirmed stopped → BackupStopped
+		if status.running == common.RunningStatusStopped {
+			if rt.GetPhase() == common.PhaseBackupStopping {
+				rt.SetPhase(common.PhaseBackupStopped)
+				log.Printf("Sensor: %s container confirmed stopped, advancing to BackupStopped", status.appID)
+			}
+		}
+
 		if status.health == common.HealthHealthy {
 			rt.SetLastError("")
 			rt.ResetRestartCount()
+			// Update phase to running if not in a backup phase
+			currentPhase := rt.GetPhase()
+			if currentPhase != common.PhaseBackupStopping &&
+				currentPhase != common.PhaseBackupStopped &&
+				currentPhase != common.PhaseBackingUp {
+				rt.SetPhase(common.PhaseRunning)
+			}
 		}
 	}
 
