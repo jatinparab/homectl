@@ -32,6 +32,13 @@ func main() {
 		log.Printf("Warning: Initial git sync failed: %s (continuing anyway)", err)
 	}
 
+	// Discover apps from docker/v2 and start reconcile loop
+	mgr.DiscoverApps()
+
+	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
+	mgr.SetReconcileCancel(reconcileCancel)
+	mgr.StartReconcileLoop(reconcileCtx)
+
 	// Start server in goroutine
 	server := mgr.NewServer()
 	go func() {

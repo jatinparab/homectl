@@ -27,6 +27,7 @@ type AppRuntime struct {
 	InFlight     bool                 // Action in progress
 	LastError    string               // Last error message
 	Port         int                  // First exposed port (for traefik routing)
+	Progress     *common.ResticProgress // Restic backup/restore progress
 	Backup       BackupState
 }
 
@@ -111,6 +112,20 @@ func (r *AppRuntime) SetPort(port int) {
 	r.Port = port
 }
 
+// SetProgress sets the restic progress
+func (r *AppRuntime) SetProgress(p *common.ResticProgress) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Progress = p
+}
+
+// ClearProgress clears the restic progress
+func (r *AppRuntime) ClearProgress() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Progress = nil
+}
+
 // RunningStatus returns whether the app is running (thread-safe)
 func (r *AppRuntime) RunningStatus() common.RunningStatus {
 	r.mu.RLock()
@@ -161,6 +176,7 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 		InFlight:     r.InFlight,
 		LastError:    r.LastError,
 		Port:         r.Port,
+		Progress:     r.Progress,
 		Backup:       r.Backup,
 	}
 }
@@ -202,5 +218,6 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		Quarantined:   r.Quarantined,
 		Port:          r.Port,
 		BackupBusy:    r.Backup.InProgress,
+		Progress:      r.Progress,
 	}
 }

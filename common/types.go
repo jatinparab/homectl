@@ -54,6 +54,15 @@ const (
 	PhaseBackingUp      Phase = "backing_up"
 )
 
+// ResticProgress tracks progress of a restic backup/restore operation
+type ResticProgress struct {
+	PercentDone float64 `json:"percent_done"`
+	TotalBytes  uint64  `json:"total_bytes"`
+	BytesDone   uint64  `json:"bytes_done"`
+	TotalFiles  uint64  `json:"total_files"`
+	FilesDone   uint64  `json:"files_done"`
+}
+
 // AppReport is sent from agent to manager in heartbeats
 type AppReport struct {
 	AppID         AppID         `json:"app_id"`
@@ -64,7 +73,8 @@ type AppReport struct {
 	RestartCount  int           `json:"restart_count"`
 	Quarantined   bool          `json:"quarantined"`
 	Port          int           `json:"port,omitempty"`
-	BackupBusy    bool          `json:"backup_busy,omitempty"`
+	BackupBusy    bool            `json:"backup_busy,omitempty"`
+	Progress      *ResticProgress `json:"progress,omitempty"`
 }
 
 // BackupLeaseResponse is the manager's response to a backup lease request
