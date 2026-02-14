@@ -178,6 +178,12 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports)
 
+	// Update app registry with reported state
+	now := time.Now()
+	for _, report := range req.Reports {
+		m.appRegistry.UpdateFromReport(report, req.Name, now)
+	}
+
 	// Extend backup lease if this agent is the holder
 	m.ExtendBackupLeaseIfHolder(req.Name)
 

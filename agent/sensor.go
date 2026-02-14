@@ -178,6 +178,9 @@ func (a *Agent) checkApp(appID string) appStatus {
 	if len(ports) > 0 {
 		status.port = ports[0]
 		status.health = a.healthCheck(ports[0])
+	} else {
+		// No ports exposed: if container is running, consider it healthy
+		status.health = common.HealthHealthy
 	}
 
 	return status

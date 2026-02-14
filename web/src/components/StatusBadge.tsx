@@ -1,4 +1,12 @@
-import type { ObservedState, HealthStatus } from "../api/types";
+import type { ObservedState, HealthStatus, ResticProgress } from "../api/types";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / Math.pow(1024, i);
+  return `${value.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+}
 
 const statusColors: Record<ObservedState, string> = {
   running: "bg-green-500",
@@ -60,13 +68,40 @@ export function HealthBadge({ health }: HealthBadgeProps) {
 
 interface PhaseBadgeProps {
   phase: string;
+  progress?: ResticProgress;
 }
 
-export function PhaseBadge({ phase }: PhaseBadgeProps) {
+export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
   if (!phase) {
     return <span className="text-gray-500">-</span>;
   }
   const color = phaseColors[phase] || "bg-gray-500";
+
+  if (progress && (phase === "restoring" || phase === "backing_up")) {
+    const pct = Math.round(progress.percent_done * 100);
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
+        >
+          {phase}
+        </span>
+        <span className="inline-flex items-center gap-1 text-xs text-gray-300">
+          <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
+            <span
+              className="block h-full bg-yellow-400 rounded-full transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </span>
+          <span>{pct}%</span>
+          <span className="text-gray-500">
+            {formatBytes(progress.bytes_done)} / {formatBytes(progress.total_bytes)}
+          </span>
+        </span>
+      </span>
+    );
+  }
+
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}

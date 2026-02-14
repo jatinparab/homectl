@@ -1,11 +1,15 @@
 package manager
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 )
 
@@ -35,12 +39,14 @@ func DefaultConfig() Config {
 
 // Manager handles git sync and file serving for agents
 type Manager struct {
-	repoDir      string
-	port         int
-	leaseManager *LeaseManager
-	httpClient   *http.Client
-	config       *config.Config
-	backupLease  BackupLease
+	repoDir         string
+	port            int
+	leaseManager    *LeaseManager
+	httpClient      *http.Client
+	config          *config.Config
+	backupLease     BackupLease
+	appRegistry     *AppRegistry
+	reconcileCancel context.CancelFunc
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -61,7 +67,8 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		config: config.NewConfig(),
+		config:      config.NewConfig(),
+		appRegistry: NewAppRegistry(),
 	}
 }
 
@@ -80,11 +87,53 @@ func (m *Manager) LeaseManager() *LeaseManager {
 	return m.leaseManager
 }
 
+// SetReconcileCancel sets the cancel function for the reconcile loop.
+func (m *Manager) SetReconcileCancel(cancel context.CancelFunc) {
+	m.reconcileCancel = cancel
+}
+
 // Stop stops the manager and cleans up resources
 func (m *Manager) Stop() {
+	if m.reconcileCancel != nil {
+		m.reconcileCancel()
+	}
 	if m.leaseManager != nil {
 		m.leaseManager.Stop()
 	}
+}
+
+// DiscoverApps scans docker/v2 subdirectories for apps and registers them.
+// By default, traefik and adguard have DesiredRunning state, others have DesiredStopped.
+// The Register method is idempotent so repeated calls are safe.
+func (m *Manager) DiscoverApps() {
+	dockerV2Dir := filepath.Join(m.repoDir, "docker", "v2")
+	entries, err := os.ReadDir(dockerV2Dir)
+	if err != nil {
+		log.Printf("Failed to read docker/v2 directory for app discovery: %s", err)
+		return
+	}
+
+	count := 0
+	runByDefault := map[string]bool{
+		"traefik": true,
+		"adguard": true,
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		appID := common.AppID(entry.Name())
+		desiredState := common.DesiredStopped
+		if runByDefault[entry.Name()] {
+			desiredState = common.DesiredRunning
+		}
+
+		m.appRegistry.Register(appID, desiredState)
+		count++
+	}
+	log.Printf("App discovery: found %d apps in docker/v2", count)
 }
 
 // TryAcquireBackupLease attempts to grant the backup lease to an agent.
