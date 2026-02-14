@@ -41,3 +41,19 @@ export async function triggerBackup(
     throw new Error(text || `HTTP error! status: ${response.status}`);
   }
 }
+
+export async function updateAppDesiredState(
+  appId: string,
+  state: "running" | "stopped",
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/apps-desired-state/${appId}?state=${state}`,
+    {
+      method: "PUT",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}

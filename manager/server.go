@@ -47,6 +47,7 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/system-logs/", m.handleAPISystemLogStream)
 	mux.HandleFunc("/api/v1/containers", m.handleAPIContainers)
 	mux.HandleFunc("/api/v1/containers/", m.handleAPIContainerLogs)
+	mux.HandleFunc("/api/v1/apps-desired-state/", m.handleAPIAppDesiredState)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
@@ -101,6 +102,8 @@ func (m *Manager) handleSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Sync failed: %s", err), http.StatusInternalServerError)
 		return
 	}
+
+	m.DiscoverApps()
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Sync completed"))
@@ -263,20 +266,16 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		return
 	}
 
-	// Hardcoded desired apps for now
-	response := common.DesiredAppsResponse{
-		Apps: []common.DesiredApp{
-			{AppID: "adguard", DesiredState: common.DesiredRunning},
-			{AppID: "stash", DesiredState: common.DesiredRunning},
-			{AppID: "traefik", DesiredState: common.DesiredRunning},
-			// {AppID: "immich", DesiredState: common.DesiredRunning},
-			// {AppID: "authentik", DesiredState: common.DesiredRunning},
-			// {AppID: "vaultwarden", DesiredState: common.DesiredRunning},
-			// {AppID: "budget", DesiredState: common.DesiredRunning},
-			// {AppID: "newt", DesiredState: common.DesiredRunning},
-			// {AppID: "jellyfin", DesiredState: common.DesiredRunning},
-		},
+	agentApps := m.appRegistry.AppsForAgent(agentID)
+	desiredApps := make([]common.DesiredApp, 0, len(agentApps))
+	for _, app := range agentApps {
+		desiredApps = append(desiredApps, common.DesiredApp{
+			AppID:        app.ID,
+			DesiredState: app.DesiredState,
+		})
 	}
+
+	response := common.DesiredAppsResponse{Apps: desiredApps}
 
 	log.Printf("Returning desired apps for agent %s: %d apps", agentID, len(response.Apps))
 

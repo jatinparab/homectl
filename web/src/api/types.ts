@@ -15,6 +15,14 @@ export type Phase =
   | "backup_stopped"
   | "backing_up";
 
+export interface ResticProgress {
+  percent_done: number;
+  total_bytes: number;
+  bytes_done: number;
+  total_files: number;
+  files_done: number;
+}
+
 export interface NodeReport {
   node: string;
   node_online: boolean;
@@ -25,6 +33,7 @@ export interface NodeReport {
   restart_count: number;
   quarantined: boolean;
   port: number;
+  progress?: ResticProgress;
 }
 
 export interface AppStatus {
