@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AppStatus } from "../api/types";
-import { useTriggerBackup } from "../api/hooks";
+import { useTriggerBackup, useUpdateAppDesiredState } from "../api/hooks";
 import {
   StatusBadge,
   HealthBadge,
@@ -18,6 +18,7 @@ interface AppRowProps {
 export function AppRow({ app, onShowLogs }: AppRowProps) {
   const [expanded, setExpanded] = useState(false);
   const backupMutation = useTriggerBackup();
+  const desiredStateMutation = useUpdateAppDesiredState();
 
   // Check if there are details to show (node reports with errors, quarantine, or multiple nodes)
   const hasDetails =
@@ -32,6 +33,9 @@ export function AppRow({ app, onShowLogs }: AppRowProps) {
     (sum, nr) => sum + nr.restart_count,
     0,
   );
+
+  // Get progress from the first node report that has it
+  const progress = app.node_reports.find((nr) => nr.progress)?.progress;
 
   // Get node names for display
   const nodeNames = app.node_reports.map((nr) => nr.node).join(", ") || "-";
@@ -56,7 +60,21 @@ export function AppRow({ app, onShowLogs }: AppRowProps) {
           </div>
         </td>
         <td className="px-4 py-3 whitespace-nowrap">
-          <DesiredBadge state={app.desired_state} />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const newState = app.desired_state === "running" ? "stopped" : "running";
+              desiredStateMutation.mutate({
+                appId: app.app_id,
+                state: newState,
+              });
+            }}
+            disabled={desiredStateMutation.isPending}
+            className="cursor-pointer hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+            title={`Click to toggle desired state to ${app.desired_state === "running" ? "stopped" : "running"}`}
+          >
+            <DesiredBadge state={app.desired_state} />
+          </button>
         </td>
         <td className="px-4 py-3 whitespace-nowrap">
           <StatusBadge status={app.observed_state} />
@@ -65,7 +83,7 @@ export function AppRow({ app, onShowLogs }: AppRowProps) {
           <HealthBadge health={app.health} />
         </td>
         <td className="px-4 py-3 whitespace-nowrap">
-          <PhaseBadge phase={app.phase} />
+          <PhaseBadge phase={app.phase} progress={progress} />
         </td>
         <td className="px-4 py-3 whitespace-nowrap text-gray-300">
           {nodeNames}
@@ -92,7 +110,7 @@ export function AppRow({ app, onShowLogs }: AppRowProps) {
                   <StatusBadge status={nr.observed_state} />
                   <HealthBadge health={nr.health} />
                   {nr.phase && (
-                    <span className="text-gray-500">Phase: {nr.phase}</span>
+                    <PhaseBadge phase={nr.phase} progress={nr.progress} />
                   )}
                   {nr.port > 0 && (
                     <span className="text-gray-500">Port: {nr.port}</span>

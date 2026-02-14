@@ -5,6 +5,7 @@ import {
   fetchSystemLogSources,
   fetchContainers,
   triggerBackup,
+  updateAppDesiredState,
 } from "./client";
 
 export function useApps() {
@@ -44,6 +45,17 @@ export function useTriggerBackup() {
   return useMutation({
     mutationFn: ({ appId, node }: { appId: string; node: string }) =>
       triggerBackup(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useUpdateAppDesiredState() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, state }: { appId: string; state: "running" | "stopped" }) =>
+      updateAppDesiredState(appId, state),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
     },

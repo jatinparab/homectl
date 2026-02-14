@@ -51,26 +51,24 @@ func (m *Manager) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	response.TotalAgents = len(agents)
 
 	for _, agent := range agents {
-		// Agent is online if last seen within 30 seconds
 		if now.Sub(agent.LastSeen) < 30*time.Second {
 			response.AgentsOnline++
 		}
+	}
 
-		for _, app := range agent.AppReports {
-			response.TotalApps++
-
-			switch app.ObservedState {
-			case common.ObservedRunning:
-				response.AppsRunning++
-			case common.ObservedStopped:
-				response.AppsStopped++
-			case common.ObservedError:
-				response.AppsError++
-			}
-
-			if app.Quarantined {
-				response.AppsQuarantined++
-			}
+	allApps := m.appRegistry.ListAll()
+	response.TotalApps = len(allApps)
+	for _, app := range allApps {
+		switch app.ObservedState {
+		case common.ObservedRunning:
+			response.AppsRunning++
+		case common.ObservedStopped:
+			response.AppsStopped++
+		case common.ObservedError:
+			response.AppsError++
+		}
+		if app.Quarantined {
+			response.AppsQuarantined++
 		}
 	}
 
@@ -154,21 +152,23 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 
 // NodeReport represents a single node's report for an app
 type NodeReport struct {
-	Node          string `json:"node"`
-	NodeOnline    bool   `json:"node_online"`
-	ObservedState string `json:"observed_state"`
-	Health        string `json:"health"`
-	Phase         string `json:"phase"`
-	LastError     string `json:"last_error"`
-	RestartCount  int    `json:"restart_count"`
-	Quarantined   bool   `json:"quarantined"`
-	Port          int    `json:"port"`
+	Node          string                 `json:"node"`
+	NodeOnline    bool                   `json:"node_online"`
+	ObservedState string                 `json:"observed_state"`
+	Health        string                 `json:"health"`
+	Phase         string                 `json:"phase"`
+	LastError     string                 `json:"last_error"`
+	RestartCount  int                    `json:"restart_count"`
+	Quarantined   bool                   `json:"quarantined"`
+	Port          int                    `json:"port"`
+	Progress      *common.ResticProgress `json:"progress,omitempty"`
 }
 
 // AppStatus combines desired state with observed state for UI display
 type AppStatus struct {
 	AppID         string       `json:"app_id"`
 	DesiredState  string       `json:"desired_state"`
+	AssignedAgent *string      `json:"assigned_agent"`
 	ObservedState string       `json:"observed_state"` // Consolidated (worst case)
 	Health        string       `json:"health"`         // Consolidated (worst case)
 	Phase         string       `json:"phase"`          // Consolidated
@@ -242,20 +242,9 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get desired apps (hardcoded for now, same as handleDesiredApps)
-	desiredApps := []common.DesiredApp{
-		{AppID: "adguard", DesiredState: common.DesiredRunning},
-		{AppID: "stash", DesiredState: common.DesiredRunning},
-		{AppID: "traefik", DesiredState: common.DesiredRunning},
-		{AppID: "immich", DesiredState: common.DesiredRunning},
-		{AppID: "authentik", DesiredState: common.DesiredRunning},
-		{AppID: "vaultwarden", DesiredState: common.DesiredRunning},
-		{AppID: "budget", DesiredState: common.DesiredRunning},
-		{AppID: "newt", DesiredState: common.DesiredRunning},
-		{AppID: "jellyfin", DesiredState: common.DesiredRunning},
-	}
+	allApps := m.appRegistry.ListAll()
 
-	// Get all agents with their app reports
+	// Get all agents with their app reports for per-node detail
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 
@@ -276,15 +265,16 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				RestartCount:  report.RestartCount,
 				Quarantined:   report.Quarantined,
 				Port:          report.Port,
+				Progress:      report.Progress,
 			}
 			appReportsMap[appID] = append(appReportsMap[appID], nodeReport)
 		}
 	}
 
-	// Build AppStatus list by merging desired with observed
-	result := make([]AppStatus, 0, len(desiredApps))
-	for _, desired := range desiredApps {
-		appID := string(desired.AppID)
+	// Build AppStatus list by merging registry apps with observed state
+	result := make([]AppStatus, 0, len(allApps))
+	for _, app := range allApps {
+		appID := string(app.ID)
 		nodeReports := appReportsMap[appID]
 		if nodeReports == nil {
 			nodeReports = []NodeReport{}
@@ -302,7 +292,8 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 
 		status := AppStatus{
 			AppID:         appID,
-			DesiredState:  string(desired.DesiredState),
+			DesiredState:  string(app.DesiredState),
+			AssignedAgent: app.AssignedAgent,
 			ObservedState: consolidateObservedState(states),
 			Health:        consolidateHealth(healths),
 			Phase:         consolidatePhase(phases),
@@ -334,6 +325,64 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
+}
+
+// handleAPIAppDesiredState handles PUT requests to update an app's desired state
+// PUT /api/v1/apps-desired-state/{appId}?state=running|stopped
+func (m *Manager) handleAPIAppDesiredState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract appId from path: /api/v1/apps-desired-state/{appId}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps-desired-state/")
+	appID := strings.TrimSuffix(path, "/")
+
+	if appID == "" {
+		http.Error(w, "App ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Get desired state from query parameter
+	stateStr := r.URL.Query().Get("state")
+	if stateStr == "" {
+		http.Error(w, "state query parameter is required (running or stopped)", http.StatusBadRequest)
+		return
+	}
+
+	var desiredState common.DesiredState
+	switch stateStr {
+	case "running":
+		desiredState = common.DesiredRunning
+	case "stopped":
+		desiredState = common.DesiredStopped
+	default:
+		http.Error(w, "Invalid state, must be 'running' or 'stopped'", http.StatusBadRequest)
+		return
+	}
+
+	// Update the app's desired state
+	err := m.appRegistry.UpdateDesiredState(common.AppID(appID), desiredState)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Return the updated app
+	app := m.appRegistry.Get(common.AppID(appID))
+	if app == nil {
+		http.Error(w, "App not found", http.StatusNotFound)
+		return
+	}
+
+	response := map[string]interface{}{
+		"app_id":        app.ID,
+		"desired_state": app.DesiredState,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleAPITriggerBackup proxies a backup trigger request to the appropriate agent

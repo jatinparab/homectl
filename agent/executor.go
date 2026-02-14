@@ -137,19 +137,30 @@ func (e *Executor) Submit(action Action) {
 	default:
 	}
 
-	// Check if already in flight
+	// Check if already in flight (queued or executing)
 	rt := e.agent.getRuntime(action.AppID)
 	if rt != nil && rt.IsInFlight() {
 		log.Printf("Executor: skipping %s for %s (already in flight)", action.Type, action.AppID)
 		return
 	}
 
+	// Mark in-flight BEFORE enqueueing so the reconcile loop won't submit duplicates
+	if rt != nil {
+		rt.SetInFlight(true)
+	}
+
 	select {
 	case e.actionQ <- action:
 		log.Printf("Executor: queued %s for %s", action.Type, action.AppID)
 	case <-e.ctx.Done():
+		if rt != nil {
+			rt.SetInFlight(false)
+		}
 		log.Printf("Executor: not accepting %s for %s (stopped)", action.Type, action.AppID)
 	default:
+		if rt != nil {
+			rt.SetInFlight(false)
+		}
 		log.Printf("Executor: action queue full, dropping %s for %s", action.Type, action.AppID)
 	}
 }
@@ -180,8 +191,7 @@ func (e *Executor) execute(action Action) {
 		rt = e.agent.getOrCreateRuntime(appID)
 	}
 
-	// Mark as in-flight
-	rt.SetInFlight(true)
+	// InFlight was set at Submit time; ensure it's cleared when done
 	defer rt.SetInFlight(false)
 
 	log.Printf("Executor: executing %s for %s", action.Type, appID)
@@ -210,12 +220,18 @@ func (e *Executor) execute(action Action) {
 
 // executeStart starts an app (with restic restore first)
 func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
-	// First, restore from restic (stub for now)
-	if err := e.restic.Restore(appID); err != nil {
+	// First, restore from restic with progress tracking
+	rt.SetPhase(common.PhaseRestoring)
+	err := e.restic.Restore(appID, func(p *common.ResticProgress) {
+		rt.SetProgress(p)
+	})
+	rt.ClearProgress()
+	if err != nil {
 		return err
 	}
 
 	// Then start via docker compose
+	rt.SetPhase(common.PhaseEmpty)
 	rt.IncrementRestarts()
 	if err := e.docker.Start(string(appID)); err != nil {
 		return err
@@ -272,8 +288,11 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 
 	// Step 2: Run restic backup (serialized via backupMu)
 	e.agent.backupMu.Lock()
-	backupErr := e.restic.Backup(appID)
+	backupErr := e.restic.Backup(appID, func(p *common.ResticProgress) {
+		rt.SetProgress(p)
+	})
 	e.agent.backupMu.Unlock()
+	rt.ClearProgress()
 
 	// Step 3: Update backup state
 	e.agent.runtimeMu.Lock()
