@@ -120,9 +120,9 @@ func (a *Agent) runRepoCheck() {
 	ctx, cancel := context.WithCancel(a.sensorCtx)
 	defer cancel()
 
-	// Serialize with backups/prunes on this node.
-	a.backupMu.Lock()
-	defer a.backupMu.Unlock()
+	// Serialize with backup/prune lane on this node.
+	a.beginExclusiveBackupLane()
+	defer a.endExclusiveBackupLane()
 
 	a.repoCheck.mu.Lock()
 	a.repoCheck.Log.Write("Repo lock acquired")
@@ -153,9 +153,9 @@ func (a *Agent) runRepoUnlock() {
 	ctx, cancel := context.WithCancel(a.sensorCtx)
 	defer cancel()
 
-	// Serialize with backups/prunes/checks on this node.
-	a.backupMu.Lock()
-	defer a.backupMu.Unlock()
+	// Serialize with backup/prune lane on this node.
+	a.beginExclusiveBackupLane()
+	defer a.endExclusiveBackupLane()
 
 	a.repoUnlock.mu.Lock()
 	a.repoUnlock.Log.Write("Repo lock acquired")

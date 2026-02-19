@@ -42,7 +42,7 @@ type Manager struct {
 	reconcileCancel  context.CancelFunc
 
 	backupMu              sync.Mutex
-	backupAssignment      *BackupAssignment
+	backupAssignments     map[common.AppID]*BackupAssignment
 	pruneAssignment       *BackupAssignment
 	lastScheduledWorkKind string
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
@@ -87,6 +87,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		streamHTTPClient:      &http.Client{},
 		config:                config.NewConfig(),
 		appRegistry:           NewAppRegistry(),
+		backupAssignments:     make(map[common.AppID]*BackupAssignment),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
 		pruneState:            make(map[common.AppID]PruneState),
 	}

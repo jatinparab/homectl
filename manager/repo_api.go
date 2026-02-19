@@ -138,7 +138,7 @@ func (m *Manager) handleAPIRepoCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.backupMu.Lock()
-	hasAssignment := m.backupAssignment != nil || m.pruneAssignment != nil
+	hasAssignment := len(m.backupAssignments) > 0 || m.pruneAssignment != nil
 	m.backupMu.Unlock()
 	if hasAssignment {
 		http.Error(w, "backup scheduled", http.StatusConflict)
