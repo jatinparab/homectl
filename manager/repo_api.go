@@ -317,7 +317,7 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 	}
 
 	agentURL := fmt.Sprintf("http://%s:%d/%s", agentCfg.IP, agentpkg.ReadyServerPort, path)
-	resp, err := m.httpClient.Get(agentURL)
+	resp, err := m.streamHTTPClient.Get(agentURL)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
