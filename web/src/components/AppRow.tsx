@@ -70,6 +70,62 @@ interface AppRowProps {
   onShowLogs?: (node: string, appId: string) => void;
 }
 
+interface ProgressAccumulator {
+  completedFiles: number;
+  completedBytes: number;
+  last: ResticProgress | null;
+}
+
+function newProgressAccumulator(): ProgressAccumulator {
+  return { completedFiles: 0, completedBytes: 0, last: null };
+}
+
+function accumulateResticProgress(state: ProgressAccumulator, current: ResticProgress): ResticProgress {
+  const previous = state.last;
+  if (previous) {
+    const filesReset =
+      previous.total_files > 0 &&
+      current.total_files > 0 &&
+      (current.files_done < previous.files_done ||
+        (current.percent_done < previous.percent_done && current.files_done <= previous.files_done));
+
+    const bytesReset =
+      previous.total_bytes > 0 &&
+      current.total_bytes > 0 &&
+      (current.bytes_done < previous.bytes_done ||
+        (current.percent_done < previous.percent_done && current.bytes_done <= previous.bytes_done));
+
+    if (filesReset || bytesReset) {
+      state.completedFiles += Math.max(previous.files_done, previous.total_files);
+      state.completedBytes += Math.max(previous.bytes_done, previous.total_bytes);
+    }
+  }
+
+  state.last = current;
+
+  const totalFiles = current.total_files > 0 ? state.completedFiles + current.total_files : current.total_files;
+  const filesDone = current.total_files > 0 ? state.completedFiles + current.files_done : current.files_done;
+
+  const totalBytes = current.total_bytes > 0 ? state.completedBytes + current.total_bytes : current.total_bytes;
+  const bytesDone = current.total_bytes > 0 ? state.completedBytes + current.bytes_done : current.bytes_done;
+
+  let percent = current.percent_done;
+  if (totalFiles > 0) {
+    percent = Math.min(1, Math.max(0, filesDone / totalFiles));
+  } else if (totalBytes > 0) {
+    percent = Math.min(1, Math.max(0, bytesDone / totalBytes));
+  }
+
+  return {
+    ...current,
+    percent_done: percent,
+    total_files: totalFiles,
+    files_done: filesDone,
+    total_bytes: totalBytes,
+    bytes_done: bytesDone,
+  };
+}
+
 export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs }: AppRowProps) {
   const restartMutation = useRestartApp();
   const backupMutation = useTriggerBackup();
@@ -85,6 +141,8 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const [realtimePostBackupProgress, setRealtimePostBackupProgress] = useState<ResticProgress | null>(null);
   const prevStreamable = useRef(false);
   const prevPostBackupStreamable = useRef(false);
+  const streamProgressRef = useRef<ProgressAccumulator>(newProgressAccumulator());
+  const postBackupProgressRef = useRef<ProgressAccumulator>(newProgressAccumulator());
 
   const nodeReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node));
 
@@ -99,6 +157,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     if (!isStreamable && prevStreamable.current) {
       setPhaseLogOpen(false);
       setRealtimeProgress(null);
+      streamProgressRef.current = newProgressAccumulator();
     }
     prevStreamable.current = isStreamable;
   }, [isStreamable]);
@@ -108,8 +167,10 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     if (!streamableNode) return;
     if (!(streamableNode.phase === "backing_up" || streamableNode.phase === "restoring")) {
       setRealtimeProgress(null);
+      streamProgressRef.current = newProgressAccumulator();
       return;
     }
+    streamProgressRef.current = newProgressAccumulator();
     const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(streamableNode.node)}`;
     const es = new EventSource(url);
     es.onmessage = (e) => {
@@ -117,7 +178,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       if (!line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
-        setRealtimeProgress(p);
+        setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));
       } catch {
         // ignore parse errors
       }
@@ -135,6 +196,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     if (!isPostBackupStreamable && prevPostBackupStreamable.current) {
       setPostBackupLogOpen(false);
       setRealtimePostBackupProgress(null);
+      postBackupProgressRef.current = newProgressAccumulator();
     }
     prevPostBackupStreamable.current = isPostBackupStreamable;
   }, [isPostBackupStreamable]);
@@ -145,8 +207,10 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     const phase = postBackupStreamableNode.post_backup_phase;
     if (!phase) {
       setRealtimePostBackupProgress(null);
+      postBackupProgressRef.current = newProgressAccumulator();
       return;
     }
+    postBackupProgressRef.current = newProgressAccumulator();
     const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(postBackupStreamableNode.node)}`;
     const es = new EventSource(url);
     es.onmessage = (e) => {
@@ -154,7 +218,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       if (!line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
-        setRealtimePostBackupProgress(p);
+        setRealtimePostBackupProgress(accumulateResticProgress(postBackupProgressRef.current, p));
       } catch {
         // ignore parse errors
       }
@@ -168,7 +232,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase]);
 
   const handleProgress = useCallback((p: ResticProgress) => {
-    setRealtimeProgress(p);
+    setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));
   }, []);
   const rowCount = Math.max(nodeReports.length, 1);
 
@@ -463,7 +527,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
               appId={app.app_id}
               node={streamableNode.node}
               phase={streamableNode.phase}
-              onClose={() => { setPhaseLogOpen(false); setRealtimeProgress(null); }}
+              onClose={() => { setPhaseLogOpen(false); setRealtimeProgress(null); streamProgressRef.current = newProgressAccumulator(); }}
               onProgress={handleProgress}
             />
           </td>
@@ -476,7 +540,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
               appId={app.app_id}
               node={postBackupStreamableNode.node}
               phase={postBackupStreamableNode.post_backup_phase}
-              onClose={() => setPostBackupLogOpen(false)}
+              onClose={() => { setPostBackupLogOpen(false); postBackupProgressRef.current = newProgressAccumulator(); }}
             />
           </td>
         </tr>
