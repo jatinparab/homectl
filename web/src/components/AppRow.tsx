@@ -67,6 +67,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
   const [phaseLogOpen, setPhaseLogOpen] = useState(false);
   const [postBackupLogOpen, setPostBackupLogOpen] = useState(false);
   const [realtimeProgress, setRealtimeProgress] = useState<ResticProgress | null>(null);
+  const [realtimePostBackupProgress, setRealtimePostBackupProgress] = useState<ResticProgress | null>(null);
   const prevStreamable = useRef(false);
   const prevPostBackupStreamable = useRef(false);
 
@@ -87,13 +88,69 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
     prevStreamable.current = isStreamable;
   }, [isStreamable]);
 
+  // Background progress stream for backup/restore (keeps progress realtime even if logs overlay is closed)
+  useEffect(() => {
+    if (!streamableNode) return;
+    if (!(streamableNode.phase === "backing_up" || streamableNode.phase === "restoring")) {
+      setRealtimeProgress(null);
+      return;
+    }
+    const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(streamableNode.node)}`;
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      const line: string = e.data;
+      if (!line.startsWith("__PROGRESS__:")) return;
+      try {
+        const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
+        setRealtimeProgress(p);
+      } catch {
+        // ignore parse errors
+      }
+    };
+    es.onerror = () => {
+      es.close();
+    };
+    return () => {
+      es.close();
+    };
+  }, [app.app_id, streamableNode?.node, streamableNode?.phase]);
+
   // Auto-close post-backup log when post-processing ends
   useEffect(() => {
     if (!isPostBackupStreamable && prevPostBackupStreamable.current) {
       setPostBackupLogOpen(false);
+      setRealtimePostBackupProgress(null);
     }
     prevPostBackupStreamable.current = isPostBackupStreamable;
   }, [isPostBackupStreamable]);
+
+  // Background progress stream for post-backup steps (e.g. prune)
+  useEffect(() => {
+    if (!postBackupStreamableNode) return;
+    const phase = postBackupStreamableNode.post_backup_phase;
+    if (!phase) {
+      setRealtimePostBackupProgress(null);
+      return;
+    }
+    const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(postBackupStreamableNode.node)}`;
+    const es = new EventSource(url);
+    es.onmessage = (e) => {
+      const line: string = e.data;
+      if (!line.startsWith("__PROGRESS__:")) return;
+      try {
+        const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
+        setRealtimePostBackupProgress(p);
+      } catch {
+        // ignore parse errors
+      }
+    };
+    es.onerror = () => {
+      es.close();
+    };
+    return () => {
+      es.close();
+    };
+  }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase]);
 
   const handleProgress = useCallback((p: ResticProgress) => {
     setRealtimeProgress(p);
@@ -214,7 +271,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
                     >
                       <PhaseBadge
                         phase={nr.phase}
-                        progress={phaseLogOpen && realtimeProgress ? realtimeProgress : nr.progress}
+                        progress={realtimeProgress ?? nr.progress}
                       />
                       <span className={`absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full ${
                         nr.phase === "pulling" ? "bg-blue-400"
@@ -231,6 +288,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
                 {nr.post_backup_phase && (
                   <PostBackupPhaseBadge
                     phase={nr.post_backup_phase}
+                    progress={realtimePostBackupProgress ?? nr.progress}
                     onClick={isPostBackupStreamable && postBackupStreamableNode?.node === nr.node ? () => setPostBackupLogOpen((v) => !v) : undefined}
                   />
                 )}

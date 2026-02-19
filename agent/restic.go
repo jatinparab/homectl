@@ -291,6 +291,7 @@ func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCal
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repo,
 		"--retry-lock", "5m",
+		"--json",
 		"forget", "--prune",
 		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
 		"--keep-hourly", "6",
