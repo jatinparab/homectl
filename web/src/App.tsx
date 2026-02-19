@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
-import { useApps, useAgents } from './api/hooks'
-import { Header } from './components/Header'
+import { useApps, useAgents, useUpcomingBackup, useSync, useRebalance } from './api/hooks'
+import { Header, type Tab } from './components/Header'
 import { AppsTable } from './components/AppsTable'
 import { NodeCards } from './components/NodeCards'
 import { LogPanel } from './components/LogPanel'
 import { SystemLogViewer } from './components/SystemLogViewer'
 import { ContainersSection } from './components/ContainersSection'
 import { ContainerLogPanel } from './components/ContainerLogPanel'
+import { BackupsPage } from './components/BackupsPage'
 
 type LogPanelState =
   | { type: 'app'; node: string; appId: string }
@@ -16,26 +17,22 @@ type LogPanelState =
 function App() {
   const { data: apps, isLoading } = useApps()
   const { data: agents } = useAgents()
+  const { data: upcomingBackup } = useUpcomingBackup()
+  const syncMutation = useSync()
+  const rebalanceMutation = useRebalance()
   const [logPanel, setLogPanel] = useState<LogPanelState>(null)
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard")
 
   const sortedApps = useMemo(() => {
     if (!apps) return []
 
-    const statusPriority = (state: string, hasQuarantined: boolean): number => {
-      if (state === 'error') return 0
-      if (hasQuarantined) return 1
-      if (state === 'restarting') return 2
-      if (state === 'stopped') return 3
-      if (state === 'unknown') return 4
-      return 5 // running
-    }
-
     return [...apps].sort((a, b) => {
-      const hasQuarantinedA = a.node_reports.some(nr => nr.quarantined)
-      const hasQuarantinedB = b.node_reports.some(nr => nr.quarantined)
-      const priorityA = statusPriority(a.observed_state, hasQuarantinedA)
-      const priorityB = statusPriority(b.observed_state, hasQuarantinedB)
-      if (priorityA !== priorityB) return priorityA - priorityB
+      // 1. Desired running first, then stopped
+      const desiredA = a.desired_state === 'running' ? 0 : 1
+      const desiredB = b.desired_state === 'running' ? 0 : 1
+      if (desiredA !== desiredB) return desiredA - desiredB
+
+      // 2. Alphabetical within each group
       return a.app_id.localeCompare(b.app_id)
     })
   }, [apps])
@@ -54,21 +51,50 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-900">
-      <Header />
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        {/* Node Status Cards */}
-        <NodeCards agents={agents} />
+      <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
-        {/* Main Apps Table */}
-        <h2 className="text-lg font-semibold text-white mb-4">Applications</h2>
-        <AppsTable apps={sortedApps} isLoading={isLoading} onShowLogs={handleShowAppLogs} />
+      {activeTab === "dashboard" && (
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          {/* Node Status Cards */}
+          <NodeCards agents={agents} />
 
-        {/* System Logs */}
-        <SystemLogViewer />
+          {/* Main Apps Table */}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">Applications</h2>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+                className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded text-gray-300"
+                title="Git pull and sync updated configs to all agents"
+              >
+                {syncMutation.isPending ? 'Syncing...' : 'Sync'}
+              </button>
+              <button
+                onClick={() => rebalanceMutation.mutate()}
+                disabled={rebalanceMutation.isPending}
+                className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded text-gray-300"
+                title="Rebalance all apps across nodes (may restart running apps)"
+              >
+                {rebalanceMutation.isPending ? 'Rebalancing...' : 'Rebalance'}
+              </button>
+            </div>
+          </div>
+          <AppsTable apps={sortedApps} isLoading={isLoading} upcomingBackup={upcomingBackup} onShowLogs={handleShowAppLogs} />
 
-        {/* Docker Containers */}
-        <ContainersSection onShowLogs={handleShowContainerLogs} />
-      </main>
+          {/* System Logs */}
+          <SystemLogViewer />
+
+          {/* Docker Containers */}
+          <ContainersSection onShowLogs={handleShowContainerLogs} />
+        </main>
+      )}
+
+      {activeTab === "backups" && (
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          <BackupsPage apps={apps} />
+        </main>
+      )}
 
       {/* App Log Side Panel */}
       <LogPanel

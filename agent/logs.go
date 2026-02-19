@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 // LogsHandler provides log streaming handlers for docker compose apps
@@ -23,6 +25,7 @@ func NewLogsHandler(agent *Agent) *LogsHandler {
 // RegisterRoutes registers all log-related routes on the given mux
 func (lh *LogsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logs/", lh.handleLogs)
+	mux.HandleFunc("/phase-logs/", lh.handlePhaseLogs)
 	mux.HandleFunc("/system-logs", lh.handleSystemLogs)
 	mux.HandleFunc("/containers", lh.handleContainers)
 	mux.HandleFunc("/container-logs/", lh.handleContainerLogs)
@@ -115,6 +118,62 @@ func (lh *LogsHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmd.Wait()
+}
+
+// handlePhaseLogs streams the phase log buffer (e.g. pull output) for an app
+// GET /phase-logs/{appId}
+func (lh *LogsHandler) handlePhaseLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	appID := strings.TrimPrefix(r.URL.Path, "/phase-logs/")
+	appID = strings.TrimSuffix(appID, "/")
+
+	if appID == "" {
+		http.Error(w, "App ID required", http.StatusBadRequest)
+		return
+	}
+
+	rt := lh.agent.getRuntime(common.AppID(appID))
+	if rt == nil || rt.PhaseLog == nil {
+		http.Error(w, "App not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send snapshot first
+	for _, line := range rt.PhaseLog.Snapshot() {
+		w.Write([]byte(line + "\n"))
+	}
+	flusher.Flush()
+
+	// Follow live lines
+	ch := rt.PhaseLog.Follow()
+	defer rt.PhaseLog.Unfollow(ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			w.Write([]byte(line + "\n"))
+			flusher.Flush()
+		}
+	}
 }
 
 // handleSystemLogs streams journalctl logs for the homectl-agent service

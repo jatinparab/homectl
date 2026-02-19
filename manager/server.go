@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
@@ -33,10 +32,6 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/agents/heartbeat", m.handleHeartbeat)
 	mux.HandleFunc("/agents/", m.handleAgentRoutes)
 
-	// Backup lease endpoints
-	mux.HandleFunc("/backup/lease", m.handleBackupLease)
-	mux.HandleFunc("/backup/lease/release", m.handleBackupLeaseRelease)
-
 	// UI APIs
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
@@ -48,6 +43,11 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/containers", m.handleAPIContainers)
 	mux.HandleFunc("/api/v1/containers/", m.handleAPIContainerLogs)
 	mux.HandleFunc("/api/v1/apps-desired-state/", m.handleAPIAppDesiredState)
+	mux.HandleFunc("/api/v1/backup/upcoming", m.handleAPIUpcomingBackup)
+	mux.HandleFunc("/api/v1/sync", m.handleAPISync)
+	mux.HandleFunc("/api/v1/apps-restore/", m.handleAPIAppRestore)
+	mux.HandleFunc("/api/v1/rebalance", m.handleAPIRebalance)
+	mux.HandleFunc("/api/v1/snapshots/", m.handleAPISnapshotLs)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
@@ -178,62 +178,6 @@ func (m *Manager) serveDirectory(w http.ResponseWriter, fullPath, relativePath s
 	}
 }
 
-// handleBackupLease handles backup lease acquisition requests
-// GET /backup/lease?agent_id=X
-func (m *Manager) handleBackupLease(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	agentID := r.URL.Query().Get("agent_id")
-	if agentID == "" {
-		http.Error(w, "agent_id is required", http.StatusBadRequest)
-		return
-	}
-
-	granted := m.TryAcquireBackupLease(agentID)
-
-	response := common.BackupLeaseResponse{
-		Granted: granted,
-	}
-
-	if granted {
-		m.backupLease.mu.Lock()
-		response.LeaseExpiresAt = m.backupLease.ExpiresAt
-		m.backupLease.mu.Unlock()
-	} else {
-		m.backupLease.mu.Lock()
-		response.Holder = m.backupLease.Holder
-		remaining := time.Until(m.backupLease.ExpiresAt)
-		response.RetryAfterSeconds = int(remaining.Seconds()) + 1
-		m.backupLease.mu.Unlock()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleBackupLeaseRelease handles backup lease release requests
-// POST /backup/lease/release?agent_id=X
-func (m *Manager) handleBackupLeaseRelease(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	agentID := r.URL.Query().Get("agent_id")
-	if agentID == "" {
-		http.Error(w, "agent_id is required", http.StatusBadRequest)
-		return
-	}
-
-	m.ReleaseBackupLease(agentID)
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "released"})
-}
-
 // handleAgentRoutes handles routes under /agents/{id}/...
 func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
 	// Parse path: /agents/{id}/desired
@@ -266,16 +210,67 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		return
 	}
 
+	// Don't send desired apps until the agent has heartbeated at least once.
+	// The first heartbeat triggers AdoptRunningApps which preserves existing
+	// placement. Without this gate the manager could reassign apps before
+	// learning what the agent is already running.
+	if _, ok := m.leaseManager.GetAgent(agentID); !ok {
+		http.Error(w, "Waiting for first heartbeat", http.StatusServiceUnavailable)
+		return
+	}
+
 	agentApps := m.appRegistry.AppsForAgent(agentID)
+	appConfigs := m.loadAppConfigs()
+
+	// Resolve backup assignment under lock
+	m.backupMu.Lock()
+	assignment := m.resolveBackupAssignment()
+	m.backupMu.Unlock()
+
+	// Check pending global restores under backupMu
+	m.backupMu.Lock()
+	pendingRestoreApps := make(map[common.AppID]bool)
+	for appID, agents := range m.pendingGlobalRestores {
+		if agents[agentID] {
+			pendingRestoreApps[appID] = true
+			delete(agents, agentID)
+			if len(agents) == 0 {
+				delete(m.pendingGlobalRestores, appID)
+			}
+		}
+	}
+	m.backupMu.Unlock()
+
 	desiredApps := make([]common.DesiredApp, 0, len(agentApps))
 	for _, app := range agentApps {
-		desiredApps = append(desiredApps, common.DesiredApp{
-			AppID:        app.ID,
-			DesiredState: app.DesiredState,
-		})
+		da := common.DesiredApp{
+			AppID:          app.ID,
+			DesiredState:   app.DesiredState,
+			BackupEnabled:  true, // default
+			RestoreEnabled: app.RestoreEnabled,
+		}
+		if cfg, ok := appConfigs[string(app.ID)]; ok {
+			da.BackupSensitive = cfg.BackupSensitive
+			da.BackupEnabled = cfg.IsBackupEnabled()
+		}
+		if da.BackupEnabled && assignment != nil && assignment.AgentID == agentID && assignment.AppID == app.ID {
+			da.BackupNow = true
+		}
+		if pendingRestoreApps[app.ID] {
+			da.RestoreNow = true
+		}
+		desiredApps = append(desiredApps, da)
 	}
 
 	response := common.DesiredAppsResponse{Apps: desiredApps}
+
+	m.gatewayMu.Lock()
+	response.IsGateway = m.gatewayNode == agentID
+	m.gatewayMu.Unlock()
+
+	if len(response.Apps) == 0 {
+		http.Error(w, "Wating", http.StatusOK)
+	}
 
 	log.Printf("Returning desired apps for agent %s: %d apps", agentID, len(response.Apps))
 
@@ -379,3 +374,4 @@ func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Docker sync archive sent successfully")
 }
+

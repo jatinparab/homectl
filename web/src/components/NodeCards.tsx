@@ -9,9 +9,14 @@ export function NodeCards({ agents }: NodeCardsProps) {
     return null
   }
 
+  const sorted = [...agents].sort((a, b) => {
+    if (a.is_gateway !== b.is_gateway) return a.is_gateway ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-      {agents.map((agent) => (
+      {sorted.map((agent) => (
         <NodeCard key={agent.name} agent={agent} />
       ))}
     </div>
@@ -26,7 +31,14 @@ function NodeCard({ agent }: NodeCardProps) {
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-white font-medium">{agent.name}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-white font-medium">{agent.name}</h3>
+          {agent.is_gateway && (
+            <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-green-900 text-green-300 border border-green-700">
+              Gateway
+            </span>
+          )}
+        </div>
         <span
           className={`w-3 h-3 rounded-full ${agent.online ? 'bg-green-500' : 'bg-red-500'}`}
         />

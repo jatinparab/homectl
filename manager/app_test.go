@@ -9,8 +9,8 @@ import (
 
 func TestAppRegistry_Register_Idempotent(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
-	reg.Register("app1", common.DesiredStopped) // should not overwrite
+	reg.Register("app1", common.DesiredRunning, false)
+	reg.Register("app1", common.DesiredStopped, false) // should not overwrite
 
 	app := reg.Get("app1")
 	if app == nil {
@@ -30,7 +30,7 @@ func TestAppRegistry_Get_ReturnsNilForUnknown(t *testing.T) {
 
 func TestAppRegistry_Get_ReturnsCopy(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
+	reg.Register("app1", common.DesiredRunning, false)
 
 	app := reg.Get("app1")
 	agent := "node1"
@@ -45,8 +45,8 @@ func TestAppRegistry_Get_ReturnsCopy(t *testing.T) {
 
 func TestAppRegistry_ListAll(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
-	reg.Register("app2", common.DesiredStopped)
+	reg.Register("app1", common.DesiredRunning, false)
+	reg.Register("app2", common.DesiredStopped, false)
 
 	apps := reg.ListAll()
 	if len(apps) != 2 {
@@ -64,9 +64,9 @@ func TestAppRegistry_ListAll(t *testing.T) {
 
 func TestAppRegistry_AppsForAgent(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
-	reg.Register("app2", common.DesiredRunning)
-	reg.Register("app3", common.DesiredRunning)
+	reg.Register("app1", common.DesiredRunning, false)
+	reg.Register("app2", common.DesiredRunning, false)
+	reg.Register("app3", common.DesiredRunning, false)
 
 	// Assign app1 and app3 to node1, app2 to node2
 	reg.WithLock(func(apps map[common.AppID]*App) {
@@ -99,7 +99,7 @@ func TestAppRegistry_AppsForAgent(t *testing.T) {
 
 func TestAppRegistry_UpdateFromReport_KnownApp(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
+	reg.Register("app1", common.DesiredRunning, false)
 
 	now := time.Now()
 	report := common.AppReport{
@@ -148,7 +148,7 @@ func TestAppRegistry_UpdateFromReport_IgnoresUnknown(t *testing.T) {
 
 func TestAppRegistry_WithLock(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
+	reg.Register("app1", common.DesiredRunning, false)
 
 	agent := "node1"
 	reg.WithLock(func(apps map[common.AppID]*App) {
@@ -163,7 +163,7 @@ func TestAppRegistry_WithLock(t *testing.T) {
 
 func TestAppRegistry_QuarantinedOn_CopiedCorrectly(t *testing.T) {
 	reg := NewAppRegistry()
-	reg.Register("app1", common.DesiredRunning)
+	reg.Register("app1", common.DesiredRunning, false)
 
 	reg.WithLock(func(apps map[common.AppID]*App) {
 		apps["app1"].QuarantinedOn = []string{"node1", "node2"}

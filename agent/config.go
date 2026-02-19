@@ -15,7 +15,7 @@ func DefaultConfig() Config {
 	return Config{
 		RenewalInterval:   10 * time.Second,
 		RetryInterval:     5 * time.Second,
-		ReconcileInterval: 15 * time.Second,
+		ReconcileInterval: 10 * time.Second,
 		ConnectionTimeout: 10 * time.Second,
 	}
 }

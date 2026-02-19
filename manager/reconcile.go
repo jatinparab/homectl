@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	reconcileInterval  = 30 * time.Second
-	migrationCooldown  = 10 * time.Minute
+	reconcileInterval      = 30 * time.Second
+	migrationCooldown      = 10 * time.Minute
+	deadAgentGracePeriod   = 3 * time.Minute
 )
 
 // StartReconcileLoop starts the periodic reconciliation loop.
@@ -39,37 +40,132 @@ func (m *Manager) reconcileOnce(now time.Time) {
 		return
 	}
 
+	lastSeenMap := m.buildLastSeenMap()
+	activeApps := m.appsWithActiveConnections()
+	excludedNodes := m.buildExcludedNodes()
+
 	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
-		handleDeadAgents(apps, alive)
-		assignUnassignedApps(apps, alive)
-		handleMigrations(apps, alive, now)
-		rebalance(apps, alive)
+		handleDeadAgents(apps, alive, lastSeenMap, now)
+		assignUnassignedApps(apps, alive, excludedNodes)
+		handleMigrations(apps, alive, now, excludedNodes)
+		rebalance(apps, alive, activeApps, excludedNodes)
 	})
+
+	m.resolveGateway()
+	m.invalidateBackupAssignment(alive)
 }
 
-// aliveAgents returns a set of alive agent names from the lease manager.
+// resolveGateway picks one online agent with traefik running+healthy as the gateway node.
+// If the current gateway is still valid, it keeps it. Otherwise it scans for a new one.
+func (m *Manager) resolveGateway() {
+	m.gatewayMu.Lock()
+	defer m.gatewayMu.Unlock()
+
+	// Check if current gateway is still valid
+	if m.gatewayNode != "" {
+		if m.isTraefikHealthy(m.gatewayNode) {
+			return
+		}
+		log.Printf("Gateway: %s no longer valid, scanning for new gateway", m.gatewayNode)
+	}
+
+	// Scan all online agents for one with traefik running+healthy
+	agents := m.leaseManager.ListAgents()
+	for _, agent := range agents {
+		if m.isTraefikHealthy(agent.Name) {
+			old := m.gatewayNode
+			m.gatewayNode = agent.Name
+			if old == "" {
+				log.Printf("Gateway: assigned %s", agent.Name)
+			} else {
+				log.Printf("Gateway: transitioned %s -> %s", old, agent.Name)
+			}
+			return
+		}
+	}
+
+	// No valid gateway found
+	if m.gatewayNode != "" {
+		log.Printf("Gateway: no valid candidate, clearing (was %s)", m.gatewayNode)
+		m.gatewayNode = ""
+	}
+}
+
+// isTraefikHealthy checks if an agent reports traefik as running+healthy.
+func (m *Manager) isTraefikHealthy(agentName string) bool {
+	agent, ok := m.leaseManager.GetAgent(agentName)
+	if !ok {
+		return false
+	}
+	for _, report := range agent.AppReports {
+		if report.AppID == "traefik" && report.ObservedState == common.ObservedRunning && report.Health == common.HealthHealthy {
+			return true
+		}
+	}
+	return false
+}
+
+// aliveAgents returns a set of agent names whose last heartbeat is within leaseTTL.
 func (m *Manager) aliveAgents() map[string]bool {
 	agents := m.leaseManager.ListAgents()
+	ttl := m.leaseManager.LeaseTTL()
+	now := time.Now()
 	alive := make(map[string]bool, len(agents))
 	for _, a := range agents {
-		alive[a.Name] = true
+		if now.Sub(a.LastSeen) <= ttl {
+			alive[a.Name] = true
+		}
 	}
 	return alive
 }
 
-// handleDeadAgents clears AssignedAgent for apps whose agent is no longer alive.
-func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool) {
-	for _, app := range apps {
-		if app.AssignedAgent != nil && !alive[*app.AssignedAgent] {
-			log.Printf("Agent %s dead, unassigning app %s", *app.AssignedAgent, app.ID)
-			app.AssignedAgent = nil
+// buildLastSeenMap returns a map of agent name → LastSeen for all known agents
+// (including recently-offline ones kept by the extended staleAgentTTL).
+func (m *Manager) buildLastSeenMap() map[string]time.Time {
+	agents := m.leaseManager.ListAgents()
+	result := make(map[string]time.Time, len(agents))
+	for _, a := range agents {
+		result[a.Name] = a.LastSeen
+	}
+	return result
+}
+
+// buildExcludedNodes loads exclude_nodes from each app's homectl-config.json.
+func (m *Manager) buildExcludedNodes() map[common.AppID][]string {
+	appConfigs := m.loadAppConfigs()
+	result := make(map[common.AppID][]string)
+	for name, cfg := range appConfigs {
+		if len(cfg.ExcludeNodes) > 0 {
+			result[common.AppID(name)] = cfg.ExcludeNodes
 		}
+	}
+	return result
+}
+
+// handleDeadAgents clears AssignedAgent for apps whose agent is no longer alive,
+// but only after the deadAgentGracePeriod has elapsed since the agent's last heartbeat.
+// This prevents unnecessary app reshuffling during rolling deploys.
+func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool, lastSeenMap map[string]time.Time, now time.Time) {
+	for _, app := range apps {
+		if app.AssignedAgent == nil || alive[*app.AssignedAgent] {
+			continue
+		}
+		agent := *app.AssignedAgent
+		if lastSeen, ok := lastSeenMap[agent]; ok && now.Sub(lastSeen) < deadAgentGracePeriod {
+			log.Printf("Agent %s offline, but within grace period for app %s (last seen %s ago)", agent, app.ID, now.Sub(lastSeen).Round(time.Second))
+			continue
+		}
+		log.Printf("Agent %s dead (past grace period), unassigning app %s", agent, app.ID)
+		app.AssignedAgent = nil
 	}
 }
 
 // assignUnassignedApps assigns each unassigned running app to the least-loaded alive agent.
-func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool) {
+func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string) {
 	for _, app := range apps {
+		if app.IsGlobal {
+			continue // global apps run on all nodes, no assignment needed
+		}
 		if app.DesiredState != common.DesiredRunning {
 			continue
 		}
@@ -77,7 +173,8 @@ func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool) {
 			continue
 		}
 
-		target := leastLoadedExcluding(apps, alive, app.QuarantinedOn)
+		excluded := append(app.QuarantinedOn, excludedNodes[app.ID]...)
+		target := leastLoadedExcluding(apps, alive, excluded)
 		if target == "" {
 			log.Printf("No available agent for app %s (all quarantined or no agents)", app.ID)
 			continue
@@ -89,8 +186,11 @@ func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool) {
 }
 
 // handleMigrations migrates at most 1 quarantined app past its cooldown to a different agent.
-func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now time.Time) {
+func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now time.Time, excludedNodes map[common.AppID][]string) {
 	for _, app := range apps {
+		if app.IsGlobal {
+			continue
+		}
 		if !app.Quarantined {
 			continue
 		}
@@ -103,6 +203,7 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 
 		oldAgent := *app.AssignedAgent
 		excluded := append(app.QuarantinedOn, oldAgent)
+		excluded = append(excluded, excludedNodes[app.ID]...)
 		target := leastLoadedExcluding(apps, alive, excluded)
 		if target == "" {
 			continue
@@ -117,67 +218,140 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 	}
 }
 
-// rebalance moves at most 1 non-quarantined app from an overloaded agent to an underloaded one.
-func rebalance(apps map[common.AppID]*App, alive map[string]bool) {
-	// Count apps per agent
-	loadMap := make(map[string]int)
-	for name := range alive {
-		loadMap[name] = 0
-	}
-	for _, app := range apps {
-		if app.AssignedAgent != nil && alive[*app.AssignedAgent] {
-			loadMap[*app.AssignedAgent]++
-		}
-	}
-
-	// Find most and least loaded
-	var maxAgent, minAgent string
-	maxLoad, minLoad := -1, int(^uint(0)>>1)
-	for agent, load := range loadMap {
-		if load > maxLoad {
-			maxLoad = load
-			maxAgent = agent
-		}
-		if load < minLoad {
-			minLoad = load
-			minAgent = agent
-		}
-	}
-
-	// Only rebalance if difference > 1
-	if maxLoad-minLoad <= 1 {
-		return
-	}
-
-	// Find a non-quarantined app on the overloaded agent to move
-	for _, app := range apps {
-		if app.AssignedAgent == nil || *app.AssignedAgent != maxAgent {
-			continue
-		}
-		if app.Quarantined {
-			continue
-		}
-		if app.DesiredState != common.DesiredRunning {
-			continue
-		}
-
-		// Check minAgent is not in QuarantinedOn
-		quarantined := false
-		for _, q := range app.QuarantinedOn {
-			if q == minAgent {
-				quarantined = true
-				break
+// appsWithActiveConnections returns the set of app IDs that have active connections
+// on any agent, based on the latest heartbeat reports.
+func (m *Manager) appsWithActiveConnections() map[common.AppID]bool {
+	result := make(map[common.AppID]bool)
+	for _, agent := range m.leaseManager.ListAgents() {
+		for _, report := range agent.AppReports {
+			if report.ActiveConnections {
+				result[report.AppID] = true
 			}
 		}
-		if quarantined {
-			continue
+	}
+	return result
+}
+
+// rebalance moves at most 1 non-quarantined, non-running app from an overloaded agent to an underloaded one.
+// Only stopped apps are moved during automatic rebalancing to avoid disrupting running services.
+func rebalance(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string) {
+	rebalanceApps(apps, alive, activeApps, excludedNodes, false)
+}
+
+// forceRebalance moves ALL eligible apps at once to achieve balance, including running apps.
+// Used for user-triggered rebalancing via the UI.
+func forceRebalance(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string) {
+	rebalanceApps(apps, alive, nil, excludedNodes, true)
+}
+
+// rebalanceApps is the shared implementation for both automatic and forced rebalancing.
+// When force=true, running apps can be moved and multiple moves happen in one pass.
+// When force=false, only stopped (ObservedState != running) apps are moved, max 1 per cycle.
+func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, force bool) {
+	for {
+		// Count apps per agent (exclude global apps from load counting)
+		loadMap := make(map[string]int)
+		for name := range alive {
+			loadMap[name] = 0
+		}
+		for _, app := range apps {
+			if app.IsGlobal {
+				continue
+			}
+			if app.AssignedAgent != nil && alive[*app.AssignedAgent] {
+				loadMap[*app.AssignedAgent]++
+			}
 		}
 
-		log.Printf("Rebalancing app %s from %s (%d apps) to %s (%d apps)",
-			app.ID, maxAgent, maxLoad, minAgent, minLoad)
-		app.AssignedAgent = &minAgent
-		return // max 1 rebalance per cycle
+		// Find most and least loaded
+		var maxAgent, minAgent string
+		maxLoad, minLoad := -1, int(^uint(0)>>1)
+		for agent, load := range loadMap {
+			if load > maxLoad {
+				maxLoad = load
+				maxAgent = agent
+			}
+			if load < minLoad {
+				minLoad = load
+				minAgent = agent
+			}
+		}
+
+		// Only rebalance if difference > 1
+		if maxLoad-minLoad <= 1 {
+			return
+		}
+
+		// Find a non-quarantined, non-global app on the overloaded agent to move
+		moved := false
+		for _, app := range apps {
+			if app.IsGlobal {
+				continue
+			}
+			if app.AssignedAgent == nil || *app.AssignedAgent != maxAgent {
+				continue
+			}
+			if app.Quarantined {
+				continue
+			}
+			if app.DesiredState != common.DesiredRunning {
+				continue
+			}
+			if !force {
+				// Automatic rebalance: skip running apps and apps with active connections
+				if app.ObservedState == common.ObservedRunning {
+					continue
+				}
+				if activeApps[app.ID] {
+					continue
+				}
+			}
+
+			// Check minAgent is not in QuarantinedOn or ExcludeNodes
+			excluded := false
+			for _, q := range app.QuarantinedOn {
+				if q == minAgent {
+					excluded = true
+					break
+				}
+			}
+			if !excluded {
+				for _, n := range excludedNodes[app.ID] {
+					if n == minAgent {
+						excluded = true
+						break
+					}
+				}
+			}
+			if excluded {
+				continue
+			}
+
+			log.Printf("Rebalancing app %s from %s (%d apps) to %s (%d apps)",
+				app.ID, maxAgent, maxLoad, minAgent, minLoad)
+			app.AssignedAgent = &minAgent
+			moved = true
+			break // move one app per inner loop iteration
+		}
+
+		if !moved || !force {
+			return // no more moves possible, or non-force mode (max 1)
+		}
+		// force mode: loop again to check if more rebalancing is needed
 	}
+}
+
+// ForceRebalance triggers an immediate full rebalance, moving all apps (including running)
+// to achieve optimal distribution. Called from the API.
+func (m *Manager) ForceRebalance() {
+	excludedNodes := m.buildExcludedNodes()
+
+	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
+		alive := m.aliveAgents()
+		forceRebalance(apps, alive, excludedNodes)
+	})
+
+	log.Println("Force rebalance completed")
 }
 
 // leastLoadedExcluding returns the alive agent with the fewest assigned apps,
@@ -197,6 +371,9 @@ func leastLoadedExcluding(apps map[common.AppID]*App, alive map[string]bool, exc
 	}
 
 	for _, app := range apps {
+		if app.IsGlobal {
+			continue
+		}
 		if app.AssignedAgent != nil {
 			if _, ok := loadMap[*app.AssignedAgent]; ok {
 				loadMap[*app.AssignedAgent]++

@@ -21,11 +21,16 @@ type TraefikSync struct {
 func NewTraefikSync(appdataDir, agentID string, c *client.Client) *TraefikSync {
 	// Config path: {appdataDir}/traefik/config/traefik.yml
 	configPath := filepath.Join(appdataDir, "traefik", "config", "traefik.yml")
-	return &TraefikSync{
+	ts := &TraefikSync{
 		configPath: configPath,
 		client:     c,
 		agentID:    agentID,
 	}
+	// Seed currentConfig from disk so the first Sync won't rewrite an identical file
+	if data, err := os.ReadFile(configPath); err == nil {
+		ts.currentConfig = string(data)
+	}
+	return ts
 }
 
 // FetchConfig fetches traefik config from manager
@@ -33,12 +38,20 @@ func (t *TraefikSync) FetchConfig() (string, error) {
 	return t.client.FetchTraefikConfig(t.agentID)
 }
 
-// WriteConfig writes the config to disk
+// WriteConfig writes the config to disk only if the content differs from what
+// is already on disk. This avoids unnecessary file-change events that cause
+// traefik to reload its config and momentarily return 404s.
 func (t *TraefikSync) WriteConfig(content string) error {
 	// Ensure parent directory exists
 	dir := filepath.Dir(t.configPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Read existing file and skip write if identical
+	if existing, err := os.ReadFile(t.configPath); err == nil && string(existing) == content {
+		log.Printf("Traefik config unchanged, skipping write to %s", t.configPath)
+		return nil
 	}
 
 	// Write config file
