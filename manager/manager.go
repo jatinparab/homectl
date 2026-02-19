@@ -44,6 +44,13 @@ type Manager struct {
 	backupAssignment      *BackupAssignment
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
 
+	// Repo-wide maintenance (restic check/unlock), coordinated via gateway node.
+	repoMu           sync.Mutex
+	repoCheckBusy    bool
+	repoUnlockBusy   bool
+	repoLastCheckAt  time.Time
+	repoLastUnlockAt time.Time
+
 	gatewayNode string
 	gatewayMu   sync.Mutex
 }
@@ -60,7 +67,7 @@ func NewManager(repoDir string, port int) *Manager {
 // NewManagerWithConfig creates a new Manager instance with custom config
 func NewManagerWithConfig(cfg Config) *Manager {
 	stateDir := filepath.Join(filepath.Dir(cfg.RepoDir), ".homectl")
-	return &Manager{
+	mgr := &Manager{
 		repoDir:      cfg.RepoDir,
 		stateDir:     stateDir,
 		port:         cfg.Port,
@@ -72,6 +79,8 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		appRegistry:           NewAppRegistry(),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
 	}
+	mgr.loadRepoState()
+	return mgr
 }
 
 // RepoDir returns the repository directory
@@ -270,4 +279,3 @@ func (m *Manager) DiscoverApps() {
 	}
 	log.Printf("App discovery: found %d apps in docker/v2", count)
 }
-

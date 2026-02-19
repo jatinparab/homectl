@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, NodeContainers, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup } from "./types";
+import type { Agent, AppStatus, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -131,6 +131,26 @@ export async function updateAppDesiredState(
       method: "PUT",
     },
   );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function fetchRepoStatus(): Promise<RepoStatus> {
+  return fetchJSON<RepoStatus>(`${API_BASE}/repo/status`);
+}
+
+export async function triggerRepoCheck(): Promise<void> {
+  const response = await fetch(`${API_BASE}/repo/check`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function triggerRepoUnlock(): Promise<void> {
+  const response = await fetch(`${API_BASE}/repo/unlock`, { method: "POST" });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `HTTP error! status: ${response.status}`);

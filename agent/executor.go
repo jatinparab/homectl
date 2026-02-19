@@ -426,8 +426,8 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	return backupErr
 }
 
-// runPostBackupSteps runs restic forget --prune and restic check after a successful backup.
-// Both operations are serialized via backupMu (held across both to prevent interference).
+// runPostBackupSteps runs post-backup repo maintenance (currently: restic forget --prune).
+// Operations are serialized via backupMu.
 // PostBackupPhase is used instead of rt.Phase to avoid disrupting the app lifecycle.
 // Clears BackupBusy when complete so the manager knows all post-backup work is done.
 func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
@@ -446,20 +446,6 @@ func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
 		log.Printf("Executor: prune failed for %s: %s", appID, pruneErr)
 	} else {
 		log.Printf("Executor: prune completed for %s", appID)
-	}
-
-	// --- Check ---
-	rt.SetPostBackupPhase("backup_checking")
-	rt.PhaseLog.Clear()
-	log.Printf("Executor: starting check for %s", appID)
-	checkErr := e.restic.Check(e.ctx, func(line string) {
-		rt.PhaseLog.Write(line)
-	})
-
-	if checkErr != nil {
-		log.Printf("Executor: check failed for %s: %s", appID, checkErr)
-	} else {
-		log.Printf("Executor: check completed for %s", appID)
 	}
 
 	// Post-backup work is complete — clear the BackupBusy flag

@@ -48,6 +48,11 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/apps-restore/", m.handleAPIAppRestore)
 	mux.HandleFunc("/api/v1/rebalance", m.handleAPIRebalance)
 	mux.HandleFunc("/api/v1/snapshots/", m.handleAPISnapshotLs)
+	mux.HandleFunc("/api/v1/repo/status", m.handleAPIRepoStatus)
+	mux.HandleFunc("/api/v1/repo/check", m.handleAPIRepoCheck)
+	mux.HandleFunc("/api/v1/repo/check-logs", m.handleAPIRepoCheckLogs)
+	mux.HandleFunc("/api/v1/repo/unlock", m.handleAPIRepoUnlock)
+	mux.HandleFunc("/api/v1/repo/unlock-logs", m.handleAPIRepoUnlockLogs)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
@@ -374,4 +379,3 @@ func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Docker sync archive sent successfully")
 }
-

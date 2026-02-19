@@ -25,6 +25,11 @@ type BackupAssignment struct {
 // resolveBackupAssignment is called from handleDesiredApps under backupMu.
 // It returns the current assignment (possibly nil) after applying state transitions.
 func (m *Manager) resolveBackupAssignment() *BackupAssignment {
+	// Block new backups while repo maintenance (check/unlock) is running.
+	if m.isRepoBusy() {
+		return nil
+	}
+
 	a := m.backupAssignment
 
 	if a != nil {

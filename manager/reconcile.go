@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	reconcileInterval      = 30 * time.Second
-	migrationCooldown      = 10 * time.Minute
-	deadAgentGracePeriod   = 3 * time.Minute
+	reconcileInterval    = 30 * time.Second
+	migrationCooldown    = 10 * time.Minute
+	deadAgentGracePeriod = 3 * time.Minute
 )
 
 // StartReconcileLoop starts the periodic reconciliation loop.
@@ -53,6 +53,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 
 	m.resolveGateway()
 	m.invalidateBackupAssignment(alive)
+	m.reconcileRepoOps(now)
 }
 
 // resolveGateway picks one online agent with traefik running+healthy as the gateway node.
