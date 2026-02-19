@@ -316,6 +316,7 @@ func (a *Agent) reconcileOnce() {
 	a.runtimeMu.Lock()
 	a.assignedApps = assigned
 	a.runtimeMu.Unlock()
+	a.cancelUnassignedSnapshotRefreshes(assigned)
 
 	managedApps := a.ListApps()
 	for _, app := range managedApps {
@@ -504,7 +505,7 @@ func (a *Agent) refreshAllSnapshotCaches() {
 	a.runtimeMu.RLock()
 	var appIDs []common.AppID
 	for appID, rt := range a.runtime {
-		if rt.IsBackupEnabled() {
+		if rt.IsBackupEnabled() && a.assignedApps[appID] {
 			appIDs = append(appIDs, appID)
 		}
 	}
@@ -512,6 +513,21 @@ func (a *Agent) refreshAllSnapshotCaches() {
 
 	for _, appID := range appIDs {
 		a.refreshSnapshotCache(appID)
+	}
+}
+
+func (a *Agent) cancelUnassignedSnapshotRefreshes(assigned map[common.AppID]bool) {
+	a.snapshotCacheMu.Lock()
+	defer a.snapshotCacheMu.Unlock()
+	for appID, cancel := range a.snapshotCancelFns {
+		if assigned[appID] {
+			continue
+		}
+		cancel()
+		delete(a.snapshotCancelFns, appID)
+		if cache, ok := a.snapshotCache[appID]; ok {
+			cache.Loading = false
+		}
 	}
 }
 
@@ -662,7 +678,7 @@ func (a *Agent) GetAppReports() []common.AppReport {
 	reports := make([]common.AppReport, 0, len(a.runtime))
 	for appID, rt := range a.runtime {
 		report := rt.ToReport()
-		if !a.assignedApps[appID] && !isActivelyManaged(report) {
+		if !a.assignedApps[appID] {
 			continue
 		}
 		if report.Port > 0 {
@@ -678,22 +694,4 @@ func (a *Agent) GetAppReports() []common.AppReport {
 		reports = append(reports, report)
 	}
 	return reports
-}
-
-// isActivelyManaged returns true if an app is in a state worth reporting.
-// Idle stopped apps (stopped + empty phase + no error + no backup) are skipped.
-func isActivelyManaged(r common.AppReport) bool {
-	if r.ObservedState != common.ObservedStopped {
-		return true
-	}
-	if r.Phase != "" && r.Phase != common.PhaseEmpty && r.Phase != common.PhaseReady {
-		return true
-	}
-	if r.BackupBusy {
-		return true
-	}
-	if r.LastError != "" {
-		return true
-	}
-	return false
 }
