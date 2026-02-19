@@ -78,7 +78,7 @@ type Agent struct {
 // NewAgent creates a new Agent instance
 func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
-	return &Agent{
+	a := &Agent{
 		name:              name,
 		ip:                ip,
 		config:            cfg,
@@ -99,6 +99,8 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
+	a.loadRepoOpsState()
+	return a
 }
 
 // Init initializes an agent (best-effort, doesn't require manager to be up)

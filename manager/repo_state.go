@@ -9,8 +9,11 @@ import (
 )
 
 type repoStateFile struct {
-	LastCheckAt  time.Time `json:"last_check_at,omitempty"`
-	LastUnlockAt time.Time `json:"last_unlock_at,omitempty"`
+	LastCheckAt      time.Time `json:"last_check_at,omitempty"`
+	LastUnlockAt     time.Time `json:"last_unlock_at,omitempty"`
+	LastCheckErr     string    `json:"last_check_err,omitempty"`
+	LastUnlockErr    string    `json:"last_unlock_err,omitempty"`
+	LastStatusSyncAt time.Time `json:"last_status_sync_at,omitempty"`
 }
 
 func (m *Manager) repoStatePath() string {
@@ -35,12 +38,21 @@ func (m *Manager) loadRepoState() {
 	m.repoMu.Lock()
 	m.repoLastCheckAt = st.LastCheckAt
 	m.repoLastUnlockAt = st.LastUnlockAt
+	m.repoLastCheckErr = st.LastCheckErr
+	m.repoLastUnlockErr = st.LastUnlockErr
+	m.repoLastStatusSyncAt = st.LastStatusSyncAt
 	m.repoMu.Unlock()
 }
 
 func (m *Manager) saveRepoState() {
 	m.repoMu.Lock()
-	st := repoStateFile{LastCheckAt: m.repoLastCheckAt, LastUnlockAt: m.repoLastUnlockAt}
+	st := repoStateFile{
+		LastCheckAt:      m.repoLastCheckAt,
+		LastUnlockAt:     m.repoLastUnlockAt,
+		LastCheckErr:     m.repoLastCheckErr,
+		LastUnlockErr:    m.repoLastUnlockErr,
+		LastStatusSyncAt: m.repoLastStatusSyncAt,
+	}
 	m.repoMu.Unlock()
 
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {

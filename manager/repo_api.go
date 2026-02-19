@@ -19,10 +19,11 @@ type RepoOpStatusResponse struct {
 }
 
 type RepoStatusResponse struct {
-	GatewayNode   string               `json:"gateway_node"`
-	GatewayOnline bool                 `json:"gateway_online"`
-	Check         RepoOpStatusResponse `json:"check"`
-	Unlock        RepoOpStatusResponse `json:"unlock"`
+	GatewayNode      string               `json:"gateway_node"`
+	GatewayOnline    bool                 `json:"gateway_online"`
+	LastStatusSyncAt string               `json:"last_status_sync_at,omitempty"`
+	Check            RepoOpStatusResponse `json:"check"`
+	Unlock           RepoOpStatusResponse `json:"unlock"`
 }
 
 // handleAPIRepoStatus returns gateway repo-maintenance status (check/unlock).
@@ -72,6 +73,11 @@ func (m *Manager) handleAPIRepoStatus(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		resp.Check = toRepoOpStatusResponse(check)
 		resp.Unlock = toRepoOpStatusResponse(unlock)
+		m.repoMu.Lock()
+		if !m.repoLastStatusSyncAt.IsZero() {
+			resp.LastStatusSyncAt = m.repoLastStatusSyncAt.Format(time.RFC3339)
+		}
+		m.repoMu.Unlock()
 	} else {
 		// Fallback to manager-cached state
 		m.repoMu.Lock()
@@ -79,14 +85,22 @@ func (m *Manager) handleAPIRepoStatus(w http.ResponseWriter, r *http.Request) {
 		busyUnlock := m.repoUnlockBusy
 		lastCheck := m.repoLastCheckAt
 		lastUnlock := m.repoLastUnlockAt
+		lastCheckErr := m.repoLastCheckErr
+		lastUnlockErr := m.repoLastUnlockErr
+		lastSync := m.repoLastStatusSyncAt
 		m.repoMu.Unlock()
 		resp.Check = RepoOpStatusResponse{Busy: busyCheck}
 		if !lastCheck.IsZero() {
 			resp.Check.LastAt = lastCheck.Format(time.RFC3339)
 		}
+		resp.Check.LastError = lastCheckErr
 		resp.Unlock = RepoOpStatusResponse{Busy: busyUnlock}
 		if !lastUnlock.IsZero() {
 			resp.Unlock.LastAt = lastUnlock.Format(time.RFC3339)
+		}
+		resp.Unlock.LastError = lastUnlockErr
+		if !lastSync.IsZero() {
+			resp.LastStatusSyncAt = lastSync.Format(time.RFC3339)
 		}
 	}
 

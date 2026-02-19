@@ -145,6 +145,8 @@ func (a *Agent) runRepoCheck() {
 	a.repoCheck.Busy = false
 	a.repoCheck.ProgressPercent = 0
 	a.repoCheck.mu.Unlock()
+
+	a.saveRepoOpsState()
 }
 
 func (a *Agent) runRepoUnlock() {
@@ -174,4 +176,6 @@ func (a *Agent) runRepoUnlock() {
 	}
 	a.repoUnlock.Busy = false
 	a.repoUnlock.mu.Unlock()
+
+	a.saveRepoOpsState()
 }
