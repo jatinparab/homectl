@@ -293,6 +293,7 @@ func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCal
 		"-r", r.repo,
 		"--retry-lock", "5m",
 		"forget", "--prune",
+		"--group-by", "tags",
 		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
 		"--keep-hourly", "6",
 		"--keep-daily", "7",
