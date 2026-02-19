@@ -380,7 +380,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	e.agent.backupMu.Unlock()
 	rt.ClearProgress()
 
-	// Step 3: Update backup state
+	// Step 3: Update backup state (keep InProgress=true during post-backup steps)
 	e.agent.runtimeMu.Lock()
 	rt.Backup.LastBackupAt = time.Now() // Always update to prevent immediate retry on failure
 	if backupErr != nil {
@@ -390,7 +390,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 		rt.Backup.LastError = ""
 		log.Printf("Executor: backup completed for %s", appID)
 	}
-	rt.Backup.InProgress = false
+	// Don't clear InProgress yet — it stays true until post-backup steps finish
 	e.agent.runtimeMu.Unlock()
 
 	// Step 3b: On success, persist metadata to disk using system time
@@ -410,10 +410,64 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 
 		// Bust snapshot cache so next request sees the new snapshot
 		go e.agent.refreshSnapshotCache(appID)
+
+		// Run prune + check in the background (keeps BackupBusy=true in heartbeats)
+		go e.runPostBackupSteps(appID, rt)
+	} else {
+		// Backup failed — clear InProgress immediately
+		e.agent.runtimeMu.Lock()
+		rt.Backup.InProgress = false
+		e.agent.runtimeMu.Unlock()
 	}
 
 	// Step 4: Reset phase — reconcile will restart the app
 	rt.SetPhase(common.PhaseEmpty)
 
 	return backupErr
+}
+
+// runPostBackupSteps runs restic forget --prune and restic check after a successful backup.
+// Both operations are serialized via backupMu (held across both to prevent interference).
+// PostBackupPhase is used instead of rt.Phase to avoid disrupting the app lifecycle.
+// Clears BackupBusy when complete so the manager knows all post-backup work is done.
+func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
+	e.agent.backupMu.Lock()
+	defer e.agent.backupMu.Unlock()
+
+	// --- Prune ---
+	rt.SetPostBackupPhase("backup_pruning")
+	rt.PhaseLog.Clear()
+	log.Printf("Executor: starting prune for %s", appID)
+	pruneErr := e.restic.Prune(e.ctx, appID, func(line string) {
+		rt.PhaseLog.Write(line)
+	})
+
+	if pruneErr != nil {
+		log.Printf("Executor: prune failed for %s: %s", appID, pruneErr)
+	} else {
+		log.Printf("Executor: prune completed for %s", appID)
+	}
+
+	// --- Check ---
+	rt.SetPostBackupPhase("backup_checking")
+	rt.PhaseLog.Clear()
+	log.Printf("Executor: starting check for %s", appID)
+	checkErr := e.restic.Check(e.ctx, func(line string) {
+		rt.PhaseLog.Write(line)
+	})
+
+	if checkErr != nil {
+		log.Printf("Executor: check failed for %s: %s", appID, checkErr)
+	} else {
+		log.Printf("Executor: check completed for %s", appID)
+	}
+
+	// Post-backup work is complete — clear the BackupBusy flag
+	// so the manager knows it can assign the next backup
+	e.agent.runtimeMu.Lock()
+	rt.Backup.InProgress = false
+	e.agent.runtimeMu.Unlock()
+
+	rt.SetPostBackupPhase("")
+	log.Printf("Executor: post-backup steps completed for %s", appID)
 }

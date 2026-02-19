@@ -31,7 +31,14 @@ const phaseColors: Record<string, string> = {
   backup_stopping: "bg-amber-500",
   backup_stopped: "bg-amber-500",
   backing_up: "bg-amber-500",
+  backup_pruning: "bg-purple-500",
+  backup_checking: "bg-purple-500",
   pulling: "bg-blue-500",
+};
+
+const postBackupPhaseColors: Record<string, string> = {
+  backup_pruning: "bg-purple-500",
+  backup_checking: "bg-purple-500",
 };
 
 const desiredColors: Record<string, string> = {
@@ -147,6 +154,30 @@ export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
     >
       {state}
+    </span>
+  );
+}
+
+interface PostBackupPhaseBadgeProps {
+  phase: string;
+  onClick?: () => void;
+}
+
+export function PostBackupPhaseBadge({ phase, onClick }: PostBackupPhaseBadgeProps) {
+  const color = postBackupPhaseColors[phase] || "bg-purple-500";
+  if (onClick) {
+    return (
+      <button onClick={onClick} className="relative cursor-pointer hover:opacity-80" title="Toggle post-backup logs">
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
+          {phase}
+        </span>
+        <span className="absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
+      </button>
+    );
+  }
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
+      {phase}
     </span>
   );
 }

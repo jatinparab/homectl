@@ -81,6 +81,7 @@ type AppReport struct {
 	LastBackupError   string          `json:"last_backup_error,omitempty"`
 	ActiveConnections bool            `json:"active_connections,omitempty"`
 	LastActiveAt      time.Time       `json:"last_active_at,omitempty"`
+	PostBackupPhase   string          `json:"post_backup_phase,omitempty"`
 }
 
 // DesiredApp is sent from manager to agent with desired state

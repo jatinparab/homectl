@@ -13,6 +13,8 @@ const phaseLabels: Record<string, string> = {
   pulling: "Pull logs",
   restoring: "Restore logs",
   backing_up: "Backup logs",
+  backup_pruning: "Prune logs",
+  backup_checking: "Check logs",
 };
 
 export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: PhaseLogOverlayProps) {

@@ -179,6 +179,7 @@ type NodeReport struct {
 	BackupStatus      string                 `json:"backup_status"`
 	ActiveConnections bool                   `json:"active_connections"`
 	LastActiveAt      string                 `json:"last_active_at,omitempty"`
+	PostBackupPhase   string                 `json:"post_backup_phase,omitempty"`
 }
 
 // UpcomingBackupInfo describes the next scheduled backup
@@ -343,6 +344,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				BackupStatus:      backupStatus,
 				ActiveConnections: report.ActiveConnections,
 				LastActiveAt:      lastActiveStr,
+				PostBackupPhase:   report.PostBackupPhase,
 			}
 			appReportsMap[appID] = append(appReportsMap[appID], nodeReport)
 		}
