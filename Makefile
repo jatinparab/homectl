@@ -128,7 +128,7 @@ sync-manager: build-manager
 	rsync -avz ./scripts/ jatin@$(MANAGER_HOST):$(REMOTE_PATH)/scripts/
 
 # Deployment - Deploy
-deploy: deploy-1 deploy-2 deploy-3 deploy-manager
+deploy: deploy-1 deploy-2 deploy-manager
 	@echo "$(GREEN)All services deployed!$(NC)"
 
 deploy-1: stop-1 sync-1
