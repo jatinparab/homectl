@@ -98,6 +98,9 @@ func (m *Manager) isTraefikHealthy(agentName string) bool {
 	if !ok {
 		return false
 	}
+	if time.Since(agent.LastSeen) >= 30*time.Second {
+		return false
+	}
 	for _, report := range agent.AppReports {
 		if report.AppID == "traefik" && report.ObservedState == common.ObservedRunning && report.Health == common.HealthHealthy {
 			return true

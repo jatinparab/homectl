@@ -192,14 +192,14 @@ type UpcomingBackupInfo struct {
 
 // AppStatus combines desired state with observed state for UI display
 type AppStatus struct {
-	AppID         string       `json:"app_id"`
-	DesiredState  string       `json:"desired_state"`
-	AssignedAgent *string      `json:"assigned_agent"`
-	IsGlobal      bool         `json:"is_global"`      // Runs on all connected nodes
-	ObservedState string       `json:"observed_state"` // Consolidated (worst case)
-	Health        string       `json:"health"`         // Consolidated (worst case)
-	Phase         string       `json:"phase"`          // Consolidated
-	BackupStatus  string       `json:"backup_status"`  // Consolidated worst backup status
+	AppID           string       `json:"app_id"`
+	DesiredState    string       `json:"desired_state"`
+	AssignedAgent   *string      `json:"assigned_agent"`
+	IsGlobal        bool         `json:"is_global"`        // Runs on all connected nodes
+	ObservedState   string       `json:"observed_state"`   // Consolidated (worst case)
+	Health          string       `json:"health"`           // Consolidated (worst case)
+	Phase           string       `json:"phase"`            // Consolidated
+	BackupStatus    string       `json:"backup_status"`    // Consolidated worst backup status
 	BackupEnabled   bool         `json:"backup_enabled"`   // Whether backup is enabled for this app
 	BackupSensitive bool         `json:"backup_sensitive"` // App is sensitive to backup interruptions
 	BackupInterval  string       `json:"backup_interval"`  // Human-readable backup interval
@@ -345,6 +345,17 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				ActiveConnections: report.ActiveConnections,
 				LastActiveAt:      lastActiveStr,
 				PostBackupPhase:   report.PostBackupPhase,
+			}
+			if !agentOnline {
+				// Agent is offline; treat any phase/progress/busy-style fields as stale.
+				nodeReport.ObservedState = "unknown"
+				nodeReport.Health = "unknown"
+				nodeReport.Phase = ""
+				nodeReport.LastError = ""
+				nodeReport.Progress = nil
+				nodeReport.ActiveConnections = false
+				nodeReport.LastActiveAt = ""
+				nodeReport.PostBackupPhase = ""
 			}
 			appReportsMap[appID] = append(appReportsMap[appID], nodeReport)
 		}
