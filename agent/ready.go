@@ -50,6 +50,15 @@ func (rs *ReadyServer) Start() error {
 	mux.HandleFunc("/snapshots/", rs.handleSnapshots)
 	mux.HandleFunc("/snapshot-ls/", rs.handleSnapshotLs)
 
+	// Repo-wide maintenance endpoints
+	mux.HandleFunc("/check", rs.handleRepoCheck)
+	mux.HandleFunc("/check-status", rs.handleRepoCheckStatus)
+	mux.HandleFunc("/check-logs", rs.handleRepoCheckLogs)
+	mux.HandleFunc("/unlock", rs.handleRepoUnlock)
+	mux.HandleFunc("/force-unlock", rs.handleRepoForceUnlock)
+	mux.HandleFunc("/unlock-status", rs.handleRepoUnlockStatus)
+	mux.HandleFunc("/unlock-logs", rs.handleRepoUnlockLogs)
+
 	// Register logs, system-logs, containers, container-logs routes
 	logsHandler := NewLogsHandler(rs.agent)
 	logsHandler.RegisterRoutes(mux)
@@ -61,6 +70,163 @@ func (rs *ReadyServer) Start() error {
 
 	log.Printf("Ready server starting on :%d", ReadyServerPort)
 	return rs.server.ListenAndServe()
+}
+
+// handleRepoCheck triggers a repo-wide restic check.
+// POST /check
+func (rs *ReadyServer) handleRepoCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !rs.agent.IsGateway() {
+		http.Error(w, "not gateway", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := rs.agent.TriggerRepoCheck(); err != nil {
+		if err == ErrRepoOpBusy {
+			http.Error(w, "check already running", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "check_triggered"})
+}
+
+// handleRepoCheckStatus returns current repo check status.
+// GET /check-status
+func (rs *ReadyServer) handleRepoCheckStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rs.agent.RepoCheckStatus())
+}
+
+// handleRepoCheckLogs streams repo check logs from the ring buffer.
+// GET /check-logs
+func (rs *ReadyServer) handleRepoCheckLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rs.streamLogBuffer(w, r, rs.agent.repoCheck.Log)
+}
+
+// handleRepoUnlock triggers a repo-wide restic unlock.
+// POST /unlock
+func (rs *ReadyServer) handleRepoUnlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !rs.agent.IsGateway() {
+		http.Error(w, "not gateway", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := rs.agent.TriggerRepoUnlock(); err != nil {
+		if err == ErrRepoOpBusy {
+			http.Error(w, "unlock already running", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "unlock_triggered"})
+}
+
+// handleRepoForceUnlock triggers a repo-wide restic unlock --remove-all, bypassing busy checks.
+// POST /force-unlock
+func (rs *ReadyServer) handleRepoForceUnlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !rs.agent.IsGateway() {
+		http.Error(w, "not gateway", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := rs.agent.TriggerRepoForceUnlock(); err != nil {
+		if err == ErrRepoOpBusy {
+			http.Error(w, "unlock already running", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "force_unlock_triggered"})
+}
+
+// handleRepoUnlockStatus returns current repo unlock status.
+// GET /unlock-status
+func (rs *ReadyServer) handleRepoUnlockStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rs.agent.RepoUnlockStatus())
+}
+
+// handleRepoUnlockLogs streams repo unlock logs.
+// GET /unlock-logs
+func (rs *ReadyServer) handleRepoUnlockLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rs.streamLogBuffer(w, r, rs.agent.repoUnlock.Log)
+}
+
+func (rs *ReadyServer) streamLogBuffer(w http.ResponseWriter, r *http.Request, buf *PhaseLogBuffer) {
+	if buf == nil {
+		http.Error(w, "log buffer not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	for _, line := range buf.Snapshot() {
+		w.Write([]byte(line + "\n"))
+	}
+	flusher.Flush()
+
+	ch := buf.Follow()
+	defer buf.Unfollow(ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			w.Write([]byte(line + "\n"))
+			flusher.Flush()
+		}
+	}
 }
 
 // Stop stops the ready server

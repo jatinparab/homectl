@@ -65,34 +65,42 @@ type Agent struct {
 	// Backup fields
 	backupMu sync.Mutex
 
+	// Repo-wide maintenance (restic check/unlock)
+	repoCheck  *RepoOpState
+	repoUnlock *RepoOpState
+
 	// Snapshot cache
-	snapshotCache      map[common.AppID]*SnapshotCache
-	snapshotCancelFns  map[common.AppID]context.CancelFunc
-	snapshotCacheMu    sync.RWMutex
+	snapshotCache     map[common.AppID]*SnapshotCache
+	snapshotCancelFns map[common.AppID]context.CancelFunc
+	snapshotCacheMu   sync.RWMutex
 }
 
 // NewAgent creates a new Agent instance
 func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
-	return &Agent{
-		name:          name,
-		ip:            ip,
-		config:        cfg,
-		agentConfig:   agentCfg,
-		managerURL:    managerURL,
-		dockerRootDir: dockerRootDir,
-		appdataDir:    appdataDir,
-		user:          user,
-		managerClient: client.NewClient(managerURL),
-		runtime:       make(map[common.AppID]*AppRuntime),
-		assignedApps:  make(map[common.AppID]bool),
-		restic:        NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
-		stopChan:      make(chan struct{}),
-		sensorCtx:     sensorCtx,
-		sensorCancel:  sensorCancel,
+	a := &Agent{
+		name:              name,
+		ip:                ip,
+		config:            cfg,
+		agentConfig:       agentCfg,
+		managerURL:        managerURL,
+		dockerRootDir:     dockerRootDir,
+		appdataDir:        appdataDir,
+		user:              user,
+		managerClient:     client.NewClient(managerURL),
+		runtime:           make(map[common.AppID]*AppRuntime),
+		assignedApps:      make(map[common.AppID]bool),
+		restic:            NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
+		stopChan:          make(chan struct{}),
+		sensorCtx:         sensorCtx,
+		sensorCancel:      sensorCancel,
+		repoCheck:         NewRepoOpState(),
+		repoUnlock:        NewRepoOpState(),
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
+	a.loadRepoOpsState()
+	return a
 }
 
 // Init initializes an agent (best-effort, doesn't require manager to be up)
@@ -423,11 +431,17 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 		return ActionQuarantine(app.AppID)
 	}
 
-	// Running + healthy: check if manager assigned BackupNow (only if backup enabled and not post-processing)
+	// Running + healthy: check if manager assigned BackupNow
 	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
 		log.Printf("Reconcile: %s manager requested backup, transitioning to BackupStopping", app.AppID)
 		rt.SetPhase(common.PhaseBackupStopping)
 		return ActionStop(app.AppID)
+	}
+
+	// Running + healthy: check if manager assigned PruneNow
+	if app.BackupEnabled && app.PruneNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
+		log.Printf("Reconcile: %s manager requested prune, executing prune", app.AppID)
+		return ActionPrune(app.AppID)
 	}
 
 	return ActionNone()

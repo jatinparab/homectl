@@ -44,10 +44,18 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/containers/", m.handleAPIContainerLogs)
 	mux.HandleFunc("/api/v1/apps-desired-state/", m.handleAPIAppDesiredState)
 	mux.HandleFunc("/api/v1/backup/upcoming", m.handleAPIUpcomingBackup)
+	mux.HandleFunc("/api/v1/prune/upcoming", m.handleAPIUpcomingPrune)
 	mux.HandleFunc("/api/v1/sync", m.handleAPISync)
 	mux.HandleFunc("/api/v1/apps-restore/", m.handleAPIAppRestore)
 	mux.HandleFunc("/api/v1/rebalance", m.handleAPIRebalance)
 	mux.HandleFunc("/api/v1/snapshots/", m.handleAPISnapshotLs)
+	mux.HandleFunc("/api/v1/repo/status", m.handleAPIRepoStatus)
+	mux.HandleFunc("/api/v1/repo/check", m.handleAPIRepoCheck)
+	mux.HandleFunc("/api/v1/repo/check-logs", m.handleAPIRepoCheckLogs)
+	mux.HandleFunc("/api/v1/repo/unlock", m.handleAPIRepoUnlock)
+	mux.HandleFunc("/api/v1/repo/force-unlock", m.handleAPIRepoForceUnlock)
+	mux.HandleFunc("/api/v1/repo/unlock-logs", m.handleAPIRepoUnlockLogs)
+	mux.HandleFunc("/api/v1/gateway", m.handleAPIGateway)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
@@ -222,26 +230,23 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	agentApps := m.appRegistry.AppsForAgent(agentID)
 	appConfigs := m.loadAppConfigs()
 
-	// Resolve backup assignment under lock
+	// Resolve scheduled backup/prune assignments under lock
 	m.backupMu.Lock()
-	assignment := m.resolveBackupAssignment()
+	backupAssignment, pruneAssignment := m.resolveWorkAssignments()
 	m.backupMu.Unlock()
 
-	// Check pending global restores under backupMu
+	// Check pending global restores under backupMu (do not clear yet; clear after dispatch)
 	m.backupMu.Lock()
 	pendingRestoreApps := make(map[common.AppID]bool)
 	for appID, agents := range m.pendingGlobalRestores {
 		if agents[agentID] {
 			pendingRestoreApps[appID] = true
-			delete(agents, agentID)
-			if len(agents) == 0 {
-				delete(m.pendingGlobalRestores, appID)
-			}
 		}
 	}
 	m.backupMu.Unlock()
 
 	desiredApps := make([]common.DesiredApp, 0, len(agentApps))
+	restoreSent := make(map[common.AppID]bool)
 	for _, app := range agentApps {
 		da := common.DesiredApp{
 			AppID:          app.ID,
@@ -253,13 +258,34 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 			da.BackupSensitive = cfg.BackupSensitive
 			da.BackupEnabled = cfg.IsBackupEnabled()
 		}
-		if da.BackupEnabled && assignment != nil && assignment.AgentID == agentID && assignment.AppID == app.ID {
+		if da.BackupEnabled && backupAssignment != nil && backupAssignment.AgentID == agentID && backupAssignment.AppID == app.ID {
 			da.BackupNow = true
 		}
+		if da.BackupEnabled && pruneAssignment != nil && pruneAssignment.AgentID == agentID && pruneAssignment.AppID == app.ID {
+			da.PruneNow = true
+		}
 		if pendingRestoreApps[app.ID] {
-			da.RestoreNow = true
+			if !m.anyBackupBusy() && !m.anyPruneBusy() && !m.isRepoBusy() {
+				da.RestoreNow = true
+				restoreSent[app.ID] = true
+			}
 		}
 		desiredApps = append(desiredApps, da)
+	}
+
+	if len(restoreSent) > 0 {
+		m.backupMu.Lock()
+		for appID := range restoreSent {
+			agents := m.pendingGlobalRestores[appID]
+			if agents == nil {
+				continue
+			}
+			delete(agents, agentID)
+			if len(agents) == 0 {
+				delete(m.pendingGlobalRestores, appID)
+			}
+		}
+		m.backupMu.Unlock()
 	}
 
 	response := common.DesiredAppsResponse{Apps: desiredApps}
@@ -374,4 +400,3 @@ func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Docker sync archive sent successfully")
 }
-
