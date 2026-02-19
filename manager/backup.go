@@ -100,6 +100,10 @@ func (m *Manager) findStalestApp() (agentID string, appID common.AppID, ok bool)
 	var stalestTime time.Time
 
 	for _, agent := range agents {
+		// Only schedule backups on online agents.
+		if now.Sub(agent.LastSeen) >= 30*time.Second {
+			continue
+		}
 		for _, report := range agent.AppReports {
 			cfg := appConfigs[string(report.AppID)]
 
@@ -241,7 +245,11 @@ func (m *Manager) triggerGlobalRestore(agentID string, appID common.AppID) {
 // anyBackupBusy scans all agents' reports for BackupBusy=true.
 func (m *Manager) anyBackupBusy() bool {
 	agents := m.leaseManager.ListAgents()
+	now := time.Now()
 	for _, agent := range agents {
+		if now.Sub(agent.LastSeen) >= 30*time.Second {
+			continue
+		}
 		for _, report := range agent.AppReports {
 			if report.BackupBusy {
 				return true
@@ -257,6 +265,9 @@ func (m *Manager) isAppBackupBusy(agentID string, appID common.AppID) bool {
 	if !ok {
 		return false
 	}
+	if time.Since(agent.LastSeen) >= 30*time.Second {
+		return false
+	}
 	for _, report := range agent.AppReports {
 		if report.AppID == appID {
 			return report.BackupBusy
@@ -269,6 +280,9 @@ func (m *Manager) isAppBackupBusy(agentID string, appID common.AppID) bool {
 func (m *Manager) appBackupAtNewer(agentID string, appID common.AppID, than time.Time) bool {
 	agent, ok := m.leaseManager.GetAgent(agentID)
 	if !ok {
+		return false
+	}
+	if time.Since(agent.LastSeen) >= 30*time.Second {
 		return false
 	}
 	for _, report := range agent.AppReports {
