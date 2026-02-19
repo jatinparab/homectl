@@ -5,15 +5,24 @@ import {
   fetchSystemLogSources,
   fetchContainers,
   fetchUpcomingBackup,
+  fetchUpcomingPrune,
   fetchSnapshots,
   fetchSnapshotFiles,
   refreshSnapshots,
   restartApp,
   triggerBackup,
+  triggerPrune,
+  triggerRepoCheck,
+  triggerRepoUnlock,
   triggerRebalance,
   triggerSync,
   updateAppRestoreEnabled,
   updateAppDesiredState,
+  fetchRepoStatus,
+  fetchGatewayInfo,
+  setManualGateway,
+  clearManualGateway,
+  forceRepoUnlock,
 } from "./client";
 
 export function useApps() {
@@ -56,6 +65,14 @@ export function useUpcomingBackup() {
   });
 }
 
+export function useUpcomingPrune() {
+  return useQuery({
+    queryKey: ["upcoming-prune"],
+    queryFn: fetchUpcomingPrune,
+    refetchInterval: 2000,
+  });
+}
+
 export function useRestartApp() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -74,6 +91,19 @@ export function useTriggerBackup() {
       triggerBackup(appId, node),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
+      queryClient.invalidateQueries({ queryKey: ["upcoming-backup"] });
+    },
+  });
+}
+
+export function useTriggerPrune() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
+      triggerPrune(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+      queryClient.invalidateQueries({ queryKey: ["upcoming-prune"] });
     },
   });
 }
@@ -146,6 +176,75 @@ export function useUpdateAppDesiredState() {
       updateAppDesiredState(appId, state),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useRepoStatus() {
+  return useQuery({
+    queryKey: ["repo-status"],
+    queryFn: fetchRepoStatus,
+    refetchInterval: (query) =>
+      query.state.data?.check.busy || query.state.data?.unlock.busy ? 2000 : 10000,
+  });
+}
+
+export function useTriggerRepoCheck() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerRepoCheck,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
+    },
+  });
+}
+
+export function useTriggerRepoUnlock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerRepoUnlock,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
+    },
+  });
+}
+
+export function useGatewayInfo() {
+  return useQuery({
+    queryKey: ["gateway"],
+    queryFn: fetchGatewayInfo,
+    refetchInterval: 5000,
+  });
+}
+
+export function useSetManualGateway() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (node: string) => setManualGateway(node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gateway"] });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+export function useClearManualGateway() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: clearManualGateway,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gateway"] });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+export function useForceRepoUnlock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: forceRepoUnlock,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
     },
   });
 }

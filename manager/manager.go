@@ -42,10 +42,25 @@ type Manager struct {
 
 	backupMu              sync.Mutex
 	backupAssignment      *BackupAssignment
+	pruneAssignment       *BackupAssignment
+	lastScheduledWorkKind string
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
+	pruneState            map[common.AppID]PruneState
 
-	gatewayNode string
-	gatewayMu   sync.Mutex
+	// Repo-wide maintenance (restic check/unlock), coordinated via gateway node.
+	repoMu                      sync.Mutex
+	repoCheckBusy               bool
+	repoUnlockBusy              bool
+	repoLastCheckAt             time.Time
+	repoLastUnlockAt            time.Time
+	repoLastCheckErr            string
+	repoLastUnlockErr           string
+	repoLastStatusSyncAt        time.Time
+	repoLastStatusFetchErrLogAt time.Time
+
+	gatewayNode       string
+	manualGatewayNode string // User-selected gateway (overrides automatic selection)
+	gatewayMu         sync.Mutex
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -60,7 +75,7 @@ func NewManager(repoDir string, port int) *Manager {
 // NewManagerWithConfig creates a new Manager instance with custom config
 func NewManagerWithConfig(cfg Config) *Manager {
 	stateDir := filepath.Join(filepath.Dir(cfg.RepoDir), ".homectl")
-	return &Manager{
+	mgr := &Manager{
 		repoDir:      cfg.RepoDir,
 		stateDir:     stateDir,
 		port:         cfg.Port,
@@ -71,7 +86,11 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		config:                config.NewConfig(),
 		appRegistry:           NewAppRegistry(),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
+		pruneState:            make(map[common.AppID]PruneState),
 	}
+	mgr.loadRepoState()
+	mgr.loadPruneState()
+	return mgr
 }
 
 // RepoDir returns the repository directory
@@ -270,4 +289,3 @@ func (m *Manager) DiscoverApps() {
 	}
 	log.Printf("App discovery: found %d apps in docker/v2", count)
 }
-

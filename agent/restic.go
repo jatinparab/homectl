@@ -54,6 +54,8 @@ type Restic interface {
 	Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
 	Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error
 	Check(ctx context.Context, onLog LogCallback) error
+	Unlock(ctx context.Context, onLog LogCallback) error
+	ForceUnlock(ctx context.Context, onLog LogCallback) error
 	LatestSnapshot(ctx context.Context, appID common.AppID) (snapshotTime time.Time, snapshotID string, err error)
 	ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error)
 	ListSnapshotFiles(ctx context.Context, snapshotID, path string) ([]SnapshotEntry, error)
@@ -192,6 +194,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repo,
+		"--retry-lock", "2m",
 		"--json",
 		"restore",
 		"--target", r.appDataDir,
@@ -237,6 +240,7 @@ func containsNoSnapshotError(line string) bool {
 func (r *RepoRestic) Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repo,
+		"--retry-lock", "2m",
 		"--json",
 		"--tag", "homectl", "--tag", string(appID),
 		"backup", string(appID),
@@ -304,6 +308,18 @@ func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCal
 func (r *RepoRestic) Check(ctx context.Context, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "--retry-lock", "5m", "check", "--read-data-subset=1%")
 	return r.runLines("check", cmd, onLog)
+}
+
+// Unlock removes stale locks from the restic repository.
+func (r *RepoRestic) Unlock(ctx context.Context, onLog LogCallback) error {
+	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "unlock")
+	return r.runLines("unlock", cmd, onLog)
+}
+
+// ForceUnlock removes all locks from the restic repository, including locks held by other clients.
+func (r *RepoRestic) ForceUnlock(ctx context.Context, onLog LogCallback) error {
+	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "unlock", "--remove-all")
+	return r.runLines("force-unlock", cmd, onLog)
 }
 
 // resticSnapshot represents a snapshot entry from restic snapshots --json
@@ -374,7 +390,7 @@ func (r *RepoRestic) ListSnapshots(ctx context.Context, appID common.AppID) ([]S
 
 // resticLsEntry is the raw JSON output from restic ls --json
 type resticLsEntry struct {
-	Type  string `json:"type"`  // "file", "dir", "snapshot"
+	Type  string `json:"type"` // "file", "dir", "snapshot"
 	Path  string `json:"path"`
 	Name  string `json:"name"`
 	Size  uint64 `json:"size"`

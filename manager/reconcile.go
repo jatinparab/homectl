@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	reconcileInterval      = 30 * time.Second
-	migrationCooldown      = 10 * time.Minute
-	deadAgentGracePeriod   = 3 * time.Minute
+	reconcileInterval    = 30 * time.Second
+	migrationCooldown    = 10 * time.Minute
+	deadAgentGracePeriod = 3 * time.Minute
 )
 
 // StartReconcileLoop starts the periodic reconciliation loop.
@@ -52,17 +52,30 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	})
 
 	m.resolveGateway()
-	m.invalidateBackupAssignment(alive)
+	m.invalidateWorkAssignments(alive)
+	m.reconcileRepoOps(now)
 }
 
 // resolveGateway picks one online agent with traefik running+healthy as the gateway node.
-// If the current gateway is still valid, it keeps it. Otherwise it scans for a new one.
+// If a manual gateway is set and valid, uses it. Otherwise it scans for a new one automatically.
 func (m *Manager) resolveGateway() {
 	m.gatewayMu.Lock()
 	defer m.gatewayMu.Unlock()
 
+	// Check if manual gateway is set and still valid
+	if m.manualGatewayNode != "" {
+		if m.isTraefikHealthy(m.manualGatewayNode) {
+			if m.gatewayNode != m.manualGatewayNode {
+				log.Printf("Gateway: using manual selection %s", m.manualGatewayNode)
+			}
+			m.gatewayNode = m.manualGatewayNode
+			return
+		}
+		log.Printf("Gateway: manual selection %s no longer valid, falling back to automatic", m.manualGatewayNode)
+	}
+
 	// Check if current gateway is still valid
-	if m.gatewayNode != "" {
+	if m.gatewayNode != "" && m.gatewayNode != m.manualGatewayNode {
 		if m.isTraefikHealthy(m.gatewayNode) {
 			return
 		}
@@ -77,7 +90,7 @@ func (m *Manager) resolveGateway() {
 			m.gatewayNode = agent.Name
 			if old == "" {
 				log.Printf("Gateway: assigned %s", agent.Name)
-			} else {
+			} else if old != agent.Name {
 				log.Printf("Gateway: transitioned %s -> %s", old, agent.Name)
 			}
 			return
@@ -95,6 +108,9 @@ func (m *Manager) resolveGateway() {
 func (m *Manager) isTraefikHealthy(agentName string) bool {
 	agent, ok := m.leaseManager.GetAgent(agentName)
 	if !ok {
+		return false
+	}
+	if time.Since(agent.LastSeen) >= 30*time.Second {
 		return false
 	}
 	for _, report := range agent.AppReports {

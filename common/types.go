@@ -66,19 +66,22 @@ type ResticProgress struct {
 
 // AppReport is sent from agent to manager in heartbeats
 type AppReport struct {
-	AppID         AppID         `json:"app_id"`
-	ObservedState ObservedState `json:"observed_state"`
-	Health        HealthStatus  `json:"health"`
-	Phase         Phase         `json:"phase"`
-	LastError     string        `json:"last_error,omitempty"`
-	RestartCount  int           `json:"restart_count"`
-	Quarantined   bool          `json:"quarantined"`
-	Port          int           `json:"port,omitempty"`
+	AppID             AppID           `json:"app_id"`
+	ObservedState     ObservedState   `json:"observed_state"`
+	Health            HealthStatus    `json:"health"`
+	Phase             Phase           `json:"phase"`
+	LastError         string          `json:"last_error,omitempty"`
+	RestartCount      int             `json:"restart_count"`
+	Quarantined       bool            `json:"quarantined"`
+	Port              int             `json:"port,omitempty"`
 	BackupBusy        bool            `json:"backup_busy,omitempty"`
+	PruneBusy         bool            `json:"prune_busy,omitempty"`
 	Progress          *ResticProgress `json:"progress,omitempty"`
 	LastBackupAt      time.Time       `json:"last_backup_at,omitempty"`
+	LastPruneAt       time.Time       `json:"last_prune_at,omitempty"`
 	BackupDefer       time.Time       `json:"backup_defer,omitempty"`
 	LastBackupError   string          `json:"last_backup_error,omitempty"`
+	LastPruneError    string          `json:"last_prune_error,omitempty"`
 	ActiveConnections bool            `json:"active_connections,omitempty"`
 	LastActiveAt      time.Time       `json:"last_active_at,omitempty"`
 	PostBackupPhase   string          `json:"post_backup_phase,omitempty"`
@@ -90,6 +93,7 @@ type DesiredApp struct {
 	DesiredState    DesiredState `json:"desired_state"`
 	BackupSensitive bool         `json:"backup_sensitive,omitempty"`
 	BackupNow       bool         `json:"backup_now,omitempty"`
+	PruneNow        bool         `json:"prune_now,omitempty"`
 	BackupEnabled   bool         `json:"backup_enabled"`
 	RestoreEnabled  bool         `json:"restore_enabled"`
 	RestoreNow      bool         `json:"restore_now,omitempty"`
