@@ -31,14 +31,15 @@ func DefaultConfig() Config {
 
 // Manager handles git sync and file serving for agents
 type Manager struct {
-	repoDir         string
-	stateDir        string
-	port            int
-	leaseManager    *LeaseManager
-	httpClient      *http.Client
-	config          *config.Config
-	appRegistry     *AppRegistry
-	reconcileCancel context.CancelFunc
+	repoDir          string
+	stateDir         string
+	port             int
+	leaseManager     *LeaseManager
+	httpClient       *http.Client
+	streamHTTPClient *http.Client
+	config           *config.Config
+	appRegistry      *AppRegistry
+	reconcileCancel  context.CancelFunc
 
 	backupMu              sync.Mutex
 	backupAssignment      *BackupAssignment
@@ -83,6 +84,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		streamHTTPClient:      &http.Client{},
 		config:                config.NewConfig(),
 		appRegistry:           NewAppRegistry(),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
