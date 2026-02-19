@@ -8,9 +8,11 @@ import (
 )
 
 type BackupState struct {
-	LastBackupAt time.Time
-	InProgress   bool
-	LastError    string
+	LastBackupAt  time.Time
+	BackupDefer   time.Time // Don't schedule first backup before this time
+	InProgress    bool
+	LastError     string
+	JustBackedUp  bool // set after successful local backup; cleared on next start
 }
 
 // AppRuntime tracks the runtime state of a single application
@@ -24,20 +26,30 @@ type AppRuntime struct {
 	LastSeen     time.Time            // Last time sensor saw this app
 	RestartCount int                  // Incremented on each start/restart
 	Quarantined  bool                 // Set when RestartCount >= MaxRestarts
-	InFlight     bool                 // Action in progress
+	InFlight       bool   // Action in progress
+	InFlightAction string // Description of the in-flight action
 	LastError    string               // Last error message
-	Port         int                  // First exposed port (for traefik routing)
-	Progress     *common.ResticProgress // Restic backup/restore progress
-	Backup       BackupState
+	Port            int                    // First exposed port (for traefik routing)
+	Progress        *common.ResticProgress // Restic backup/restore progress
+	Backup          BackupState
+	BackupSensitive bool // App is sensitive to backup interruptions (e.g. media streaming)
+	BackupEnabled   bool // Whether backups/restores are enabled for this app (default true)
+	RestoreEnabled  bool // Whether restore-on-start is enabled (default true)
+	PhaseLog        *PhaseLogBuffer // Ring buffer for phase (pull) logs
+	UnhealthyCount  int  // Consecutive unhealthy health checks
+	LastActiveAt    time.Time // Last time active TCP connections were seen
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
 func NewAppRuntime(appID common.AppID) *AppRuntime {
 	return &AppRuntime{
-		AppID:  appID,
-		Health: common.HealthUnknown,
+		AppID:         appID,
+		Health:        common.HealthUnknown,
+		BackupEnabled:  true, // default enabled
+		RestoreEnabled: true, // default enabled
+		PhaseLog:       NewPhaseLogBuffer(),
 		Backup: BackupState{
-			LastBackupAt: time.Now(), // Defer first backup by 1 hour
+			BackupDefer: time.Now().Add(1 * time.Hour), // Defer first backup by 1 hour
 		},
 	}
 }
@@ -70,11 +82,23 @@ func (r *AppRuntime) ResetRestartCount() {
 	r.RestartCount = 0
 }
 
-// SetHealth updates the health status
+// SetHealth updates the health status and tracks consecutive unhealthy checks.
 func (r *AppRuntime) SetHealth(health common.HealthStatus) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Health = health
+	if health == common.HealthUnhealthy {
+		r.UnhealthyCount++
+	} else {
+		r.UnhealthyCount = 0
+	}
+}
+
+// GetUnhealthyCount returns the consecutive unhealthy check count (thread-safe).
+func (r *AppRuntime) GetUnhealthyCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.UnhealthyCount
 }
 
 // IncrementRestarts increments the restart count
@@ -91,11 +115,23 @@ func (r *AppRuntime) SetQuarantined(quarantined bool) {
 	r.Quarantined = quarantined
 }
 
-// SetInFlight sets the in-flight status
-func (r *AppRuntime) SetInFlight(inFlight bool) {
+// SetInFlight sets the in-flight status with an optional action description.
+func (r *AppRuntime) SetInFlight(inFlight bool, action ...string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.InFlight = inFlight
+	if inFlight && len(action) > 0 {
+		r.InFlightAction = action[0]
+	} else if !inFlight {
+		r.InFlightAction = ""
+	}
+}
+
+// GetInFlightAction returns the description of the in-flight action (thread-safe).
+func (r *AppRuntime) GetInFlightAction() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.InFlightAction
 }
 
 // SetLastError sets the last error
@@ -124,6 +160,48 @@ func (r *AppRuntime) ClearProgress() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Progress = nil
+}
+
+// SetBackupSensitive sets the backup-sensitive flag
+func (r *AppRuntime) SetBackupSensitive(sensitive bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.BackupSensitive = sensitive
+}
+
+// IsBackupSensitive returns the backup-sensitive flag (thread-safe)
+func (r *AppRuntime) IsBackupSensitive() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.BackupSensitive
+}
+
+// SetBackupEnabled sets whether backups/restores are enabled
+func (r *AppRuntime) SetBackupEnabled(enabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.BackupEnabled = enabled
+}
+
+// IsBackupEnabled returns whether backups/restores are enabled (thread-safe)
+func (r *AppRuntime) IsBackupEnabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.BackupEnabled
+}
+
+// SetRestoreEnabled sets whether restore-on-start is enabled
+func (r *AppRuntime) SetRestoreEnabled(enabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.RestoreEnabled = enabled
+}
+
+// IsRestoreEnabled returns whether restore-on-start is enabled (thread-safe)
+func (r *AppRuntime) IsRestoreEnabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.RestoreEnabled
 }
 
 // RunningStatus returns whether the app is running (thread-safe)
@@ -166,18 +244,21 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return AppRuntime{
-		AppID:        r.AppID,
-		Phase:        r.Phase,
-		Running:      r.Running,
-		Health:       r.Health,
-		LastSeen:     r.LastSeen,
-		RestartCount: r.RestartCount,
-		Quarantined:  r.Quarantined,
-		InFlight:     r.InFlight,
-		LastError:    r.LastError,
-		Port:         r.Port,
-		Progress:     r.Progress,
-		Backup:       r.Backup,
+		AppID:           r.AppID,
+		Phase:           r.Phase,
+		Running:         r.Running,
+		Health:          r.Health,
+		LastSeen:        r.LastSeen,
+		RestartCount:    r.RestartCount,
+		Quarantined:     r.Quarantined,
+		InFlight:        r.InFlight,
+		LastError:       r.LastError,
+		Port:            r.Port,
+		Progress:        r.Progress,
+		Backup:          r.Backup,
+		BackupSensitive: r.BackupSensitive,
+		BackupEnabled:   r.BackupEnabled,
+		RestoreEnabled:  r.RestoreEnabled,
 	}
 }
 
@@ -209,15 +290,19 @@ func (r *AppRuntime) ToReport() common.AppReport {
 	}
 
 	return common.AppReport{
-		AppID:         r.AppID,
-		ObservedState: observed,
-		Health:        r.Health,
-		Phase:         phase,
-		LastError:     r.LastError,
-		RestartCount:  r.RestartCount,
-		Quarantined:   r.Quarantined,
-		Port:          r.Port,
-		BackupBusy:    r.Backup.InProgress,
-		Progress:      r.Progress,
+		AppID:           r.AppID,
+		ObservedState:   observed,
+		Health:          r.Health,
+		Phase:           phase,
+		LastError:       r.LastError,
+		RestartCount:    r.RestartCount,
+		Quarantined:     r.Quarantined,
+		Port:            r.Port,
+		BackupBusy:      r.Backup.InProgress,
+		Progress:        r.Progress,
+		LastBackupAt:    r.Backup.LastBackupAt,
+		BackupDefer:     r.Backup.BackupDefer,
+		LastActiveAt:    r.LastActiveAt,
+		LastBackupError: r.Backup.LastError,
 	}
 }

@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -409,13 +411,87 @@ func (d *Docker) Start(appID string) error {
 	return d.RunDockerComposeUp(appID)
 }
 
-// Stop stops a docker compose application
+// streamCommand runs a command and streams stdout+stderr line-by-line via onLog.
+func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start command: %w", err)
+	}
+
+	// Merge stdout and stderr into a single reader
+	merged := io.MultiReader(stdout, stderr)
+	scanner := bufio.NewScanner(merged)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if onLog != nil {
+			onLog(line)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Pull pulls images for a docker compose service, streaming output line-by-line.
+func (d *Docker) Pull(appID string, onLog func(string)) error {
+	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("docker compose file not found: %s", path)
+	}
+	cmd := exec.Command("docker", "compose", "--progress=plain", "-f", path, "pull")
+	cmd.Env = d.ComposeEnv()
+	if err := d.streamCommand(cmd, onLog); err != nil {
+		return fmt.Errorf("docker compose pull failed: %w", err)
+	}
+	return nil
+}
+
+// StartWithLogs pulls images (with streaming) then starts the service, streaming output.
+func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
+	// Pull images first
+	if err := d.Pull(appID, onLog); err != nil {
+		return err
+	}
+
+	// Then run docker compose up -d with streaming
+	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+	cmd := exec.Command("docker", "compose", "-f", path, "up", "-d")
+	cmd.Env = d.ComposeEnv()
+	if err := d.streamCommand(cmd, onLog); err != nil {
+		return fmt.Errorf("docker compose up failed: %w", err)
+	}
+
+	// Wait for the service to be ready on its first port
+	ports, err := d.GetPorts(appID)
+	if err != nil {
+		return nil
+	}
+	if len(ports) > 0 {
+		if err := waitForService(d.ctx, ports[0], 5, 30*time.Second); err != nil {
+			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
+		}
+	}
+
+	return nil
+}
+
+// Stop gracefully stops and removes a docker compose application (SIGTERM with 60s timeout).
 func (d *Docker) Stop(appID string) error {
 	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	command := exec.Command("docker", "compose", "-f", path, "down")
+	command := exec.Command("docker", "compose", "-f", path, "down", "-t", "60")
 	command.Env = d.ComposeEnv()
 	output, err := command.CombinedOutput()
 	if err != nil {

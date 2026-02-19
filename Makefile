@@ -60,8 +60,9 @@ build: build-agent build-manager
 	@echo "$(GREEN)Build complete!$(NC)"
 
 build-agent:
-	@echo "$(GREEN)Building agent (linux/amd64)...$(NC)"
+	@echo "$(GREEN)Building agent (linux/amd64 + linux/arm64)...$(NC)"
 	GOOS=linux GOARCH=amd64 go build -o ./bin/agent-amd64 ./agent/cmd
+	GOOS=linux GOARCH=arm64 go build -o ./bin/agent-arm64 ./agent/cmd
 
 build-manager: build-web
 	@echo "$(GREEN)Building manager (linux/amd64)...$(NC)"
@@ -74,7 +75,7 @@ build-amd64:
 
 build-arm64:
 	@echo "$(GREEN)Building binaries (linux/arm64)...$(NC)"
-	GOOS=linux GOARCH=arm64 go build -o ./bin/agent-amd64 ./agent/cmd
+	GOOS=linux GOARCH=arm64 go build -o ./bin/agent-arm64 ./agent/cmd
 	GOOS=linux GOARCH=arm64 go build -o ./bin/manager-arm64 ./manager/cmd
 
 build-all: build-amd64 build-arm64
@@ -94,8 +95,8 @@ manager:
 	go run ./manager/cmd
 
 # Deployment - Sync
-# Agents are ARM64 (Raspberry Pi / ARM nodes)
-# Manager is AMD64 (VPS)
+# Node 1 (101) = amd64, Node 2 (102) = arm64, Node 3 (103) = amd64
+# Manager = AMD64 (VPS)
 sync: build
 	@echo "$(GREEN)Syncing to all nodes...$(NC)"
 	@$(MAKE) sync-1
@@ -111,7 +112,7 @@ sync-1: build-agent
 sync-2: build-agent
 	@echo "Syncing to node 2 ($(NODE_2_HOST))..."
 	ssh jatin@$(NODE_2_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts'
-	scp ./bin/agent-amd64 jatin@$(NODE_2_HOST):$(REMOTE_PATH)/bin/agent
+	scp ./bin/agent-arm64 jatin@$(NODE_2_HOST):$(REMOTE_PATH)/bin/agent
 	rsync -avz ./scripts/ jatin@$(NODE_2_HOST):$(REMOTE_PATH)/scripts/
 
 sync-3: build-agent
@@ -127,7 +128,7 @@ sync-manager: build-manager
 	rsync -avz ./scripts/ jatin@$(MANAGER_HOST):$(REMOTE_PATH)/scripts/
 
 # Deployment - Deploy
-deploy: deploy-manager deploy-1 deploy-2 deploy-3
+deploy: deploy-1 deploy-2 deploy-3 deploy-manager
 	@echo "$(GREEN)All services deployed!$(NC)"
 
 deploy-1: stop-1 sync-1

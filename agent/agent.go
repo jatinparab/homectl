@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 
 const (
 	// MaxRestarts is the maximum number of restarts before quarantining an app
-	MaxRestarts = 2
+	MaxRestarts = 5
+	// UnhealthyThreshold is the number of consecutive unhealthy checks before triggering a restart
+	UnhealthyThreshold = 5
 )
 
 // Agent manages docker applications on a host
@@ -33,14 +37,19 @@ type Agent struct {
 	user          string // User for docker compose commands
 
 	// Runtime state
-	runtime   map[common.AppID]*AppRuntime
-	runtimeMu sync.RWMutex
+	runtime      map[common.AppID]*AppRuntime
+	assignedApps map[common.AppID]bool // apps assigned to this node by the manager
+	runtimeMu    sync.RWMutex
 
 	// Executor, Restic, Traefik, Ready, and Logs
 	executor    *Executor
 	restic      Restic
 	traefikSync *TraefikSync
 	readyServer *ReadyServer
+
+	// Gateway state (set by manager)
+	isGateway   bool
+	isGatewayMu sync.RWMutex
 
 	// Connection state
 	connected   bool
@@ -55,6 +64,11 @@ type Agent struct {
 
 	// Backup fields
 	backupMu sync.Mutex
+
+	// Snapshot cache
+	snapshotCache      map[common.AppID]*SnapshotCache
+	snapshotCancelFns  map[common.AppID]context.CancelFunc
+	snapshotCacheMu    sync.RWMutex
 }
 
 // NewAgent creates a new Agent instance
@@ -71,10 +85,13 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		user:          user,
 		managerClient: client.NewClient(managerURL),
 		runtime:       make(map[common.AppID]*AppRuntime),
+		assignedApps:  make(map[common.AppID]bool),
 		restic:        NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
 		stopChan:      make(chan struct{}),
 		sensorCtx:     sensorCtx,
 		sensorCancel:  sensorCancel,
+		snapshotCache:     make(map[common.AppID]*SnapshotCache),
+		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
 }
 
@@ -113,22 +130,29 @@ func (a *Agent) tryConnect() {
 		return
 	}
 
-	// Sync docker configs from manager to local directory
-	log.Printf("Syncing docker configs to %s...", a.dockerRootDir)
-	if err := a.managerClient.SyncDockerConfigs(a.dockerRootDir); err != nil {
-		log.Printf("Failed to sync docker configs: %s (will retry)", err)
+	if err := a.SyncConfigs(); err != nil {
+		log.Printf("Failed to sync configs: %s (will retry)", err)
 		a.setConnected(false)
 		return
+	}
+
+	a.setConnected(true)
+	log.Printf("Connected to manager at %s", a.managerURL)
+}
+
+// SyncConfigs pulls docker configs from the manager and reloads apps.
+func (a *Agent) SyncConfigs() error {
+	log.Printf("Syncing docker configs to %s...", a.dockerRootDir)
+	if err := a.managerClient.SyncDockerConfigs(a.dockerRootDir); err != nil {
+		return fmt.Errorf("sync docker configs: %w", err)
 	}
 	log.Printf("Docker configs synced successfully")
 
 	// Create Docker instance using local files
 	d := docker.NewDocker(a.dockerRootDir, a.appdataDir, a.user)
-	d.SetContext(a.sensorCtx) // Use agent's context for cancellation
+	d.SetContext(a.sensorCtx)
 	if err := d.LoadApps(); err != nil {
-		log.Printf("Failed to load apps: %s (will retry)", err)
-		a.setConnected(false)
-		return
+		return fmt.Errorf("load apps: %w", err)
 	}
 
 	a.docker = d
@@ -138,7 +162,6 @@ func (a *Agent) tryConnect() {
 		a.executor = NewExecutor(a.docker, a.restic, a)
 		a.executor.Start()
 	} else {
-		// Update docker reference if reconnecting
 		a.executor.docker = a.docker
 	}
 
@@ -147,8 +170,7 @@ func (a *Agent) tryConnect() {
 		a.traefikSync = NewTraefikSync(a.appdataDir, a.name, a.managerClient)
 	}
 
-	a.setConnected(true)
-	log.Printf("Connected to manager at %s", a.managerURL)
+	return nil
 }
 
 // setConnected updates the connection state
@@ -167,13 +189,14 @@ func (a *Agent) IsConnected() bool {
 
 // Start starts all background loops (heartbeat, reconnection, reconcile, sensor, ready server, logs server)
 func (a *Agent) Start() {
-	a.wg.Add(5)
+	a.wg.Add(6)
 
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
 	go a.sensorLoop(a.sensorCtx)
 	go a.readyServerLoop()
+	go a.snapshotCacheLoop()
 
 	log.Printf("Agent started (heartbeat: %v, retry: %v, reconcile: %v)",
 		a.agentConfig.RenewalInterval,
@@ -260,13 +283,32 @@ func (a *Agent) reconcileOnce() {
 	log.Println("Reconcile: fetching desired apps from manager...")
 
 	// Fetch desired apps from manager
-	desiredApps, err := a.managerClient.FetchDesiredApps(a.name)
+	response, err := a.managerClient.FetchDesiredApps(a.name)
 	if err != nil {
 		log.Printf("Reconcile: failed to fetch desired apps: %s", err)
 		return
 	}
 
-	log.Printf("Reconcile: got %d desired apps", len(desiredApps))
+	desiredApps := response.Apps
+
+	// Update gateway status from manager
+	a.isGatewayMu.Lock()
+	a.isGateway = response.IsGateway
+	a.isGatewayMu.Unlock()
+
+	log.Printf("Reconcile: got %d desired apps (gateway=%v)", len(desiredApps), response.IsGateway)
+
+	// Track which apps the manager wants running on this node
+	assigned := make(map[common.AppID]bool, len(desiredApps))
+	for _, da := range desiredApps {
+		if da.DesiredState == common.DesiredRunning {
+			assigned[da.AppID] = true
+		}
+	}
+	a.runtimeMu.Lock()
+	a.assignedApps = assigned
+	a.runtimeMu.Unlock()
+
 	managedApps := a.ListApps()
 	for _, app := range managedApps {
 		found := false
@@ -289,10 +331,13 @@ func (a *Agent) reconcileOnce() {
 	// Reconcile each app
 	for _, app := range desiredApps {
 		rt := a.getOrCreateRuntime(app.AppID)
+		rt.SetBackupSensitive(app.BackupSensitive)
+		rt.SetBackupEnabled(app.BackupEnabled)
+		rt.SetRestoreEnabled(app.RestoreEnabled)
 
 		// Skip if action already in flight
 		if rt.IsInFlight() {
-			log.Printf("Reconcile: skipping %s (action in flight)", app.AppID)
+			// log.Printf("Reconcile: skipping %s (action in flight: %s)", app.AppID, rt.GetInFlightAction())
 			continue
 		}
 
@@ -332,6 +377,12 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 		return ActionNone()
 	}
 
+	// === RESTORE (non-gateway global app with stale data) ===
+	if app.RestoreNow && app.RestoreEnabled && rt.RunningStatus() == common.RunningStatusRunning {
+		log.Printf("Reconcile: %s restore requested, stopping for restore cycle", app.AppID)
+		return ActionStop(app.AppID)
+	}
+
 	// === NORMAL LIFECYCLE ===
 
 	// Desired stopped
@@ -362,44 +413,37 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 		return ActionQuarantine(app.AppID)
 	}
 
-	// Running but unhealthy
-	if rt.GetHealth() == common.HealthUnhealthy {
+	// Running but unhealthy — only act after consecutive failures reach the threshold
+	if rt.GetHealth() == common.HealthUnhealthy && rt.GetUnhealthyCount() >= UnhealthyThreshold {
 		if a.canRestart(rt) {
-			log.Printf("Reconcile: %s is unhealthy, restarting", app.AppID)
+			log.Printf("Reconcile: %s is unhealthy (%d consecutive checks), restarting", app.AppID, rt.GetUnhealthyCount())
 			return ActionRestart(app.AppID)
 		}
 		log.Printf("Reconcile: %s is unhealthy and exceeded restart limit, quarantining", app.AppID)
 		return ActionQuarantine(app.AppID)
 	}
 
-	// Running + healthy: check if backup is due
-	if rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy {
-		if a.shouldBackup(rt) {
-			// Acquire global backup lease BEFORE stopping the app.
-			// If denied, skip — don't stop the app just to fail at lease acquisition.
-			granted, err := a.managerClient.AcquireBackupLease(a.name)
-			if err != nil {
-				log.Printf("Reconcile: %s backup lease request failed: %s", app.AppID, err)
-				return ActionNone()
-			}
-			if !granted {
-				log.Printf("Reconcile: %s backup lease denied, deferring", app.AppID)
-				return ActionNone()
-			}
-			log.Printf("Reconcile: %s backup lease acquired, transitioning to BackupStopping", app.AppID)
-			rt.SetPhase(common.PhaseBackupStopping)
-			return ActionStop(app.AppID)
-		}
+	// Running + healthy: check if manager assigned BackupNow (only if backup enabled)
+	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy {
+		log.Printf("Reconcile: %s manager requested backup, transitioning to BackupStopping", app.AppID)
+		rt.SetPhase(common.PhaseBackupStopping)
+		return ActionStop(app.AppID)
 	}
 
 	return ActionNone()
 }
 
-func (a *Agent) shouldBackup(rt *AppRuntime) bool {
-	if rt.Backup.InProgress {
+// hasActiveTCPConnections checks if there are established TCP connections to the given port.
+// Uses `ss` on Linux. Returns false on error (e.g. macOS dev) to allow backup.
+func hasActiveTCPConnections(port int) bool {
+	cmd := exec.Command("ss", "-tn", "state", "established", fmt.Sprintf("dst :%d", port))
+	output, err := cmd.Output()
+	if err != nil {
 		return false
 	}
-	return time.Since(rt.Backup.LastBackupAt) > time.Hour
+	// ss outputs a header line; any additional lines indicate active connections
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	return len(lines) > 1
 }
 
 // canRestart checks if an app can be restarted
@@ -421,9 +465,121 @@ func (a *Agent) getOrCreateRuntime(appID common.AppID) *AppRuntime {
 	return a.getOrCreateRuntimeLocked(appID)
 }
 
+// snapshotCacheLoop refreshes snapshot caches for all backup-enabled apps every 30 minutes
+func (a *Agent) snapshotCacheLoop() {
+	defer a.wg.Done()
+
+	// Initial refresh
+	a.refreshAllSnapshotCaches()
+
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			a.refreshAllSnapshotCaches()
+		case <-a.stopChan:
+			return
+		}
+	}
+}
+
+// refreshAllSnapshotCaches refreshes snapshot caches for all backup-enabled apps
+func (a *Agent) refreshAllSnapshotCaches() {
+	a.runtimeMu.RLock()
+	var appIDs []common.AppID
+	for appID, rt := range a.runtime {
+		if rt.IsBackupEnabled() {
+			appIDs = append(appIDs, appID)
+		}
+	}
+	a.runtimeMu.RUnlock()
+
+	for _, appID := range appIDs {
+		a.refreshSnapshotCache(appID)
+	}
+}
+
+// refreshSnapshotCache fetches fresh snapshots from restic and updates the cache.
+// Any in-flight refresh for the same app is cancelled first.
+func (a *Agent) refreshSnapshotCache(appID common.AppID) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel any previous in-flight refresh and mark loading
+	a.snapshotCacheMu.Lock()
+	if prevCancel, ok := a.snapshotCancelFns[appID]; ok {
+		prevCancel()
+	}
+	a.snapshotCancelFns[appID] = cancel
+	existing := a.snapshotCache[appID]
+	if existing == nil {
+		a.snapshotCache[appID] = &SnapshotCache{Loading: true}
+	} else {
+		existing.Loading = true
+	}
+	a.snapshotCacheMu.Unlock()
+
+	snapshots, err := a.restic.ListSnapshots(ctx, appID)
+
+	a.snapshotCacheMu.Lock()
+	defer a.snapshotCacheMu.Unlock()
+
+	// If this context was cancelled, another refresh superseded us — don't write stale results
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Clean up cancel func
+	delete(a.snapshotCancelFns, appID)
+
+	cache := a.snapshotCache[appID]
+	if cache == nil {
+		cache = &SnapshotCache{}
+		a.snapshotCache[appID] = cache
+	}
+	cache.Loading = false
+	cache.CachedAt = time.Now()
+	if err != nil {
+		cache.Error = err.Error()
+		log.Printf("Snapshot cache refresh failed for %s: %s", appID, err)
+	} else {
+		cache.Snapshots = snapshots
+		cache.Error = ""
+	}
+}
+
+// cancelSnapshotRefresh cancels any in-flight snapshot refresh and resets loading state
+func (a *Agent) cancelSnapshotRefresh(appID common.AppID) {
+	a.snapshotCacheMu.Lock()
+	defer a.snapshotCacheMu.Unlock()
+	if cancel, ok := a.snapshotCancelFns[appID]; ok {
+		cancel()
+		delete(a.snapshotCancelFns, appID)
+	}
+	if cache, ok := a.snapshotCache[appID]; ok {
+		cache.Loading = false
+	}
+}
+
+// getSnapshotCache returns the cached snapshot data for an app (thread-safe)
+func (a *Agent) getSnapshotCache(appID common.AppID) *SnapshotCache {
+	a.snapshotCacheMu.RLock()
+	defer a.snapshotCacheMu.RUnlock()
+	return a.snapshotCache[appID]
+}
+
 // Stop stops the agent gracefully
 func (a *Agent) Stop() {
 	log.Println("Stopping agent...")
+
+	// Cancel all in-flight snapshot refreshes
+	a.snapshotCacheMu.Lock()
+	for appID, cancel := range a.snapshotCancelFns {
+		cancel()
+		delete(a.snapshotCancelFns, appID)
+	}
+	a.snapshotCacheMu.Unlock()
 
 	// Stop sensor
 	a.sensorCancel()
@@ -453,6 +609,13 @@ func (a *Agent) IP() string {
 	return a.ip
 }
 
+// IsGateway returns whether this agent is the current gateway node
+func (a *Agent) IsGateway() bool {
+	a.isGatewayMu.RLock()
+	defer a.isGatewayMu.RUnlock()
+	return a.isGateway
+}
+
 // Docker returns the docker instance
 func (a *Agent) Docker() *docker.Docker {
 	return a.docker
@@ -476,14 +639,47 @@ func (a *Agent) ListApps() []docker.DockerApp {
 	return a.docker.ListApps()
 }
 
-// GetAppReports returns reports for all tracked apps
+// GetAppReports returns reports for all tracked apps.
+// Idle stopped apps (stopped, no active phase, no error) are omitted to reduce noise.
 func (a *Agent) GetAppReports() []common.AppReport {
 	a.runtimeMu.RLock()
 	defer a.runtimeMu.RUnlock()
 
 	reports := make([]common.AppReport, 0, len(a.runtime))
-	for _, rt := range a.runtime {
-		reports = append(reports, rt.ToReport())
+	for appID, rt := range a.runtime {
+		report := rt.ToReport()
+		if !a.assignedApps[appID] && !isActivelyManaged(report) {
+			continue
+		}
+		if report.Port > 0 {
+			report.ActiveConnections = hasActiveTCPConnections(report.Port)
+			if report.ActiveConnections {
+				now := time.Now()
+				rt.mu.Lock()
+				rt.LastActiveAt = now
+				rt.mu.Unlock()
+				report.LastActiveAt = now
+			}
+		}
+		reports = append(reports, report)
 	}
 	return reports
+}
+
+// isActivelyManaged returns true if an app is in a state worth reporting.
+// Idle stopped apps (stopped + empty phase + no error + no backup) are skipped.
+func isActivelyManaged(r common.AppReport) bool {
+	if r.ObservedState != common.ObservedStopped {
+		return true
+	}
+	if r.Phase != "" && r.Phase != common.PhaseEmpty && r.Phase != common.PhaseReady {
+		return true
+	}
+	if r.BackupBusy {
+		return true
+	}
+	if r.LastError != "" {
+		return true
+	}
+	return false
 }

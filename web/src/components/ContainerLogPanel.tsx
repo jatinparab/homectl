@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 
 interface ContainerLogPanelProps {
   isOpen: boolean
@@ -19,7 +19,8 @@ export function ContainerLogPanel({
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const logsEndRef = useRef<HTMLDivElement>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!isOpen || !node || !containerId) {
@@ -58,10 +59,26 @@ export function ContainerLogPanel({
     setLogs([])
   }, [showAll])
 
-  // Auto-scroll
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    setIsAtBottom(atBottom)
+  }, [])
+
+  // Auto-scroll only when at bottom
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+    if (isAtBottom && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [logs, isAtBottom])
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      setIsAtBottom(true)
+    }
+  }
 
   return (
     <div
@@ -109,16 +126,28 @@ export function ContainerLogPanel({
         )}
 
         {/* Logs */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 overflow-auto p-4 relative" ref={scrollRef} onScroll={handleScroll}>
           <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap">
             {logs.length === 0 ? (
               <span className="text-gray-500">Waiting for logs...</span>
             ) : (
               logs.join('\n')
             )}
-            <div ref={logsEndRef} />
           </pre>
         </div>
+
+        {/* Scroll to bottom button */}
+        {!isAtBottom && (
+          <div className="absolute bottom-12 right-6 z-10">
+            <button
+              onClick={scrollToBottom}
+              className="bg-gray-700 hover:bg-gray-600 text-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border border-gray-600"
+              title="Scroll to bottom"
+            >
+              &#8595;
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-2 border-t border-gray-700 text-xs text-gray-500 text-center">
