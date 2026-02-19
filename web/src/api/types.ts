@@ -125,6 +125,7 @@ export interface RepoOpStatus {
 export interface RepoStatus {
   gateway_node: string;
   gateway_online: boolean;
+  last_status_sync_at?: string;
   check: RepoOpStatus;
   unlock: RepoOpStatus;
 }

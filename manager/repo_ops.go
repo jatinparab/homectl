@@ -49,10 +49,24 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 			m.repoLastUnlockAt = *unlock.LastAt
 			changed = true
 		}
+		if check.LastError != m.repoLastCheckErr {
+			m.repoLastCheckErr = check.LastError
+			changed = true
+		}
+		if unlock.LastError != m.repoLastUnlockErr {
+			m.repoLastUnlockErr = unlock.LastError
+			changed = true
+		}
+		m.repoLastStatusSyncAt = now
 		m.repoMu.Unlock()
 		if changed {
 			m.saveRepoState()
 		}
+	}
+
+	// Don't schedule unless we have fresh status from gateway.
+	if !ok {
+		return
 	}
 
 	// Schedule repo check (manager-owned) if due and the repo is idle.

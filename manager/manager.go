@@ -45,11 +45,14 @@ type Manager struct {
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
 
 	// Repo-wide maintenance (restic check/unlock), coordinated via gateway node.
-	repoMu           sync.Mutex
-	repoCheckBusy    bool
-	repoUnlockBusy   bool
-	repoLastCheckAt  time.Time
-	repoLastUnlockAt time.Time
+	repoMu               sync.Mutex
+	repoCheckBusy        bool
+	repoUnlockBusy       bool
+	repoLastCheckAt      time.Time
+	repoLastUnlockAt     time.Time
+	repoLastCheckErr     string
+	repoLastUnlockErr    string
+	repoLastStatusSyncAt time.Time
 
 	gatewayNode string
 	gatewayMu   sync.Mutex
