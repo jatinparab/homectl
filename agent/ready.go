@@ -55,6 +55,7 @@ func (rs *ReadyServer) Start() error {
 	mux.HandleFunc("/check-status", rs.handleRepoCheckStatus)
 	mux.HandleFunc("/check-logs", rs.handleRepoCheckLogs)
 	mux.HandleFunc("/unlock", rs.handleRepoUnlock)
+	mux.HandleFunc("/force-unlock", rs.handleRepoForceUnlock)
 	mux.HandleFunc("/unlock-status", rs.handleRepoUnlockStatus)
 	mux.HandleFunc("/unlock-logs", rs.handleRepoUnlockLogs)
 
@@ -141,6 +142,31 @@ func (rs *ReadyServer) handleRepoUnlock(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "unlock_triggered"})
+}
+
+// handleRepoForceUnlock triggers a repo-wide restic unlock --remove-all, bypassing busy checks.
+// POST /force-unlock
+func (rs *ReadyServer) handleRepoForceUnlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !rs.agent.IsGateway() {
+		http.Error(w, "not gateway", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := rs.agent.TriggerRepoForceUnlock(); err != nil {
+		if err == ErrRepoOpBusy {
+			http.Error(w, "unlock already running", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "force_unlock_triggered"})
 }
 
 // handleRepoUnlockStatus returns current repo unlock status.

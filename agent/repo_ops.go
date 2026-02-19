@@ -179,3 +179,44 @@ func (a *Agent) runRepoUnlock() {
 
 	a.saveRepoOpsState()
 }
+
+func (a *Agent) TriggerRepoForceUnlock() error {
+	a.repoUnlock.mu.Lock()
+	if a.repoUnlock.Busy {
+		a.repoUnlock.mu.Unlock()
+		return ErrRepoOpBusy
+	}
+	a.repoUnlock.Busy = true
+	a.repoUnlock.LastError = ""
+	a.repoUnlock.ProgressPercent = 0
+	a.repoUnlock.Log.Clear()
+	a.repoUnlock.Log.Write("Starting restic unlock --remove-all...")
+	a.repoUnlock.mu.Unlock()
+
+	go a.runRepoForceUnlock()
+	return nil
+}
+
+func (a *Agent) runRepoForceUnlock() {
+	ctx, cancel := context.WithCancel(a.sensorCtx)
+	defer cancel()
+
+	// No backupMu — force unlock runs regardless of running operations.
+	err := a.restic.ForceUnlock(ctx, func(line string) {
+		line = strings.TrimSuffix(line, "\n")
+		a.repoUnlock.mu.Lock()
+		a.repoUnlock.Log.Write(line)
+		a.repoUnlock.mu.Unlock()
+	})
+
+	a.repoUnlock.mu.Lock()
+	a.repoUnlock.LastAt = time.Now()
+	if err != nil {
+		a.repoUnlock.LastError = err.Error()
+		a.repoUnlock.Log.Write("ERROR: " + err.Error())
+	}
+	a.repoUnlock.Busy = false
+	a.repoUnlock.mu.Unlock()
+
+	a.saveRepoOpsState()
+}

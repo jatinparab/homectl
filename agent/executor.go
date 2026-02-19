@@ -60,6 +60,7 @@ const (
 	ActionTypeStop
 	ActionTypeQuarantine
 	ActionTypeBackup
+	ActionTypePrune
 )
 
 func (t ActionType) String() string {
@@ -76,6 +77,8 @@ func (t ActionType) String() string {
 		return "quarantine"
 	case ActionTypeBackup:
 		return "backup"
+	case ActionTypePrune:
+		return "prune"
 	default:
 		return "unknown"
 	}
@@ -115,6 +118,11 @@ func ActionQuarantine(appID common.AppID) Action {
 // ActionBackup returns a quarantine action for the app
 func ActionBackup(appID common.AppID) Action {
 	return Action{Type: ActionTypeBackup, AppID: appID}
+}
+
+// ActionPrune returns a prune action for the app
+func ActionPrune(appID common.AppID) Action {
+	return Action{Type: ActionTypePrune, AppID: appID}
 }
 
 // Executor executes actions on applications
@@ -243,6 +251,8 @@ func (e *Executor) execute(action Action) {
 		e.executeQuarantine(appID, rt)
 	case ActionTypeBackup:
 		err = e.executeBackup(appID, rt)
+	case ActionTypePrune:
+		err = e.executePrune(appID, rt)
 	}
 
 	if err != nil {
@@ -316,6 +326,8 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 		})
 		rt.ClearProgress()
 		if err != nil {
+			rt.SetPhase(common.PhaseEmpty) // Allow reconcile to retry on next cycle
+			rt.IncrementRestarts()
 			return err
 		}
 
@@ -415,7 +427,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	e.agent.backupMu.Unlock()
 	rt.ClearProgress()
 
-	// Step 3: Update backup state (keep InProgress=true during post-backup steps)
+	// Step 3: Update backup state
 	e.agent.runtimeMu.Lock()
 	rt.Backup.LastBackupAt = time.Now() // Always update to prevent immediate retry on failure
 	if backupErr != nil {
@@ -425,7 +437,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 		rt.Backup.LastError = ""
 		log.Printf("Executor: backup completed for %s", appID)
 	}
-	// Don't clear InProgress yet — it stays true until post-backup steps finish
+	rt.Backup.InProgress = false
 	e.agent.runtimeMu.Unlock()
 
 	// Step 3b: On success, persist metadata to disk using system time
@@ -446,13 +458,6 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 		// Bust snapshot cache so next request sees the new snapshot
 		go e.agent.refreshSnapshotCache(appID)
 
-		// Run prune + check in the background (keeps BackupBusy=true in heartbeats)
-		go e.runPostBackupSteps(appID, rt)
-	} else {
-		// Backup failed — clear InProgress immediately
-		e.agent.runtimeMu.Lock()
-		rt.Backup.InProgress = false
-		e.agent.runtimeMu.Unlock()
 	}
 
 	// Step 4: Reset phase — reconcile will restart the app
@@ -461,18 +466,19 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	return backupErr
 }
 
-// runPostBackupSteps runs post-backup repo maintenance (currently: restic forget --prune).
-// Operations are serialized via backupMu.
-// PostBackupPhase is used instead of rt.Phase to avoid disrupting the app lifecycle.
-// Clears BackupBusy when complete so the manager knows all post-backup work is done.
-func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
+// executePrune runs repository prune for an app.
+// Serialized using backupMu as prune/repo lock cannot overlap with backup/restore/check.
+func (e *Executor) executePrune(appID common.AppID, rt *AppRuntime) error {
 	e.agent.backupMu.Lock()
 	defer e.agent.backupMu.Unlock()
 
-	// --- Prune ---
 	rt.SetPostBackupPhase("backup_pruning")
 	rt.PhaseLog.Clear()
 	rt.SetProgress(&common.ResticProgress{PercentDone: 0})
+	e.agent.runtimeMu.Lock()
+	rt.Prune.InProgress = true
+	e.agent.runtimeMu.Unlock()
+
 	log.Printf("Executor: starting prune for %s", appID)
 	pruneErr := e.restic.Prune(e.ctx, appID, func(line string) {
 		if p := parseResticTextProgress(line); p != nil {
@@ -484,19 +490,23 @@ func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
 		rt.PhaseLog.Write(line)
 	})
 	rt.ClearProgress()
+	rt.SetPostBackupPhase("")
+
+	now := time.Now()
+	e.agent.runtimeMu.Lock()
+	rt.Prune.InProgress = false
+	rt.Prune.LastPruneAt = now
+	if pruneErr != nil {
+		rt.Prune.LastError = pruneErr.Error()
+	} else {
+		rt.Prune.LastError = ""
+	}
+	e.agent.runtimeMu.Unlock()
 
 	if pruneErr != nil {
 		log.Printf("Executor: prune failed for %s: %s", appID, pruneErr)
-	} else {
-		log.Printf("Executor: prune completed for %s", appID)
+		return pruneErr
 	}
-
-	// Post-backup work is complete — clear the BackupBusy flag
-	// so the manager knows it can assign the next backup
-	e.agent.runtimeMu.Lock()
-	rt.Backup.InProgress = false
-	e.agent.runtimeMu.Unlock()
-
-	rt.SetPostBackupPhase("")
-	log.Printf("Executor: post-backup steps completed for %s", appID)
+	log.Printf("Executor: prune completed for %s", appID)
+	return nil
 }

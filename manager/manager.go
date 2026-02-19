@@ -42,7 +42,10 @@ type Manager struct {
 
 	backupMu              sync.Mutex
 	backupAssignment      *BackupAssignment
+	pruneAssignment       *BackupAssignment
+	lastScheduledWorkKind string
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
+	pruneState            map[common.AppID]PruneState
 
 	// Repo-wide maintenance (restic check/unlock), coordinated via gateway node.
 	repoMu                      sync.Mutex
@@ -55,8 +58,9 @@ type Manager struct {
 	repoLastStatusSyncAt        time.Time
 	repoLastStatusFetchErrLogAt time.Time
 
-	gatewayNode string
-	gatewayMu   sync.Mutex
+	gatewayNode       string
+	manualGatewayNode string // User-selected gateway (overrides automatic selection)
+	gatewayMu         sync.Mutex
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -82,8 +86,10 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		config:                config.NewConfig(),
 		appRegistry:           NewAppRegistry(),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
+		pruneState:            make(map[common.AppID]PruneState),
 	}
 	mgr.loadRepoState()
+	mgr.loadPruneState()
 	return mgr
 }
 

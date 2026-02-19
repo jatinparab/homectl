@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import type { AppStatus, Snapshot, SnapshotEntry } from "../api/types"
-import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock } from "../api/hooks"
+import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock } from "../api/hooks"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -96,6 +96,7 @@ function RepoMaintenancePanel() {
 	const { data, error } = useRepoStatus()
 	const triggerCheck = useTriggerRepoCheck()
 	const triggerUnlock = useTriggerRepoUnlock()
+	const forceUnlock = useForceRepoUnlock()
 
 	const [showCheckLogs, setShowCheckLogs] = useState(false)
 	const [showUnlockLogs, setShowUnlockLogs] = useState(false)
@@ -184,6 +185,14 @@ function RepoMaintenancePanel() {
 						className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						{unlockBusy ? "Unlock running..." : "Unlock repo"}
+					</button>
+					<button
+						onClick={() => forceUnlock.mutate()}
+						disabled={!gatewayOnline || unlockBusy || forceUnlock.isPending}
+						className="px-2 py-1 text-xs bg-red-900 hover:bg-red-800 text-red-200 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+						title="Force unlock — runs restic unlock --remove-all regardless of other running operations"
+					>
+						{unlockBusy ? "Unlock running..." : "Force unlock"}
 					</button>
 				</div>
 			</div>

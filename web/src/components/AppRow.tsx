@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { AppStatus, ResticProgress, UpcomingBackup } from "../api/types";
-import { useRestartApp, useTriggerBackup, useUpdateAppDesiredState, useUpdateAppRestoreEnabled } from "../api/hooks";
+import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune } from "../api/types";
+import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled } from "../api/hooks";
 import {
   StatusBadge,
   HealthBadge,
@@ -49,16 +49,31 @@ const backupStatusLabels: Record<string, string> = {
   never: "Never",
 };
 
+const pruneStatusColors: Record<string, string> = {
+  ok: "bg-green-500",
+  needs_prune: "bg-orange-500",
+  never: "bg-gray-500",
+};
+
+const pruneStatusLabels: Record<string, string> = {
+  ok: "OK",
+  needs_prune: "Stale",
+  never: "Never",
+};
+
 interface AppRowProps {
   app: AppStatus;
   isUpcomingBackup?: boolean;
   upcomingBackup?: UpcomingBackup;
+  isUpcomingPrune?: boolean;
+  upcomingPrune?: UpcomingPrune;
   onShowLogs?: (node: string, appId: string) => void;
 }
 
-export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: AppRowProps) {
+export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs }: AppRowProps) {
   const restartMutation = useRestartApp();
   const backupMutation = useTriggerBackup();
+  const pruneMutation = useTriggerPrune();
   const desiredStateMutation = useUpdateAppDesiredState();
   const restoreMutation = useUpdateAppRestoreEnabled();
 
@@ -165,7 +180,8 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
           <div className="flex items-center gap-2 truncate">
             <span className="font-medium text-white truncate">{app.app_id}</span>
             {app.is_global && <GlobalIcon />}
-            {app.backup_enabled && isUpcomingBackup && <UpcomingTag started={upcomingBackup?.started} />}
+            {app.backup_enabled && isUpcomingBackup && <UpcomingTag started={upcomingBackup?.started} kind="backup" />}
+            {app.backup_enabled && isUpcomingPrune && <UpcomingTag started={upcomingPrune?.started} kind="prune" />}
           </div>
         </td>
         <td className="px-3 py-2 whitespace-nowrap">
@@ -202,7 +218,8 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span className="font-medium text-white truncate">{app.app_id}</span>
                     {app.is_global && <GlobalIcon />}
-                    {app.backup_enabled && isUpcomingBackup && <UpcomingTag started={upcomingBackup?.started} />}
+                    {app.backup_enabled && isUpcomingBackup && <UpcomingTag started={upcomingBackup?.started} kind="backup" />}
+                    {app.backup_enabled && isUpcomingPrune && <UpcomingTag started={upcomingPrune?.started} kind="prune" />}
                     {app.backup_enabled && !app.restore_enabled && (
                       <span
                         className="shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-medium bg-yellow-700 text-yellow-200 cursor-pointer hover:bg-yellow-600"
@@ -298,30 +315,58 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
             {/* Backup — allow wrap for badge + time */}
             <td className="px-3 py-2 align-top">
               {app.backup_enabled ? (
-                <>
-                  {nr.last_backup_error ? (
-                    <span
-                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white bg-red-600"
-                      title={nr.last_backup_error}
-                    >
-                      Failed
-                    </span>
-                  ) : (
-                    <span
-                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white ${backupColor}`}
-                      title={nr.last_backup_at ? `Last: ${new Date(nr.last_backup_at).toLocaleString()}` : "Never backed up"}
-                    >
-                      {backupLabel}
-                    </span>
-                  )}
-                  {nr.last_backup_at && (
-                    <span
-                      className={`ml-1 text-[11px] ${nr.last_backup_error ? "text-red-400" : nr.backup_status === "needs_backup" ? "text-orange-400" : "text-gray-500"}`}
-                    >
-                      {timeAgo(nr.last_backup_at)}
-                    </span>
-                  )}
-                </>
+                <div className="flex flex-col gap-1">
+                  <div>
+                    <span className="text-[10px] text-gray-500 mr-1">B</span>
+                    {nr.last_backup_error ? (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white bg-red-600"
+                        title={nr.last_backup_error}
+                      >
+                        Failed
+                      </span>
+                    ) : (
+                      <span
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white ${backupColor}`}
+                        title={nr.last_backup_at ? `Last: ${new Date(nr.last_backup_at).toLocaleString()}` : "Never backed up"}
+                      >
+                        {backupLabel}
+                      </span>
+                    )}
+                    {nr.last_backup_at && (
+                      <span
+                        className={`ml-1 text-[11px] ${nr.last_backup_error ? "text-red-400" : nr.backup_status === "needs_backup" ? "text-orange-400" : "text-gray-500"}`}
+                      >
+                        {timeAgo(nr.last_backup_at)}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-gray-500 mr-1">P</span>
+                    {nr.last_prune_error ? (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white bg-red-600"
+                        title={nr.last_prune_error}
+                      >
+                        Failed
+                      </span>
+                    ) : (
+                      <span
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white ${pruneStatusColors[nr.prune_status] || "bg-gray-500"}`}
+                        title={nr.last_prune_at ? `Last: ${new Date(nr.last_prune_at).toLocaleString()}` : "Never pruned"}
+                      >
+                        {pruneStatusLabels[nr.prune_status] || "-"}
+                      </span>
+                    )}
+                    {nr.last_prune_at && (
+                      <span
+                        className={`ml-1 text-[11px] ${nr.last_prune_error ? "text-red-400" : nr.prune_status === "needs_prune" ? "text-orange-400" : "text-gray-500"}`}
+                      >
+                        {timeAgo(nr.last_prune_at)}
+                      </span>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-gray-400 bg-gray-700">
                   Off
@@ -383,6 +428,15 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
                     Backup
                   </button>
                 )}
+                {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
+                  <button
+                    onClick={() => pruneMutation.mutate({ appId: app.app_id, node: nr.node })}
+                    disabled={pruneMutation.isPending}
+                    className="px-1.5 py-0.5 text-[11px] bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded text-white"
+                  >
+                    Prune
+                  </button>
+                )}
                 {isFirst && app.backup_enabled && (
                   <button
                     onClick={() => restoreMutation.mutate({ appId: app.app_id, enabled: !app.restore_enabled })}
@@ -441,13 +495,14 @@ function GlobalIcon() {
   );
 }
 
-function UpcomingTag({ started }: { started?: boolean }) {
+function UpcomingTag({ started, kind }: { started?: boolean; kind: "backup" | "prune" }) {
+	const label = kind === "backup" ? (started ? "BACKING UP" : "BACKUP NEXT") : (started ? "PRUNING" : "PRUNE NEXT");
   return (
     <span
-      className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-600 text-white"
-      title={started ? "Backup in progress" : "Backup scheduled by manager"}
+      className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white ${kind === "backup" ? "bg-amber-600" : "bg-purple-600"}`}
+      title={kind === "backup" ? (started ? "Backup in progress" : "Backup scheduled by manager") : (started ? "Prune in progress" : "Prune scheduled by manager")}
     >
-      {started ? "BACKING UP" : "NEXT"}
+      {label}
     </span>
   );
 }

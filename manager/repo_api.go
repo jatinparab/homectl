@@ -133,12 +133,12 @@ func (m *Manager) handleAPIRepoCheck(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gateway offline", http.StatusServiceUnavailable)
 		return
 	}
-	if m.anyBackupBusy() {
+	if m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() {
 		http.Error(w, "backup running", http.StatusConflict)
 		return
 	}
 	m.backupMu.Lock()
-	hasAssignment := m.backupAssignment != nil
+	hasAssignment := m.backupAssignment != nil || m.pruneAssignment != nil
 	m.backupMu.Unlock()
 	if hasAssignment {
 		http.Error(w, "backup scheduled", http.StatusConflict)
@@ -185,19 +185,54 @@ func (m *Manager) handleAPIRepoUnlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gateway offline", http.StatusServiceUnavailable)
 		return
 	}
-	if m.anyBackupBusy() {
-		http.Error(w, "backup running", http.StatusConflict)
+	agentCfg := m.config.GetAgentConfig(gateway)
+	if agentCfg == nil {
+		http.Error(w, "gateway not in config", http.StatusNotFound)
 		return
 	}
-	m.backupMu.Lock()
-	hasAssignment := m.backupAssignment != nil
-	m.backupMu.Unlock()
-	if hasAssignment {
-		http.Error(w, "backup scheduled", http.StatusConflict)
+
+	url := fmt.Sprintf("http://%s:%d/unlock", agentCfg.IP, agentpkg.ReadyServerPort)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if m.isRepoBusy() {
-		http.Error(w, "repo busy", http.StatusConflict)
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		http.Error(w, string(body), resp.StatusCode)
+		return
+	}
+
+	m.repoMu.Lock()
+	m.repoUnlockBusy = true
+	m.repoMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleAPIRepoForceUnlock triggers restic unlock --remove-all on the gateway,
+// bypassing all busy checks.
+// POST /api/v1/repo/force-unlock
+func (m *Manager) handleAPIRepoForceUnlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	gateway := m.getGatewayNode()
+	if gateway == "" {
+		http.Error(w, "no gateway", http.StatusServiceUnavailable)
+		return
+	}
+	if !m.isAgentOnline(gateway) {
+		http.Error(w, "gateway offline", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -207,7 +242,7 @@ func (m *Manager) handleAPIRepoUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/unlock", agentCfg.IP, agentpkg.ReadyServerPort)
+	url := fmt.Sprintf("http://%s:%d/force-unlock", agentCfg.IP, agentpkg.ReadyServerPort)
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
