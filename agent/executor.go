@@ -2,13 +2,48 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"math"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/docker"
 )
+
+var resticTextProgressRe = regexp.MustCompile(`\[[0-9]{1,2}:[0-9]{2}\]\s+([0-9]+(?:\.[0-9]+)?)%\s+([0-9]+)\s+/\s+([0-9]+)\b`)
+
+func parseResticTextProgress(line string) *common.ResticProgress {
+	m := resticTextProgressRe.FindStringSubmatch(line)
+	if len(m) < 4 {
+		return nil
+	}
+	pct, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return nil
+	}
+	done, err := strconv.ParseUint(m[2], 10, 64)
+	if err != nil {
+		return nil
+	}
+	total, err := strconv.ParseUint(m[3], 10, 64)
+	if err != nil {
+		return nil
+	}
+	if total == 0 {
+		return nil
+	}
+	frac := pct / 100.0
+	frac = math.Max(0, math.Min(1, frac))
+	return &common.ResticProgress{
+		PercentDone: frac,
+		TotalFiles:  total,
+		FilesDone:   done,
+	}
+}
 
 const (
 	// ExecutorWorkers is the number of parallel workers for executing actions
@@ -437,10 +472,18 @@ func (e *Executor) runPostBackupSteps(appID common.AppID, rt *AppRuntime) {
 	// --- Prune ---
 	rt.SetPostBackupPhase("backup_pruning")
 	rt.PhaseLog.Clear()
+	rt.SetProgress(&common.ResticProgress{PercentDone: 0})
 	log.Printf("Executor: starting prune for %s", appID)
 	pruneErr := e.restic.Prune(e.ctx, appID, func(line string) {
+		if p := parseResticTextProgress(line); p != nil {
+			rt.SetProgress(p)
+			if b, err := json.Marshal(p); err == nil {
+				rt.PhaseLog.Write("__PROGRESS__:" + string(b))
+			}
+		}
 		rt.PhaseLog.Write(line)
 	})
+	rt.ClearProgress()
 
 	if pruneErr != nil {
 		log.Printf("Executor: prune failed for %s: %s", appID, pruneErr)

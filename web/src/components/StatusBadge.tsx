@@ -161,20 +161,67 @@ export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
 interface PostBackupPhaseBadgeProps {
   phase: string;
   onClick?: () => void;
+  progress?: ResticProgress;
 }
 
-export function PostBackupPhaseBadge({ phase, onClick }: PostBackupPhaseBadgeProps) {
+export function PostBackupPhaseBadge({ phase, onClick, progress }: PostBackupPhaseBadgeProps) {
   const color = postBackupPhaseColors[phase] || "bg-purple-500";
+  const showProgress = !!progress;
+  const pct = progress ? Math.round(progress.percent_done * 100) : 0;
+
   if (onClick) {
     return (
       <button onClick={onClick} className="relative cursor-pointer hover:opacity-80" title="Toggle post-backup logs">
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
-          {phase}
-        </span>
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
+            {phase}
+          </span>
+          {showProgress && (
+            <span className="inline-flex items-center gap-1 text-xs text-gray-300">
+              <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
+                <span
+                  className="block h-full bg-purple-300 rounded-full transition-all"
+                  style={{ width: `${pct}%` }}
+                />
+              </span>
+              <span>{pct}%</span>
+              {progress && progress.total_files > 0 && (
+                <span className="text-gray-500 whitespace-nowrap">
+                  {progress.files_done}/{progress.total_files}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
         <span className="absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
       </button>
     );
   }
+
+  if (showProgress) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
+          {phase}
+        </span>
+        <span className="inline-flex items-center gap-1 text-xs text-gray-300">
+          <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
+            <span
+              className="block h-full bg-purple-300 rounded-full transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </span>
+          <span>{pct}%</span>
+          {progress && progress.total_files > 0 && (
+            <span className="text-gray-500 whitespace-nowrap">
+              {progress.files_done}/{progress.total_files}
+            </span>
+          )}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
       {phase}
