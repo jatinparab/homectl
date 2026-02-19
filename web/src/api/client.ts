@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, NodeContainers } from "./types";
+import type { Agent, AppStatus, NodeContainers, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -26,6 +26,31 @@ export async function fetchContainers(): Promise<NodeContainers[]> {
   return fetchJSON<NodeContainers[]>(`${API_BASE}/containers`);
 }
 
+export async function fetchUpcomingBackup(): Promise<UpcomingBackup | null> {
+  const response = await fetch(`${API_BASE}/backup/upcoming`);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  return data as UpcomingBackup | null;
+}
+
+export async function restartApp(
+  appId: string,
+  node: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/restart?node=${node}`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
 export async function triggerBackup(
   appId: string,
   node: string,
@@ -40,6 +65,60 @@ export async function triggerBackup(
     const text = await response.text();
     throw new Error(text || `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function triggerSync(): Promise<void> {
+  const response = await fetch(`${API_BASE}/sync`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function triggerRebalance(): Promise<void> {
+  const response = await fetch(`${API_BASE}/rebalance`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function updateAppRestoreEnabled(
+  appId: string,
+  enabled: boolean,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/apps-restore/${appId}?enabled=${enabled}`,
+    {
+      method: "PUT",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function fetchSnapshots(appId: string, node: string): Promise<SnapshotCacheResponse> {
+  return fetchJSON<SnapshotCacheResponse>(`${API_BASE}/apps/${appId}/snapshots?node=${node}`);
+}
+
+export async function refreshSnapshots(appId: string, node: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/apps/${appId}/snapshot-refresh?node=${node}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function fetchSnapshotFiles(snapshotId: string, node: string, path: string): Promise<SnapshotEntry[]> {
+  return fetchJSON<SnapshotEntry[]>(`${API_BASE}/snapshots/${snapshotId}/ls?node=${node}&path=${encodeURIComponent(path)}`);
 }
 
 export async function updateAppDesiredState(

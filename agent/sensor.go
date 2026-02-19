@@ -90,11 +90,16 @@ func (a *Agent) sample() {
 		rt.SetHealth(status.health)
 		rt.SetPort(status.port)
 
-		// Advance backup phase: container confirmed stopped → BackupStopped
+		// Handle stopped containers
 		if status.running == common.RunningStatusStopped {
-			if rt.GetPhase() == common.PhaseBackupStopping {
+			currentPhase := rt.GetPhase()
+			if currentPhase == common.PhaseBackupStopping {
+				// Advance backup phase: container confirmed stopped → BackupStopped
 				rt.SetPhase(common.PhaseBackupStopped)
 				log.Printf("Sensor: %s container confirmed stopped, advancing to BackupStopped", status.appID)
+			} else if currentPhase == common.PhaseRunning {
+				// Clear stale running phase when container is stopped
+				rt.SetPhase(common.PhaseEmpty)
 			}
 		}
 
@@ -215,6 +220,16 @@ func (a *Agent) getOrCreateRuntimeLocked(appID common.AppID) *AppRuntime {
 		return rt
 	}
 	rt := NewAppRuntime(appID)
+
+	// Restore persisted backup timestamp so it survives agent restarts
+	if meta, err := loadBackupMeta(a.appdataDir, appID); err != nil {
+		log.Printf("Sensor: failed to load backup meta for %s: %s", appID, err)
+	} else if meta != nil {
+		rt.Backup.LastBackupAt = meta.LastBackupAt
+		rt.Backup.BackupDefer = time.Time{} // Clear defer since we have real backup data
+		log.Printf("Sensor: restored backup meta for %s (last backup: %s)", appID, meta.LastBackupAt.Format(time.RFC3339))
+	}
+
 	a.runtime[appID] = rt
 	return rt
 }

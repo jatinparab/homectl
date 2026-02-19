@@ -40,6 +40,16 @@ func (rs *ReadyServer) Start() error {
 	// Backup trigger endpoint
 	mux.HandleFunc("/backup/", rs.handleTriggerBackup)
 
+	// Restart endpoint (clears runtime state and restarts the app)
+	mux.HandleFunc("/restart/", rs.handleRestart)
+
+	// Sync endpoint (re-pull docker configs from manager)
+	mux.HandleFunc("/sync", rs.handleSync)
+
+	// Snapshot browsing endpoints
+	mux.HandleFunc("/snapshots/", rs.handleSnapshots)
+	mux.HandleFunc("/snapshot-ls/", rs.handleSnapshotLs)
+
 	// Register logs, system-logs, containers, container-logs routes
 	logsHandler := NewLogsHandler(rs.agent)
 	logsHandler.RegisterRoutes(mux)
@@ -67,10 +77,16 @@ func (rs *ReadyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
 }
 
-// handleReady checks if traefik is running and healthy
+// handleReady checks if this node is the gateway and traefik is healthy
 func (rs *ReadyServer) handleReady(w http.ResponseWriter, r *http.Request) {
-	isReady, message := rs.checkTraefikReady()
+	if !rs.agent.IsGateway() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("not ready: not gateway\n"))
+		return
+	}
 
+	// Still check traefik as a safety net
+	isReady, message := rs.checkTraefikReady()
 	if isReady {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
@@ -109,6 +125,148 @@ func (rs *ReadyServer) handleTriggerBackup(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "backup_triggered"})
+}
+
+// handleRestart clears the runtime state for an app and triggers a stop+start cycle.
+// POST /restart/{appId}
+func (rs *ReadyServer) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	appID := strings.TrimPrefix(r.URL.Path, "/restart/")
+	if appID == "" {
+		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+
+	rt := rs.agent.getRuntime(common.AppID(appID))
+	if rt == nil {
+		http.Error(w, "app not found", http.StatusNotFound)
+		return
+	}
+
+	// Clear all runtime state so the app gets a fresh start
+	rs.agent.runtimeMu.Lock()
+	rt.RestartCount = 0
+	rt.Quarantined = false
+	rt.LastError = ""
+	rt.Phase = common.PhaseEmpty
+	rt.Health = common.HealthUnknown
+	rt.Progress = nil
+	rt.InFlight = false
+	rt.InFlightAction = ""
+	rs.agent.runtimeMu.Unlock()
+
+	// If currently running, stop it — the reconcile loop will start it again
+	if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
+		rs.agent.executor.Submit(ActionStop(common.AppID(appID)))
+		log.Printf("Restart triggered for %s via API (stopping, will restart)", appID)
+	} else {
+		log.Printf("Restart triggered for %s via API (not running, will start on next reconcile)", appID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "restart_triggered"})
+}
+
+// handleSync re-pulls docker configs from the manager and reloads apps.
+// POST /sync
+func (rs *ReadyServer) handleSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := rs.agent.SyncConfigs(); err != nil {
+		log.Printf("Sync failed: %s", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Sync completed via API")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "synced"})
+}
+
+// handleSnapshots handles snapshot requests:
+// GET /snapshots/{appId} — return cached snapshot data
+// POST /snapshots/{appId}/refresh — invalidate cache and trigger async refresh
+func (rs *ReadyServer) handleSnapshots(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/snapshots/")
+
+	// Check for /snapshots/{appId}/refresh
+	if strings.HasSuffix(path, "/refresh") {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		appID := strings.TrimSuffix(path, "/refresh")
+		if appID == "" {
+			http.Error(w, "app_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Kick off async refresh (cancels any in-flight refresh automatically)
+		go rs.agent.refreshSnapshotCache(common.AppID(appID))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"loading": true})
+		return
+	}
+
+	// GET /snapshots/{appId}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	appID := path
+	if appID == "" {
+		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+
+	cache := rs.agent.getSnapshotCache(common.AppID(appID))
+	if cache == nil {
+		// Never fetched — do a synchronous refresh
+		rs.agent.refreshSnapshotCache(common.AppID(appID))
+		cache = rs.agent.getSnapshotCache(common.AppID(appID))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cache)
+}
+
+// handleSnapshotLs lists files inside a snapshot at a given path
+// GET /snapshot-ls/{snapshotId}?path=/
+func (rs *ReadyServer) handleSnapshotLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	snapshotID := strings.TrimPrefix(r.URL.Path, "/snapshot-ls/")
+	if snapshotID == "" {
+		http.Error(w, "snapshot_id is required", http.StatusBadRequest)
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+
+	entries, err := rs.agent.restic.ListSnapshotFiles(r.Context(), snapshotID, path)
+	if err != nil {
+		log.Printf("ListSnapshotFiles(%s, %s) error: %s", snapshotID, path, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
 }
 
 // checkTraefikReady checks if traefik app is running and healthy

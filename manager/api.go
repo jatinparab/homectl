@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -33,6 +34,7 @@ type APIAgentInfo struct {
 	LastSeen     string             `json:"last_seen"`
 	RegisteredAt string             `json:"registered_at"`
 	Online       bool               `json:"online"`
+	IsGateway    bool               `json:"is_gateway"`
 	AppReports   []common.AppReport `json:"app_reports"`
 }
 
@@ -87,6 +89,10 @@ func (m *Manager) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 
+	m.gatewayMu.Lock()
+	gatewayNode := m.gatewayNode
+	m.gatewayMu.Unlock()
+
 	apiAgents := make([]APIAgentInfo, 0, len(agents))
 	for _, agent := range agents {
 		appReports := agent.AppReports
@@ -100,6 +106,7 @@ func (m *Manager) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 			LastSeen:     agent.LastSeen.Format(time.RFC3339),
 			RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 			Online:       now.Sub(agent.LastSeen) < 30*time.Second,
+			IsGateway:    gatewayNode == agent.Name,
 			AppReports:   appReports,
 		})
 	}
@@ -137,12 +144,17 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 		appReports = []common.AppReport{}
 	}
 
+	m.gatewayMu.Lock()
+	isGateway := m.gatewayNode == agent.Name
+	m.gatewayMu.Unlock()
+
 	apiAgent := APIAgentInfo{
 		Name:         agent.Name,
 		IP:           agent.IP,
 		LastSeen:     agent.LastSeen.Format(time.RFC3339),
 		RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 		Online:       now.Sub(agent.LastSeen) < 30*time.Second,
+		IsGateway:    isGateway,
 		AppReports:   appReports,
 	}
 
@@ -152,16 +164,29 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 
 // NodeReport represents a single node's report for an app
 type NodeReport struct {
-	Node          string                 `json:"node"`
-	NodeOnline    bool                   `json:"node_online"`
-	ObservedState string                 `json:"observed_state"`
-	Health        string                 `json:"health"`
-	Phase         string                 `json:"phase"`
-	LastError     string                 `json:"last_error"`
-	RestartCount  int                    `json:"restart_count"`
-	Quarantined   bool                   `json:"quarantined"`
-	Port          int                    `json:"port"`
-	Progress      *common.ResticProgress `json:"progress,omitempty"`
+	Node              string                 `json:"node"`
+	NodeOnline        bool                   `json:"node_online"`
+	ObservedState     string                 `json:"observed_state"`
+	Health            string                 `json:"health"`
+	Phase             string                 `json:"phase"`
+	LastError         string                 `json:"last_error"`
+	RestartCount      int                    `json:"restart_count"`
+	Quarantined       bool                   `json:"quarantined"`
+	Port              int                    `json:"port"`
+	Progress          *common.ResticProgress `json:"progress,omitempty"`
+	LastBackupAt      string                 `json:"last_backup_at,omitempty"`
+	LastBackupError   string                 `json:"last_backup_error,omitempty"`
+	BackupStatus      string                 `json:"backup_status"`
+	ActiveConnections bool                   `json:"active_connections"`
+	LastActiveAt      string                 `json:"last_active_at,omitempty"`
+}
+
+// UpcomingBackupInfo describes the next scheduled backup
+type UpcomingBackupInfo struct {
+	AgentID    string `json:"agent_id"`
+	AppID      string `json:"app_id"`
+	AssignedAt string `json:"assigned_at"`
+	Started    bool   `json:"started"`
 }
 
 // AppStatus combines desired state with observed state for UI display
@@ -169,10 +194,16 @@ type AppStatus struct {
 	AppID         string       `json:"app_id"`
 	DesiredState  string       `json:"desired_state"`
 	AssignedAgent *string      `json:"assigned_agent"`
+	IsGlobal      bool         `json:"is_global"`      // Runs on all connected nodes
 	ObservedState string       `json:"observed_state"` // Consolidated (worst case)
 	Health        string       `json:"health"`         // Consolidated (worst case)
 	Phase         string       `json:"phase"`          // Consolidated
-	NodeReports   []NodeReport `json:"node_reports"`   // All node reports
+	BackupStatus  string       `json:"backup_status"`  // Consolidated worst backup status
+	BackupEnabled   bool         `json:"backup_enabled"`   // Whether backup is enabled for this app
+	BackupSensitive bool         `json:"backup_sensitive"` // App is sensitive to backup interruptions
+	BackupInterval  string       `json:"backup_interval"`  // Human-readable backup interval
+	RestoreEnabled  bool         `json:"restore_enabled"`  // Whether restore-on-start is enabled
+	NodeReports     []NodeReport `json:"node_reports"`     // All node reports
 }
 
 // consolidateObservedState returns the worst observed state (error > restarting > stopped > unknown > running)
@@ -221,6 +252,27 @@ func consolidateHealth(healths []string) string {
 	return worst
 }
 
+// consolidateBackupStatus returns the worst backup status (never > needs_backup > ok)
+func consolidateBackupStatus(statuses []string) string {
+	if len(statuses) == 0 {
+		return ""
+	}
+	priority := map[string]int{
+		"never":        0,
+		"needs_backup": 1,
+		"ok":           2,
+	}
+	worst := "ok"
+	worstP := priority["ok"]
+	for _, s := range statuses {
+		if p, ok := priority[s]; ok && p < worstP {
+			worst = s
+			worstP = p
+		}
+	}
+	return worst
+}
+
 // consolidatePhase returns the worst phase (error > any other)
 func consolidatePhase(phases []string) string {
 	for _, phase := range phases {
@@ -243,6 +295,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allApps := m.appRegistry.ListAll()
+	appConfigs := m.loadAppConfigs()
 
 	// Get all agents with their app reports for per-node detail
 	agents := m.leaseManager.ListAgents()
@@ -255,17 +308,41 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		agentOnline := now.Sub(agent.LastSeen) < 30*time.Second
 		for _, report := range agent.AppReports {
 			appID := string(report.AppID)
+			cfg := appConfigs[appID]
+			interval := cfg.GetBackupInterval()
+
+			var lastBackupStr string
+			var backupStatus string
+			if !report.LastBackupAt.IsZero() {
+				lastBackupStr = report.LastBackupAt.Format(time.RFC3339)
+				if now.Sub(report.LastBackupAt) > interval {
+					backupStatus = "needs_backup"
+				} else {
+					backupStatus = "ok"
+				}
+			} else {
+				backupStatus = "never"
+			}
+			var lastActiveStr string
+			if !report.LastActiveAt.IsZero() {
+				lastActiveStr = report.LastActiveAt.Format(time.RFC3339)
+			}
 			nodeReport := NodeReport{
-				Node:          agent.Name,
-				NodeOnline:    agentOnline,
-				ObservedState: string(report.ObservedState),
-				Health:        string(report.Health),
-				Phase:         string(report.Phase),
-				LastError:     report.LastError,
-				RestartCount:  report.RestartCount,
-				Quarantined:   report.Quarantined,
-				Port:          report.Port,
-				Progress:      report.Progress,
+				Node:              agent.Name,
+				NodeOnline:        agentOnline,
+				ObservedState:     string(report.ObservedState),
+				Health:            string(report.Health),
+				Phase:             string(report.Phase),
+				LastError:         report.LastError,
+				RestartCount:      report.RestartCount,
+				Quarantined:       report.Quarantined,
+				Port:              report.Port,
+				Progress:          report.Progress,
+				LastBackupAt:      lastBackupStr,
+				LastBackupError:   report.LastBackupError,
+				BackupStatus:      backupStatus,
+				ActiveConnections: report.ActiveConnections,
+				LastActiveAt:      lastActiveStr,
 			}
 			appReportsMap[appID] = append(appReportsMap[appID], nodeReport)
 		}
@@ -281,23 +358,39 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Collect states/healths/phases for consolidation
-		var states, healths, phases []string
+		var states, healths, phases, backupStatuses []string
 		for _, nr := range nodeReports {
 			states = append(states, nr.ObservedState)
 			healths = append(healths, nr.Health)
 			if nr.Phase != "" {
 				phases = append(phases, nr.Phase)
 			}
+			backupStatuses = append(backupStatuses, nr.BackupStatus)
+		}
+
+		backupEnabled := true
+		var backupSensitive bool
+		backupInterval := BackupInterval.String()
+		if cfg, ok := appConfigs[appID]; ok {
+			backupEnabled = cfg.IsBackupEnabled()
+			backupSensitive = cfg.BackupSensitive
+			backupInterval = cfg.GetBackupInterval().String()
 		}
 
 		status := AppStatus{
-			AppID:         appID,
-			DesiredState:  string(app.DesiredState),
-			AssignedAgent: app.AssignedAgent,
-			ObservedState: consolidateObservedState(states),
-			Health:        consolidateHealth(healths),
-			Phase:         consolidatePhase(phases),
-			NodeReports:   nodeReports,
+			AppID:           appID,
+			DesiredState:    string(app.DesiredState),
+			AssignedAgent:   app.AssignedAgent,
+			IsGlobal:        app.IsGlobal,
+			ObservedState:   consolidateObservedState(states),
+			Health:          consolidateHealth(healths),
+			Phase:           consolidatePhase(phases),
+			BackupStatus:    consolidateBackupStatus(backupStatuses),
+			BackupEnabled:   backupEnabled,
+			BackupSensitive: backupSensitive,
+			BackupInterval:  backupInterval,
+			RestoreEnabled:  app.RestoreEnabled,
+			NodeReports:     nodeReports,
 		}
 
 		result = append(result, status)
@@ -305,6 +398,161 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleAPIUpcomingBackup returns the current backup assignment
+// GET /api/v1/backup/upcoming
+func (m *Manager) handleAPIUpcomingBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	m.backupMu.Lock()
+	a := m.backupAssignment
+	m.backupMu.Unlock()
+
+	if a == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("null"))
+		return
+	}
+
+	info := UpcomingBackupInfo{
+		AgentID:    a.AgentID,
+		AppID:      string(a.AppID),
+		AssignedAt: a.AssignedAt.Format(time.RFC3339),
+		Started:    a.BackupStarted,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+// handleAPIAppRestore handles PUT requests to toggle an app's restore-enabled flag
+// PUT /api/v1/apps-restore/{appId}?enabled=true|false
+func (m *Manager) handleAPIAppRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps-restore/")
+	appID := strings.TrimSuffix(path, "/")
+	if appID == "" {
+		http.Error(w, "App ID required", http.StatusBadRequest)
+		return
+	}
+
+	enabledStr := r.URL.Query().Get("enabled")
+	if enabledStr == "" {
+		http.Error(w, "enabled query parameter is required (true or false)", http.StatusBadRequest)
+		return
+	}
+
+	enabled := enabledStr == "true"
+
+	if err := m.appRegistry.UpdateRestoreEnabled(common.AppID(appID), enabled); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	m.saveRestoreDisabled()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"app_id": appID, "restore_enabled": enabled})
+}
+
+// handleAPISync performs a git pull, re-discovers apps, and tells all online agents to re-sync.
+// POST /api/v1/sync
+func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Step 1: Git pull
+	if err := m.GitSync(); err != nil {
+		http.Error(w, fmt.Sprintf("Git sync failed: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Step 2: Re-discover apps
+	m.DiscoverApps()
+
+	// Step 3: Fan out to all online agents
+	agents := m.leaseManager.ListAgents()
+	now := time.Now()
+	var syncErrors []string
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, agent := range agents {
+		if now.Sub(agent.LastSeen) > 30*time.Second {
+			continue
+		}
+		agentCfg := m.config.GetAgentConfig(agent.Name)
+		if agentCfg == nil {
+			continue
+		}
+
+		wg.Add(1)
+		go func(name, ip string) {
+			defer wg.Done()
+			url := fmt.Sprintf("http://%s:%d/sync", ip, agentpkg.ReadyServerPort)
+			req, err := http.NewRequest(http.MethodPost, url, nil)
+			if err != nil {
+				mu.Lock()
+				syncErrors = append(syncErrors, fmt.Sprintf("%s: %s", name, err))
+				mu.Unlock()
+				return
+			}
+			resp, err := m.httpClient.Do(req)
+			if err != nil {
+				mu.Lock()
+				syncErrors = append(syncErrors, fmt.Sprintf("%s: %s", name, err))
+				mu.Unlock()
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				mu.Lock()
+				syncErrors = append(syncErrors, fmt.Sprintf("%s: HTTP %d", name, resp.StatusCode))
+				mu.Unlock()
+				return
+			}
+			log.Printf("Sync: agent %s synced successfully", name)
+		}(agent.Name, agentCfg.IP)
+	}
+
+	wg.Wait()
+
+	response := map[string]any{
+		"status": "ok",
+	}
+	if len(syncErrors) > 0 {
+		response["errors"] = syncErrors
+		log.Printf("Sync completed with errors: %v", syncErrors)
+	} else {
+		log.Printf("Sync completed successfully for all agents")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleAPIRebalance triggers a force rebalance of all apps
+// POST /api/v1/rebalance
+func (m *Manager) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	m.ForceRebalance()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleAPIAppRoutes dispatches /api/v1/apps/{appId}/... sub-routes
@@ -320,8 +568,16 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case "logs":
 		m.handleAPIAppLogs(w, r)
+	case "phase-logs":
+		m.handleAPIAppPhaseLogs(w, r)
 	case "backup":
 		m.handleAPITriggerBackup(w, r)
+	case "restart":
+		m.handleAPIRestartApp(w, r)
+	case "snapshots":
+		m.handleAPIAppSnapshots(w, r)
+	case "snapshot-refresh":
+		m.handleAPIAppSnapshotRefresh(w, r)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
@@ -362,12 +618,13 @@ func (m *Manager) handleAPIAppDesiredState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Update the app's desired state
+	// Update the app's desired state and persist
 	err := m.appRegistry.UpdateDesiredState(common.AppID(appID), desiredState)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	m.saveDesiredState()
 
 	// Return the updated app
 	app := m.appRegistry.Get(common.AppID(appID))
@@ -423,6 +680,59 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 
 	// Forward to agent's ready server
 	agentURL := fmt.Sprintf("http://%s:%d/backup/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handleAPIRestartApp proxies a restart request to the appropriate agent
+// POST /api/v1/apps/{appId}/restart?node={nodeName}
+func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/restart/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
 	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
@@ -518,6 +828,89 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				// Parse lines and send as SSE events
+				lines := strings.Split(string(buf[:n]), "\n")
+				for _, line := range lines {
+					if line != "" {
+						w.Write([]byte("data: " + line + "\n\n"))
+					}
+				}
+				flusher.Flush()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+// handleAPIAppPhaseLogs streams phase logs (e.g. pull output) from an agent as SSE
+// GET /api/v1/apps/{appId}/phase-logs?node={nodeName}
+func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "phase-logs" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/phase-logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	resp, err := m.httpClient.Get(agentURL)
+	if err != nil {
+		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
+		flusher.Flush()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+		flusher.Flush()
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {
 					if line != "" {
@@ -736,6 +1129,159 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+// handleAPIAppSnapshots proxies a snapshot list request to an agent
+// GET /api/v1/apps/{appId}/snapshots?node={nodeName}
+func (m *Manager) handleAPIAppSnapshots(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/snapshots/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	resp, err := m.httpClient.Get(agentURL)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handleAPIAppSnapshotRefresh proxies a snapshot refresh request to an agent
+// POST /api/v1/apps/{appId}/snapshot-refresh?node={nodeName}
+func (m *Manager) handleAPIAppSnapshotRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/snapshots/%s/refresh", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handleAPISnapshotLs proxies a snapshot file listing request to an agent
+// GET /api/v1/snapshots/{snapshotId}/ls?node={nodeName}&path=/
+func (m *Manager) handleAPISnapshotLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse: /api/v1/snapshots/{snapshotId}/ls
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/snapshots/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "ls" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	snapshotID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	browsePath := r.URL.Query().Get("path")
+	if browsePath == "" {
+		browsePath = "/"
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/snapshot-ls/%s?path=%s", agentCfg.IP, agentpkg.ReadyServerPort, snapshotID, browsePath)
+	resp, err := m.httpClient.Get(agentURL)
+	if err != nil {
+		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // handleAPIContainerLogs streams container logs from a specific agent as SSE

@@ -71,15 +71,22 @@ func (lm *LeaseManager) cleanupLoop() {
 	}
 }
 
-// cleanupExpired removes agents that haven't renewed their lease
+// staleAgentTTL is how long an offline agent's record is kept before deletion.
+// This is much longer than leaseTTL so that the reconciler can distinguish
+// "briefly offline during a rolling deploy" from "truly gone".
+const staleAgentTTL = 24 * time.Hour
+
+// cleanupExpired removes agents that have been offline longer than staleAgentTTL.
+// The aliveAgents check in the reconciler uses leaseTTL (30s) to decide liveness;
+// this only garbage-collects the record after 24h.
 func (lm *LeaseManager) cleanupExpired() {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
 	now := time.Now()
 	for name, agent := range lm.agents {
-		if now.Sub(agent.LastSeen) > lm.leaseTTL {
-			log.Printf("Agent %s lease expired (last seen: %v)", name, agent.LastSeen)
+		if now.Sub(agent.LastSeen) > staleAgentTTL {
+			log.Printf("Agent %s stale, removing (last seen: %v)", name, agent.LastSeen)
 			delete(lm.agents, name)
 		}
 	}
@@ -150,6 +157,11 @@ func (lm *LeaseManager) Stop() {
 	close(lm.stopCleanup)
 }
 
+// LeaseTTL returns the configured lease TTL used to determine agent liveness.
+func (lm *LeaseManager) LeaseTTL() time.Duration {
+	return lm.leaseTTL
+}
+
 // HeartbeatRequest is the request body for agent heartbeat
 type HeartbeatRequest struct {
 	Name    string             `json:"name"`
@@ -178,14 +190,14 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports)
 
+	// Adopt running apps that have no assignment (e.g. after manager restart)
+	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)
+
 	// Update app registry with reported state
 	now := time.Now()
 	for _, report := range req.Reports {
 		m.appRegistry.UpdateFromReport(report, req.Name, now)
 	}
-
-	// Extend backup lease if this agent is the holder
-	m.ExtendBackupLeaseIfHolder(req.Name)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

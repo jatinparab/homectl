@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useContainers } from '../api/hooks'
 import { ContainerStateBadge } from './StatusBadge'
 import type { NodeContainers } from '../api/types'
@@ -53,7 +53,7 @@ function NodeGroup({
                   </tr>
                 </thead>
                 <tbody>
-                  {nodeData.containers.map((c) => (
+                  {[...nodeData.containers].sort((a, b) => a.name.localeCompare(b.name)).map((c) => (
                     <tr key={c.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                       <td className="py-2 px-3 text-white font-mono text-xs">{c.name}</td>
                       <td className="py-2 px-3 text-gray-400 text-xs max-w-48 truncate">{c.image}</td>
@@ -84,16 +84,21 @@ function NodeGroup({
 export function ContainersSection({ onShowLogs }: ContainersSectionProps) {
   const { data: nodeContainers, isLoading } = useContainers()
 
+  const sortedNodes = useMemo(() => {
+    if (!nodeContainers) return []
+    return [...nodeContainers].sort((a, b) => a.node.localeCompare(b.node))
+  }, [nodeContainers])
+
   return (
     <div className="mb-6">
       <h2 className="text-lg font-semibold text-white mb-4">Docker Containers</h2>
       {isLoading ? (
         <div className="text-gray-500 text-sm">Loading containers...</div>
-      ) : !nodeContainers || nodeContainers.length === 0 ? (
+      ) : sortedNodes.length === 0 ? (
         <div className="text-gray-500 text-sm">No nodes found</div>
       ) : (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-          {nodeContainers.map((nc) => (
+          {sortedNodes.map((nc) => (
             <NodeGroup key={nc.node} nodeData={nc} onShowLogs={onShowLogs} />
           ))}
         </div>
