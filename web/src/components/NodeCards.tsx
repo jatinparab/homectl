@@ -1,10 +1,12 @@
-import type { Agent } from '../api/types'
+import type { Agent, GatewayInfo } from '../api/types'
+import { useSetManualGateway, useClearManualGateway } from '../api/hooks'
 
 interface NodeCardsProps {
   agents: Agent[] | undefined
+  gatewayInfo: GatewayInfo | undefined
 }
 
-export function NodeCards({ agents }: NodeCardsProps) {
+export function NodeCards({ agents, gatewayInfo }: NodeCardsProps) {
   if (!agents || agents.length === 0) {
     return null
   }
@@ -17,7 +19,7 @@ export function NodeCards({ agents }: NodeCardsProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
       {sorted.map((agent) => (
-        <NodeCard key={agent.name} agent={agent} />
+        <NodeCard key={agent.name} agent={agent} gatewayInfo={gatewayInfo} />
       ))}
     </div>
   )
@@ -25,9 +27,24 @@ export function NodeCards({ agents }: NodeCardsProps) {
 
 interface NodeCardProps {
   agent: Agent
+  gatewayInfo: GatewayInfo | undefined
 }
 
-function NodeCard({ agent }: NodeCardProps) {
+function NodeCard({ agent, gatewayInfo }: NodeCardProps) {
+  const setManualGateway = useSetManualGateway()
+  const clearManualGateway = useClearManualGateway()
+
+  const isManual = gatewayInfo?.is_manual ?? false
+  const isThisManual = isManual && gatewayInfo?.manual_node === agent.name
+
+  function handleSetGateway() {
+    setManualGateway.mutate(agent.name)
+  }
+
+  function handleClearGateway() {
+    clearManualGateway.mutate()
+  }
+
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
       <div className="flex items-center justify-between mb-2">
@@ -36,6 +53,11 @@ function NodeCard({ agent }: NodeCardProps) {
           {agent.is_gateway && (
             <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-green-900 text-green-300 border border-green-700">
               Gateway
+            </span>
+          )}
+          {isThisManual && (
+            <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-900 text-blue-300 border border-blue-700">
+              Manual
             </span>
           )}
         </div>
@@ -54,6 +76,26 @@ function NodeCard({ agent }: NodeCardProps) {
             {agent.online ? 'Online' : 'Offline'}
           </span>
         </div>
+      </div>
+      <div className="mt-3 flex gap-2">
+        {!isThisManual && (
+          <button
+            onClick={handleSetGateway}
+            disabled={!agent.online || setManualGateway.isPending}
+            className="flex-1 text-xs px-2 py-1 rounded bg-blue-800 hover:bg-blue-700 text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Set as Gateway
+          </button>
+        )}
+        {isThisManual && (
+          <button
+            onClick={handleClearGateway}
+            disabled={clearManualGateway.isPending}
+            className="flex-1 text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Revert to Auto
+          </button>
+        )}
       </div>
     </div>
   )

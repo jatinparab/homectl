@@ -174,9 +174,13 @@ type NodeReport struct {
 	Quarantined       bool                   `json:"quarantined"`
 	Port              int                    `json:"port"`
 	Progress          *common.ResticProgress `json:"progress,omitempty"`
+	PruneBusy         bool                   `json:"prune_busy,omitempty"`
 	LastBackupAt      string                 `json:"last_backup_at,omitempty"`
 	LastBackupError   string                 `json:"last_backup_error,omitempty"`
 	BackupStatus      string                 `json:"backup_status"`
+	LastPruneAt       string                 `json:"last_prune_at,omitempty"`
+	LastPruneError    string                 `json:"last_prune_error,omitempty"`
+	PruneStatus       string                 `json:"prune_status"`
 	ActiveConnections bool                   `json:"active_connections"`
 	LastActiveAt      string                 `json:"last_active_at,omitempty"`
 	PostBackupPhase   string                 `json:"post_backup_phase,omitempty"`
@@ -184,6 +188,14 @@ type NodeReport struct {
 
 // UpcomingBackupInfo describes the next scheduled backup
 type UpcomingBackupInfo struct {
+	AgentID    string `json:"agent_id"`
+	AppID      string `json:"app_id"`
+	AssignedAt string `json:"assigned_at"`
+	Started    bool   `json:"started"`
+}
+
+// UpcomingPruneInfo describes the next scheduled prune
+type UpcomingPruneInfo struct {
 	AgentID    string `json:"agent_id"`
 	AppID      string `json:"app_id"`
 	AssignedAt string `json:"assigned_at"`
@@ -200,9 +212,11 @@ type AppStatus struct {
 	Health          string       `json:"health"`           // Consolidated (worst case)
 	Phase           string       `json:"phase"`            // Consolidated
 	BackupStatus    string       `json:"backup_status"`    // Consolidated worst backup status
+	PruneStatus     string       `json:"prune_status"`     // Consolidated worst prune status
 	BackupEnabled   bool         `json:"backup_enabled"`   // Whether backup is enabled for this app
 	BackupSensitive bool         `json:"backup_sensitive"` // App is sensitive to backup interruptions
 	BackupInterval  string       `json:"backup_interval"`  // Human-readable backup interval
+	PruneInterval   string       `json:"prune_interval"`   // Human-readable prune interval
 	RestoreEnabled  bool         `json:"restore_enabled"`  // Whether restore-on-start is enabled
 	NodeReports     []NodeReport `json:"node_reports"`     // All node reports
 }
@@ -274,6 +288,27 @@ func consolidateBackupStatus(statuses []string) string {
 	return worst
 }
 
+// consolidatePruneStatus returns the worst prune status (never > needs_prune > ok)
+func consolidatePruneStatus(statuses []string) string {
+	if len(statuses) == 0 {
+		return ""
+	}
+	priority := map[string]int{
+		"never":       0,
+		"needs_prune": 1,
+		"ok":          2,
+	}
+	worst := "ok"
+	worstP := priority["ok"]
+	for _, s := range statuses {
+		if p, ok := priority[s]; ok && p < worstP {
+			worst = s
+			worstP = p
+		}
+	}
+	return worst
+}
+
 // consolidatePhase returns the worst phase (error > any other)
 func consolidatePhase(phases []string) string {
 	for _, phase := range phases {
@@ -304,6 +339,14 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 
 	// Build a map of app_id -> list of NodeReports for multi-node support
 	appReportsMap := make(map[string][]NodeReport)
+	pruneStateChanged := false
+	pruneStateUpdates := make(map[common.AppID]PruneState)
+	m.backupMu.Lock()
+	pruneStateSnapshot := make(map[common.AppID]PruneState, len(m.pruneState))
+	for k, v := range m.pruneState {
+		pruneStateSnapshot[k] = v
+	}
+	m.backupMu.Unlock()
 
 	for _, agent := range agents {
 		agentOnline := now.Sub(agent.LastSeen) < 30*time.Second
@@ -324,6 +367,31 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			} else {
 				backupStatus = "never"
 			}
+
+			lastPruneAt := report.LastPruneAt
+			st, hasState := pruneStateSnapshot[report.AppID]
+			if hasState && st.LastPruneAt.After(lastPruneAt) {
+				lastPruneAt = st.LastPruneAt
+				if report.LastPruneError == "" {
+					report.LastPruneError = st.LastPruneError
+				}
+			} else if !report.LastPruneAt.IsZero() && (!hasState || report.LastPruneAt.After(st.LastPruneAt)) {
+				pruneStateUpdates[report.AppID] = PruneState{LastPruneAt: report.LastPruneAt, LastPruneError: report.LastPruneError}
+				pruneStateChanged = true
+			}
+			var lastPruneStr string
+			var pruneStatus string
+			if !lastPruneAt.IsZero() {
+				lastPruneStr = lastPruneAt.Format(time.RFC3339)
+				if now.Sub(lastPruneAt) > PruneInterval {
+					pruneStatus = "needs_prune"
+				} else {
+					pruneStatus = "ok"
+				}
+			} else {
+				pruneStatus = "never"
+			}
+
 			var lastActiveStr string
 			if !report.LastActiveAt.IsZero() {
 				lastActiveStr = report.LastActiveAt.Format(time.RFC3339)
@@ -339,9 +407,13 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				Quarantined:       report.Quarantined,
 				Port:              report.Port,
 				Progress:          report.Progress,
+				PruneBusy:         report.PruneBusy,
 				LastBackupAt:      lastBackupStr,
 				LastBackupError:   report.LastBackupError,
 				BackupStatus:      backupStatus,
+				LastPruneAt:       lastPruneStr,
+				LastPruneError:    report.LastPruneError,
+				PruneStatus:       pruneStatus,
 				ActiveConnections: report.ActiveConnections,
 				LastActiveAt:      lastActiveStr,
 				PostBackupPhase:   report.PostBackupPhase,
@@ -356,9 +428,18 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				nodeReport.ActiveConnections = false
 				nodeReport.LastActiveAt = ""
 				nodeReport.PostBackupPhase = ""
+				nodeReport.PruneBusy = false
 			}
 			appReportsMap[appID] = append(appReportsMap[appID], nodeReport)
 		}
+	}
+	if pruneStateChanged {
+		m.backupMu.Lock()
+		for appID, st := range pruneStateUpdates {
+			m.pruneState[appID] = st
+		}
+		m.backupMu.Unlock()
+		go m.savePruneState()
 	}
 
 	// Build AppStatus list by merging registry apps with observed state
@@ -371,7 +452,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Collect states/healths/phases for consolidation
-		var states, healths, phases, backupStatuses []string
+		var states, healths, phases, backupStatuses, pruneStatuses []string
 		for _, nr := range nodeReports {
 			states = append(states, nr.ObservedState)
 			healths = append(healths, nr.Health)
@@ -379,11 +460,13 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 				phases = append(phases, nr.Phase)
 			}
 			backupStatuses = append(backupStatuses, nr.BackupStatus)
+			pruneStatuses = append(pruneStatuses, nr.PruneStatus)
 		}
 
 		backupEnabled := true
 		var backupSensitive bool
 		backupInterval := BackupInterval.String()
+		pruneInterval := PruneInterval.String()
 		if cfg, ok := appConfigs[appID]; ok {
 			backupEnabled = cfg.IsBackupEnabled()
 			backupSensitive = cfg.BackupSensitive
@@ -399,9 +482,11 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			Health:          consolidateHealth(healths),
 			Phase:           consolidatePhase(phases),
 			BackupStatus:    consolidateBackupStatus(backupStatuses),
+			PruneStatus:     consolidatePruneStatus(pruneStatuses),
 			BackupEnabled:   backupEnabled,
 			BackupSensitive: backupSensitive,
 			BackupInterval:  backupInterval,
+			PruneInterval:   pruneInterval,
 			RestoreEnabled:  app.RestoreEnabled,
 			NodeReports:     nodeReports,
 		}
@@ -432,6 +517,35 @@ func (m *Manager) handleAPIUpcomingBackup(w http.ResponseWriter, r *http.Request
 	}
 
 	info := UpcomingBackupInfo{
+		AgentID:    a.AgentID,
+		AppID:      string(a.AppID),
+		AssignedAt: a.AssignedAt.Format(time.RFC3339),
+		Started:    a.BackupStarted,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+// handleAPIUpcomingPrune returns the current prune assignment
+// GET /api/v1/prune/upcoming
+func (m *Manager) handleAPIUpcomingPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	m.backupMu.Lock()
+	a := m.pruneAssignment
+	m.backupMu.Unlock()
+
+	if a == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("null"))
+		return
+	}
+
+	info := UpcomingPruneInfo{
 		AgentID:    a.AgentID,
 		AppID:      string(a.AppID),
 		AssignedAt: a.AssignedAt.Format(time.RFC3339),
@@ -585,6 +699,8 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 		m.handleAPIAppPhaseLogs(w, r)
 	case "backup":
 		m.handleAPITriggerBackup(w, r)
+	case "prune":
+		m.handleAPITriggerPrune(w, r)
 	case "restart":
 		m.handleAPIRestartApp(w, r)
 	case "snapshots":
@@ -655,7 +771,7 @@ func (m *Manager) handleAPIAppDesiredState(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleAPITriggerBackup proxies a backup trigger request to the appropriate agent
+// handleAPITriggerBackup creates a manager-approved backup assignment.
 // POST /api/v1/apps/{appId}/backup?node={nodeName}
 func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -678,8 +794,7 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
+	if m.config.GetAgentConfig(nodeName) == nil {
 		http.Error(w, "Node not found in config", http.StatusNotFound)
 		return
 	}
@@ -691,24 +806,76 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Forward to agent's ready server
-	agentURL := fmt.Sprintf("http://%s:%d/backup/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+	m.backupMu.Lock()
+	defer m.backupMu.Unlock()
+
+	if m.backupAssignment != nil || m.pruneAssignment != nil || m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
+		http.Error(w, "global work lane busy", http.StatusConflict)
 		return
 	}
 
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
-		return
+	m.backupAssignment = &BackupAssignment{
+		Kind:       AssignmentKindBackup,
+		AgentID:    nodeName,
+		AppID:      common.AppID(appID),
+		AssignedAt: time.Now(),
 	}
-	defer resp.Body.Close()
+	m.lastScheduledWorkKind = AssignmentKindBackup
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	json.NewEncoder(w).Encode(map[string]string{"status": "backup_scheduled"})
+}
+
+// handleAPITriggerPrune creates a manager-approved prune assignment.
+// POST /api/v1/apps/{appId}/prune?node={nodeName}
+func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if m.config.GetAgentConfig(nodeName) == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	m.backupMu.Lock()
+	defer m.backupMu.Unlock()
+
+	if m.backupAssignment != nil || m.pruneAssignment != nil || m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
+		http.Error(w, "global work lane busy", http.StatusConflict)
+		return
+	}
+
+	m.pruneAssignment = &BackupAssignment{
+		Kind:       AssignmentKindPrune,
+		AgentID:    nodeName,
+		AppID:      common.AppID(appID),
+		AssignedAt: time.Now(),
+	}
+	m.lastScheduledWorkKind = AssignmentKindPrune
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "prune_scheduled"})
 }
 
 // handleAPIRestartApp proxies a restart request to the appropriate agent
@@ -1375,5 +1542,82 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
+	}
+}
+
+// GatewayInfo contains current gateway information
+type GatewayInfo struct {
+	CurrentNode string `json:"current_node"`
+	ManualNode  string `json:"manual_node,omitempty"`
+	IsManual    bool   `json:"is_manual"`
+}
+
+// handleAPIGateway handles GET (fetch gateway info) and POST/DELETE (set/clear manual gateway)
+func (m *Manager) handleAPIGateway(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	m.gatewayMu.Lock()
+	currentNode := m.gatewayNode
+	manualNode := m.manualGatewayNode
+	m.gatewayMu.Unlock()
+
+	if r.Method == http.MethodGet {
+		// GET /api/v1/gateway - return current gateway info
+		info := GatewayInfo{
+			CurrentNode: currentNode,
+			ManualNode:  manualNode,
+			IsManual:    manualNode != "",
+		}
+		json.NewEncoder(w).Encode(info)
+	} else if r.Method == http.MethodPost {
+		// POST /api/v1/gateway?node={node} - set manual gateway
+		node := r.URL.Query().Get("node")
+		if node == "" {
+			http.Error(w, "node parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		// Verify the node exists and is online
+		agent, ok := m.leaseManager.GetAgent(node)
+		if !ok {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if time.Since(agent.LastSeen) > 30*time.Second {
+			http.Error(w, "node is offline", http.StatusConflict)
+			return
+		}
+
+		// Set manual gateway
+		m.gatewayMu.Lock()
+		m.manualGatewayNode = node
+		m.gatewayMu.Unlock()
+
+		log.Printf("Manual gateway set to %s", node)
+
+		// Return updated info
+		info := GatewayInfo{
+			CurrentNode: node,
+			ManualNode:  node,
+			IsManual:    true,
+		}
+		json.NewEncoder(w).Encode(info)
+	} else if r.Method == http.MethodDelete {
+		// DELETE /api/v1/gateway - clear manual gateway (revert to automatic)
+		m.gatewayMu.Lock()
+		m.manualGatewayNode = ""
+		m.gatewayMu.Unlock()
+
+		log.Printf("Manual gateway cleared, reverting to automatic")
+
+		// Return updated info
+		info := GatewayInfo{
+			CurrentNode: currentNode,
+			ManualNode:  "",
+			IsManual:    false,
+		}
+		json.NewEncoder(w).Encode(info)
+	} else {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }

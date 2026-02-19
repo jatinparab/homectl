@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup } from "./types";
+import type { Agent, AppStatus, GatewayInfo, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -35,6 +35,15 @@ export async function fetchUpcomingBackup(): Promise<UpcomingBackup | null> {
   return data as UpcomingBackup | null;
 }
 
+export async function fetchUpcomingPrune(): Promise<UpcomingPrune | null> {
+  const response = await fetch(`${API_BASE}/prune/upcoming`);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  return data as UpcomingPrune | null;
+}
+
 export async function restartApp(
   appId: string,
   node: string,
@@ -57,6 +66,22 @@ export async function triggerBackup(
 ): Promise<void> {
   const response = await fetch(
     `${API_BASE}/apps/${appId}/backup?node=${node}`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function triggerPrune(
+  appId: string,
+  node: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/prune?node=${node}`,
     {
       method: "POST",
     },
@@ -155,4 +180,36 @@ export async function triggerRepoUnlock(): Promise<void> {
     const text = await response.text();
     throw new Error(text || `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function fetchGatewayInfo(): Promise<GatewayInfo> {
+  return fetchJSON<GatewayInfo>(`${API_BASE}/gateway`);
+}
+
+export async function setManualGateway(node: string): Promise<GatewayInfo> {
+  const response = await fetch(`${API_BASE}/gateway?node=${encodeURIComponent(node)}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function forceRepoUnlock(): Promise<void> {
+  const response = await fetch(`${API_BASE}/repo/force-unlock`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function clearManualGateway(): Promise<GatewayInfo> {
+  const response = await fetch(`${API_BASE}/gateway`, { method: "DELETE" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
 }

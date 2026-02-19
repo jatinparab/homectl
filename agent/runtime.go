@@ -8,44 +8,51 @@ import (
 )
 
 type BackupState struct {
-	LastBackupAt  time.Time
-	BackupDefer   time.Time // Don't schedule first backup before this time
-	InProgress    bool
-	LastError     string
-	JustBackedUp  bool // set after successful local backup; cleared on next start
+	LastBackupAt time.Time
+	BackupDefer  time.Time // Don't schedule first backup before this time
+	InProgress   bool
+	LastError    string
+	JustBackedUp bool // set after successful local backup; cleared on next start
+}
+
+type PruneState struct {
+	LastPruneAt time.Time
+	InProgress  bool
+	LastError   string
 }
 
 // AppRuntime tracks the runtime state of a single application
 type AppRuntime struct {
 	mu sync.RWMutex
 
-	AppID        common.AppID
-	Phase        common.Phase         // Stored lifecycle phase
-	Running      common.RunningStatus // From sensor: is container running?
-	Health       common.HealthStatus  // From health check
-	LastSeen     time.Time            // Last time sensor saw this app
-	RestartCount int                  // Incremented on each start/restart
-	Quarantined  bool                 // Set when RestartCount >= MaxRestarts
-	InFlight       bool   // Action in progress
-	InFlightAction string // Description of the in-flight action
-	LastError    string               // Last error message
+	AppID           common.AppID
+	Phase           common.Phase           // Stored lifecycle phase
+	Running         common.RunningStatus   // From sensor: is container running?
+	Health          common.HealthStatus    // From health check
+	LastSeen        time.Time              // Last time sensor saw this app
+	RestartCount    int                    // Incremented on each start/restart
+	Quarantined     bool                   // Set when RestartCount >= MaxRestarts
+	InFlight        bool                   // Action in progress
+	InFlightAction  string                 // Description of the in-flight action
+	LastError       string                 // Last error message
 	Port            int                    // First exposed port (for traefik routing)
 	Progress        *common.ResticProgress // Restic backup/restore progress
 	Backup          BackupState
-	BackupSensitive bool // App is sensitive to backup interruptions (e.g. media streaming)
-	BackupEnabled   bool // Whether backups/restores are enabled for this app (default true)
-	RestoreEnabled  bool // Whether restore-on-start is enabled (default true)
+	Prune           PruneState
+	BackupSensitive bool            // App is sensitive to backup interruptions (e.g. media streaming)
+	BackupEnabled   bool            // Whether backups/restores are enabled for this app (default true)
+	RestoreEnabled  bool            // Whether restore-on-start is enabled (default true)
 	PhaseLog        *PhaseLogBuffer // Ring buffer for phase (pull) logs
-	UnhealthyCount  int  // Consecutive unhealthy health checks
-	LastActiveAt    time.Time // Last time active TCP connections were seen
-	PostBackupPhase string // Phase of post-backup steps (prune/check), separate from lifecycle Phase
+	UnhealthyCount  int             // Consecutive unhealthy health checks
+	LastActiveAt    time.Time       // Last time active TCP connections were seen
+	PostBackupPhase string          // Phase of post-backup steps (prune/check), separate from lifecycle Phase
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
 func NewAppRuntime(appID common.AppID) *AppRuntime {
 	return &AppRuntime{
-		AppID:         appID,
-		Health:        common.HealthUnknown,
+		AppID:          appID,
+		Health:         common.HealthUnknown,
 		BackupEnabled:  true, // default enabled
 		RestoreEnabled: true, // default enabled
 		PhaseLog:       NewPhaseLogBuffer(),
@@ -321,11 +328,14 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		Quarantined:     r.Quarantined,
 		Port:            r.Port,
 		BackupBusy:      r.Backup.InProgress,
+		PruneBusy:       r.Prune.InProgress,
 		Progress:        r.Progress,
 		LastBackupAt:    r.Backup.LastBackupAt,
+		LastPruneAt:     r.Prune.LastPruneAt,
 		BackupDefer:     r.Backup.BackupDefer,
 		LastActiveAt:    r.LastActiveAt,
 		LastBackupError: r.Backup.LastError,
+		LastPruneError:  r.Prune.LastError,
 		PostBackupPhase: r.PostBackupPhase,
 	}
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useApps, useAgents, useUpcomingBackup, useSync, useRebalance } from './api/hooks'
+import { useApps, useAgents, useUpcomingBackup, useUpcomingPrune, useSync, useRebalance, useGatewayInfo } from './api/hooks'
 import { Header, type Tab } from './components/Header'
 import { AppsTable } from './components/AppsTable'
 import { NodeCards } from './components/NodeCards'
@@ -17,7 +17,9 @@ type LogPanelState =
 function App() {
   const { data: apps, isLoading } = useApps()
   const { data: agents } = useAgents()
+  const { data: gatewayInfo } = useGatewayInfo()
   const { data: upcomingBackup } = useUpcomingBackup()
+  const { data: upcomingPrune } = useUpcomingPrune()
   const syncMutation = useSync()
   const rebalanceMutation = useRebalance()
   const [logPanel, setLogPanel] = useState<LogPanelState>(null)
@@ -56,7 +58,7 @@ function App() {
       {activeTab === "dashboard" && (
         <main className="max-w-6xl mx-auto px-4 py-6">
           {/* Node Status Cards */}
-          <NodeCards agents={agents} />
+          <NodeCards agents={agents} gatewayInfo={gatewayInfo} />
 
           {/* Main Apps Table */}
           <div className="flex items-center justify-between mb-4">
@@ -80,7 +82,7 @@ function App() {
               </button>
             </div>
           </div>
-          <AppsTable apps={sortedApps} isLoading={isLoading} upcomingBackup={upcomingBackup} onShowLogs={handleShowAppLogs} />
+          <AppsTable apps={sortedApps} isLoading={isLoading} upcomingBackup={upcomingBackup} upcomingPrune={upcomingPrune} onShowLogs={handleShowAppLogs} />
 
           {/* System Logs */}
           <SystemLogViewer />

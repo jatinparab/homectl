@@ -1,14 +1,15 @@
-import type { AppStatus, UpcomingBackup } from '../api/types'
+import type { AppStatus, UpcomingBackup, UpcomingPrune } from '../api/types'
 import { AppRow } from './AppRow'
 
 interface AppsTableProps {
   apps: AppStatus[]
   isLoading: boolean
   upcomingBackup?: UpcomingBackup | null
+  upcomingPrune?: UpcomingPrune | null
   onShowLogs?: (node: string, appId: string) => void
 }
 
-export function AppsTable({ apps, isLoading, upcomingBackup, onShowLogs }: AppsTableProps) {
+export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onShowLogs }: AppsTableProps) {
   if (isLoading) {
     return (
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-400">
@@ -59,6 +60,8 @@ export function AppsTable({ apps, isLoading, upcomingBackup, onShowLogs }: AppsT
               app={app}
               isUpcomingBackup={upcomingBackup?.app_id === app.app_id}
               upcomingBackup={upcomingBackup?.app_id === app.app_id ? upcomingBackup : undefined}
+              isUpcomingPrune={upcomingPrune?.app_id === app.app_id}
+              upcomingPrune={upcomingPrune?.app_id === app.app_id ? upcomingPrune : undefined}
               onShowLogs={onShowLogs}
             />
           ))}

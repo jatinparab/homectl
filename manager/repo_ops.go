@@ -133,13 +133,13 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 	if !last.IsZero() && now.Sub(last) < RepoCheckInterval {
 		return
 	}
-	if m.anyBackupBusy() {
+	if m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() {
 		log.Printf("Repo ops: backup in progress, not scheduling")
 		return
 	}
 	// Avoid starting a repo check while a backup assignment is pending.
 	m.backupMu.Lock()
-	hasAssignment := m.backupAssignment != nil
+	hasAssignment := m.backupAssignment != nil || m.pruneAssignment != nil
 	m.backupMu.Unlock()
 	if hasAssignment {
 		log.Printf("Repo ops: backup scheduled, not scheduling")
