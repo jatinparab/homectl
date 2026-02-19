@@ -32,30 +32,31 @@ type BackupAssignment struct {
 }
 
 // resolveWorkAssignments is called from handleDesiredApps under backupMu.
-// It resolves state transitions for in-flight assignments and may create a new
-// backup or prune assignment when the global lane is idle.
-func (m *Manager) resolveWorkAssignments() (backup *BackupAssignment, prune *BackupAssignment) {
-	// Existing backup assignment first
-	if a := m.backupAssignment; a != nil {
+// It resolves state transitions for in-flight assignments and may create new
+// backup or prune assignments when allowed.
+func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssignment, prune *BackupAssignment) {
+	for appID, a := range m.backupAssignments {
 		busy := m.isAppBackupBusy(a.AgentID, a.AppID)
 		if !a.BackupStarted && busy {
 			a.BackupStarted = true
 			log.Printf("Backup assignment: %s/%s started", a.AgentID, a.AppID)
-			return a, m.pruneAssignment
+			continue
 		}
 		if a.BackupStarted && !busy {
 			log.Printf("Backup assignment: %s/%s completed", a.AgentID, a.AppID)
 			m.triggerGlobalRestore(a.AgentID, a.AppID)
-			m.backupAssignment = nil
-		} else if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
+			delete(m.backupAssignments, appID)
+			continue
+		}
+		if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
 			log.Printf("Backup assignment: %s/%s completed (LastBackupAt updated)", a.AgentID, a.AppID)
 			m.triggerGlobalRestore(a.AgentID, a.AppID)
-			m.backupAssignment = nil
-		} else if !a.BackupStarted && time.Since(a.AssignedAt) > 5*time.Minute {
+			delete(m.backupAssignments, appID)
+			continue
+		}
+		if !a.BackupStarted && time.Since(a.AssignedAt) > 5*time.Minute {
 			log.Printf("Backup assignment: %s/%s timed out (not started in 5m)", a.AgentID, a.AppID)
-			m.backupAssignment = nil
-		} else {
-			return a, m.pruneAssignment
+			delete(m.backupAssignments, appID)
 		}
 	}
 
@@ -65,7 +66,7 @@ func (m *Manager) resolveWorkAssignments() (backup *BackupAssignment, prune *Bac
 		if !p.BackupStarted && busy {
 			p.BackupStarted = true
 			log.Printf("Prune assignment: %s/%s started", p.AgentID, p.AppID)
-			return nil, p
+			return m.backupAssignments, p
 		}
 		if p.BackupStarted && !busy {
 			log.Printf("Prune assignment: %s/%s completed", p.AgentID, p.AppID)
@@ -77,57 +78,41 @@ func (m *Manager) resolveWorkAssignments() (backup *BackupAssignment, prune *Bac
 			log.Printf("Prune assignment: %s/%s timed out (not started in 5m)", p.AgentID, p.AppID)
 			m.pruneAssignment = nil
 		} else {
-			return m.backupAssignment, p
+			return m.backupAssignments, p
 		}
 	}
 
-	// No current assignment — globally serialize backup/prune/restore/repo-ops.
-	if m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
-		return m.backupAssignment, m.pruneAssignment
+	// Prune and backup remain mutually exclusive.
+	if m.pruneAssignment != nil || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
+		return m.backupAssignments, m.pruneAssignment
 	}
 
 	// Find candidates.
-	backupAgent, backupApp, backupOK := m.findStalestBackupApp()
+	backupCandidates := m.findStaleBackupApps()
 	pruneAgent, pruneApp, pruneOK := m.findStalestPruneApp()
 
-	if backupOK && pruneOK {
-		// Alternate priority when both queues are pending.
-		if m.lastScheduledWorkKind == AssignmentKindBackup {
-			m.pruneAssignment = &BackupAssignment{
-				Kind:       AssignmentKindPrune,
-				AgentID:    pruneAgent,
-				AppID:      pruneApp,
-				AssignedAt: time.Now(),
+	if len(backupCandidates) > 0 {
+		now := time.Now()
+		for _, c := range backupCandidates {
+			if _, ok := m.backupAssignments[c.AppID]; ok {
+				continue
 			}
-			m.lastScheduledWorkKind = AssignmentKindPrune
-			log.Printf("Prune assignment: created %s/%s (alternating)", pruneAgent, pruneApp)
-			return nil, m.pruneAssignment
-		}
-
-		m.backupAssignment = &BackupAssignment{
-			Kind:       AssignmentKindBackup,
-			AgentID:    backupAgent,
-			AppID:      backupApp,
-			AssignedAt: time.Now(),
+			m.backupAssignments[c.AppID] = &BackupAssignment{
+				Kind:       AssignmentKindBackup,
+				AgentID:    c.AgentID,
+				AppID:      c.AppID,
+				AssignedAt: now,
+			}
+			log.Printf("Backup assignment: created %s/%s", c.AgentID, c.AppID)
 		}
 		m.lastScheduledWorkKind = AssignmentKindBackup
-		log.Printf("Backup assignment: created %s/%s (alternating)", backupAgent, backupApp)
-		return m.backupAssignment, nil
-	}
-
-	if backupOK {
-		m.backupAssignment = &BackupAssignment{
-			Kind:       AssignmentKindBackup,
-			AgentID:    backupAgent,
-			AppID:      backupApp,
-			AssignedAt: time.Now(),
-		}
-		m.lastScheduledWorkKind = AssignmentKindBackup
-		log.Printf("Backup assignment: created %s/%s", backupAgent, backupApp)
-		return m.backupAssignment, nil
+		return m.backupAssignments, m.pruneAssignment
 	}
 
 	if pruneOK {
+		if len(m.backupAssignments) > 0 || m.anyBackupBusy() {
+			return m.backupAssignments, nil
+		}
 		m.pruneAssignment = &BackupAssignment{
 			Kind:       AssignmentKindPrune,
 			AgentID:    pruneAgent,
@@ -136,19 +121,18 @@ func (m *Manager) resolveWorkAssignments() (backup *BackupAssignment, prune *Bac
 		}
 		m.lastScheduledWorkKind = AssignmentKindPrune
 		log.Printf("Prune assignment: created %s/%s", pruneAgent, pruneApp)
-		return nil, m.pruneAssignment
+		return m.backupAssignments, m.pruneAssignment
 	}
 
-	return nil, nil
+	return m.backupAssignments, m.pruneAssignment
 }
 
-// findStalestBackupApp iterates all online agents' AppReports and finds the
-// running+healthy app with stale backup data.
-func (m *Manager) findStalestBackupApp() (agentID string, appID common.AppID, ok bool) {
+// findStaleBackupApps returns all running+healthy apps with stale backup data.
+func (m *Manager) findStaleBackupApps() []BackupAssignment {
 	agents := m.leaseManager.ListAgents()
 	appConfigs := m.loadAppConfigs()
 	now := time.Now()
-	var stalestTime time.Time
+	candidates := make([]BackupAssignment, 0)
 
 	for _, agent := range agents {
 		if now.Sub(agent.LastSeen) >= 30*time.Second {
@@ -180,15 +164,14 @@ func (m *Manager) findStalestBackupApp() (agentID string, appID common.AppID, ok
 					continue
 				}
 			}
-			if !ok || report.LastBackupAt.Before(stalestTime) {
-				stalestTime = report.LastBackupAt
-				agentID = agent.Name
-				appID = report.AppID
-				ok = true
+			if _, scheduled := m.backupAssignments[report.AppID]; scheduled {
+				continue
 			}
+			candidates = append(candidates, BackupAssignment{AgentID: agent.Name, AppID: report.AppID})
 		}
 	}
-	return
+
+	return candidates
 }
 
 // findStalestPruneApp finds the app most overdue for prune.
@@ -274,11 +257,20 @@ func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 		*a = nil
 	}
 
-	invalidate("Backup", &m.backupAssignment, map[common.Phase]bool{
-		common.PhaseBackupStopping: true,
-		common.PhaseBackupStopped:  true,
-		common.PhaseBackingUp:      true,
-	})
+	for appID := range m.backupAssignments {
+		a := m.backupAssignments[appID]
+		ptr := &a
+		invalidate("Backup", ptr, map[common.Phase]bool{
+			common.PhaseBackupStopping: true,
+			common.PhaseBackupStopped:  true,
+			common.PhaseBackingUp:      true,
+		})
+		if *ptr == nil {
+			delete(m.backupAssignments, appID)
+		} else {
+			m.backupAssignments[appID] = *ptr
+		}
+	}
 	invalidate("Prune", &m.pruneAssignment, map[common.Phase]bool{})
 }
 

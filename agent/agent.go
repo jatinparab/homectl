@@ -63,7 +63,10 @@ type Agent struct {
 	wg            sync.WaitGroup
 
 	// Backup fields
-	backupMu sync.Mutex
+	backupMu      sync.Mutex
+	backupCond    *sync.Cond
+	activeBackups int
+	pruneActive   bool
 
 	// Repo-wide maintenance (restic check/unlock)
 	repoCheck  *RepoOpState
@@ -99,6 +102,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
+	a.backupCond = sync.NewCond(&a.backupMu)
 	a.loadRepoOpsState()
 	return a
 }
@@ -463,6 +467,40 @@ func hasActiveTCPConnections(port int) bool {
 // canRestart checks if an app can be restarted
 func (a *Agent) canRestart(rt *AppRuntime) bool {
 	return rt.GetRestartCount() < MaxRestarts
+}
+
+func (a *Agent) beginBackup() {
+	a.backupMu.Lock()
+	for a.pruneActive {
+		a.backupCond.Wait()
+	}
+	a.activeBackups++
+	a.backupMu.Unlock()
+}
+
+func (a *Agent) endBackup() {
+	a.backupMu.Lock()
+	if a.activeBackups > 0 {
+		a.activeBackups--
+	}
+	a.backupCond.Broadcast()
+	a.backupMu.Unlock()
+}
+
+func (a *Agent) beginExclusiveBackupLane() {
+	a.backupMu.Lock()
+	for a.pruneActive || a.activeBackups > 0 {
+		a.backupCond.Wait()
+	}
+	a.pruneActive = true
+	a.backupMu.Unlock()
+}
+
+func (a *Agent) endExclusiveBackupLane() {
+	a.backupMu.Lock()
+	a.pruneActive = false
+	a.backupCond.Broadcast()
+	a.backupMu.Unlock()
 }
 
 // getRuntime returns the runtime for an app (thread-safe)
