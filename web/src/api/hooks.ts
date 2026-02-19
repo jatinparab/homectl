@@ -10,10 +10,13 @@ import {
   refreshSnapshots,
   restartApp,
   triggerBackup,
+  triggerRepoCheck,
+  triggerRepoUnlock,
   triggerRebalance,
   triggerSync,
   updateAppRestoreEnabled,
   updateAppDesiredState,
+  fetchRepoStatus,
 } from "./client";
 
 export function useApps() {
@@ -146,6 +149,35 @@ export function useUpdateAppDesiredState() {
       updateAppDesiredState(appId, state),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useRepoStatus() {
+  return useQuery({
+    queryKey: ["repo-status"],
+    queryFn: fetchRepoStatus,
+    refetchInterval: (query) =>
+      query.state.data?.check.busy || query.state.data?.unlock.busy ? 2000 : 10000,
+  });
+}
+
+export function useTriggerRepoCheck() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerRepoCheck,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
+    },
+  });
+}
+
+export function useTriggerRepoUnlock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerRepoUnlock,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
     },
   });
 }

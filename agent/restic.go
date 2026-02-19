@@ -54,6 +54,7 @@ type Restic interface {
 	Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
 	Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error
 	Check(ctx context.Context, onLog LogCallback) error
+	Unlock(ctx context.Context, onLog LogCallback) error
 	LatestSnapshot(ctx context.Context, appID common.AppID) (snapshotTime time.Time, snapshotID string, err error)
 	ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error)
 	ListSnapshotFiles(ctx context.Context, snapshotID, path string) ([]SnapshotEntry, error)
@@ -306,6 +307,12 @@ func (r *RepoRestic) Check(ctx context.Context, onLog LogCallback) error {
 	return r.runLines("check", cmd, onLog)
 }
 
+// Unlock removes stale locks from the restic repository.
+func (r *RepoRestic) Unlock(ctx context.Context, onLog LogCallback) error {
+	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "unlock", "--remove-all")
+	return r.runLines("unlock", cmd, onLog)
+}
+
 // resticSnapshot represents a snapshot entry from restic snapshots --json
 type resticSnapshot struct {
 	ID   string    `json:"short_id"`
@@ -374,7 +381,7 @@ func (r *RepoRestic) ListSnapshots(ctx context.Context, appID common.AppID) ([]S
 
 // resticLsEntry is the raw JSON output from restic ls --json
 type resticLsEntry struct {
-	Type  string `json:"type"`  // "file", "dir", "snapshot"
+	Type  string `json:"type"` // "file", "dir", "snapshot"
 	Path  string `json:"path"`
 	Name  string `json:"name"`
 	Size  uint64 `json:"size"`

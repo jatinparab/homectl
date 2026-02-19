@@ -114,3 +114,17 @@ export interface NodeContainers {
   containers: ContainerInfo[];
   error?: string;
 }
+
+export interface RepoOpStatus {
+  busy: boolean;
+  last_at?: string;
+  last_error?: string;
+  progress_percent?: number;
+}
+
+export interface RepoStatus {
+  gateway_node: string;
+  gateway_online: boolean;
+  check: RepoOpStatus;
+  unlock: RepoOpStatus;
+}

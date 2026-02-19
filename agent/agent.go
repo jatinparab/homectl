@@ -65,31 +65,37 @@ type Agent struct {
 	// Backup fields
 	backupMu sync.Mutex
 
+	// Repo-wide maintenance (restic check/unlock)
+	repoCheck  *RepoOpState
+	repoUnlock *RepoOpState
+
 	// Snapshot cache
-	snapshotCache      map[common.AppID]*SnapshotCache
-	snapshotCancelFns  map[common.AppID]context.CancelFunc
-	snapshotCacheMu    sync.RWMutex
+	snapshotCache     map[common.AppID]*SnapshotCache
+	snapshotCancelFns map[common.AppID]context.CancelFunc
+	snapshotCacheMu   sync.RWMutex
 }
 
 // NewAgent creates a new Agent instance
 func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
 	return &Agent{
-		name:          name,
-		ip:            ip,
-		config:        cfg,
-		agentConfig:   agentCfg,
-		managerURL:    managerURL,
-		dockerRootDir: dockerRootDir,
-		appdataDir:    appdataDir,
-		user:          user,
-		managerClient: client.NewClient(managerURL),
-		runtime:       make(map[common.AppID]*AppRuntime),
-		assignedApps:  make(map[common.AppID]bool),
-		restic:        NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
-		stopChan:      make(chan struct{}),
-		sensorCtx:     sensorCtx,
-		sensorCancel:  sensorCancel,
+		name:              name,
+		ip:                ip,
+		config:            cfg,
+		agentConfig:       agentCfg,
+		managerURL:        managerURL,
+		dockerRootDir:     dockerRootDir,
+		appdataDir:        appdataDir,
+		user:              user,
+		managerClient:     client.NewClient(managerURL),
+		runtime:           make(map[common.AppID]*AppRuntime),
+		assignedApps:      make(map[common.AppID]bool),
+		restic:            NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
+		stopChan:          make(chan struct{}),
+		sensorCtx:         sensorCtx,
+		sensorCancel:      sensorCancel,
+		repoCheck:         NewRepoOpState(),
+		repoUnlock:        NewRepoOpState(),
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
