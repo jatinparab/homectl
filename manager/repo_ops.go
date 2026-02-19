@@ -13,6 +13,10 @@ import (
 // RepoCheckInterval is the minimum interval between repo-wide restic checks.
 const RepoCheckInterval = 24 * time.Hour
 
+// enableAutoRepoChecks controls whether the manager auto-triggers periodic repo checks.
+// Keep disabled for now; checks can still be triggered manually via the API/UI.
+const enableAutoRepoChecks = false
+
 type agentRepoOpStatus struct {
 	Busy            bool       `json:"busy"`
 	LastAt          *time.Time `json:"last_at,omitempty"`
@@ -110,6 +114,9 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 
 	// Don't schedule unless we have fresh status from gateway.
 	if !ok {
+		return
+	}
+	if !enableAutoRepoChecks {
 		return
 	}
 
