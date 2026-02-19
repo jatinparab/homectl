@@ -12,7 +12,7 @@ import (
 
 const (
 	// ExecutorWorkers is the number of parallel workers for executing actions
-	ExecutorWorkers = 4
+	ExecutorWorkers = 12
 )
 
 // ActionType represents the type of action to execute
@@ -146,7 +146,7 @@ func (e *Executor) Submit(action Action) {
 
 	// Mark in-flight BEFORE enqueueing so the reconcile loop won't submit duplicates
 	if rt != nil {
-		rt.SetInFlight(true)
+		rt.SetInFlight(true, action.Type.String())
 	}
 
 	select {
@@ -218,24 +218,101 @@ func (e *Executor) execute(action Action) {
 	}
 }
 
-// executeStart starts an app (with restic restore first)
+// executeStart starts an app with smart restore: skip restore when local data is current.
 func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
-	// First, restore from restic with progress tracking
-	rt.SetPhase(common.PhaseRestoring)
-	err := e.restic.Restore(appID, func(p *common.ResticProgress) {
-		rt.SetProgress(p)
-	})
-	rt.ClearProgress()
-	if err != nil {
-		return err
+	needsRestore := true
+
+	// If backup is disabled for this app, skip all restore logic
+	if !rt.IsBackupEnabled() {
+		log.Printf("Executor: %s backup disabled, skipping restore", appID)
+		needsRestore = false
 	}
 
-	// Then start via docker compose
-	rt.SetPhase(common.PhaseEmpty)
-	rt.IncrementRestarts()
-	if err := e.docker.Start(string(appID)); err != nil {
+	// If restore is disabled (force local data), skip restore
+	if needsRestore && !rt.IsRestoreEnabled() {
+		log.Printf("Executor: %s restore disabled, using local data", appID)
+		needsRestore = false
+	}
+
+	// Short-circuit: if we just backed up this app locally, data is already current
+	if needsRestore {
+		e.agent.runtimeMu.Lock()
+		justBacked := rt.Backup.JustBackedUp
+		rt.Backup.JustBackedUp = false
+		e.agent.runtimeMu.Unlock()
+
+		if justBacked {
+			log.Printf("Executor: %s restarting after local backup, skipping restore", appID)
+			needsRestore = false
+		}
+	}
+
+	if needsRestore {
+		meta, metaErr := loadBackupMeta(e.agent.appdataDir, appID)
+		if metaErr != nil {
+			log.Printf("Executor: failed to load backup meta for %s: %s (will restore)", appID, metaErr)
+		} else if meta == nil {
+			log.Printf("Executor: no backup meta for %s (first start, will restore)", appID)
+		} else {
+			// Metadata exists — check if a newer snapshot is available
+			snapTime, _, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
+			if snapErr != nil {
+				log.Printf("Executor: failed to query latest snapshot for %s: %s (will restore)", appID, snapErr)
+			} else if snapTime.IsZero() {
+				log.Printf("Executor: no snapshots for %s, skipping restore", appID)
+				needsRestore = false
+			} else if snapTime.After(meta.LastBackupAt) {
+				log.Printf("Executor: newer snapshot for %s (snap=%s, local=%s), will restore",
+					appID, snapTime.Format(time.RFC3339), meta.LastBackupAt.Format(time.RFC3339))
+			} else {
+				log.Printf("Executor: local data for %s is current, skipping restore", appID)
+				needsRestore = false
+			}
+		}
+	}
+
+	if needsRestore {
+		rt.SetPhase(common.PhaseRestoring)
+		rt.PhaseLog.Clear()
+		err := e.restic.Restore(e.ctx, appID, func(p *common.ResticProgress) {
+			rt.SetProgress(p)
+		}, func(line string) {
+			rt.PhaseLog.Write(line)
+		})
+		rt.ClearProgress()
+		if err != nil {
+			return err
+		}
+
+		// After restore, write metadata with the actual snapshot timestamp
+		snapTime, snapID, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
+		if snapErr != nil {
+			log.Printf("Executor: failed to query snapshot after restore for %s: %s", appID, snapErr)
+		} else if !snapTime.IsZero() {
+			newMeta := &BackupMeta{
+				LastBackupAt: snapTime,
+				SnapshotID:   snapID,
+				Node:         e.agent.name,
+			}
+			if err := writeBackupMeta(e.agent.appdataDir, appID, newMeta); err != nil {
+				log.Printf("Executor: failed to write backup meta after restore for %s: %s", appID, err)
+			}
+			e.agent.runtimeMu.Lock()
+			rt.Backup.LastBackupAt = snapTime
+			e.agent.runtimeMu.Unlock()
+		}
+	}
+
+	// Pull images + start via docker compose
+	rt.SetPhase(common.PhasePulling)
+	rt.PhaseLog.Clear()
+	if err := e.docker.StartWithLogs(string(appID), func(line string) {
+		log.Printf("[docker:%s] %s", appID, line)
+		rt.PhaseLog.Write(line)
+	}); err != nil {
 		return err
 	}
+	rt.SetPhase(common.PhaseRunning)
 
 	log.Printf("Executor: started %s", appID)
 	return nil
@@ -249,11 +326,17 @@ func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 		// Continue to try start anyway
 	}
 
-	// Then start
+	// Then pull + start
+	rt.SetPhase(common.PhasePulling)
+	rt.PhaseLog.Clear()
 	rt.IncrementRestarts()
-	if err := e.docker.Start(string(appID)); err != nil {
+	if err := e.docker.StartWithLogs(string(appID), func(line string) {
+		log.Printf("[docker:%s] %s", appID, line)
+		rt.PhaseLog.Write(line)
+	}); err != nil {
 		return err
 	}
+	rt.SetPhase(common.PhaseEmpty)
 
 	log.Printf("Executor: restarted %s", appID)
 	return nil
@@ -287,32 +370,49 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	log.Printf("Executor: starting backup for %s", appID)
 
 	// Step 2: Run restic backup (serialized via backupMu)
+	rt.PhaseLog.Clear()
 	e.agent.backupMu.Lock()
-	backupErr := e.restic.Backup(appID, func(p *common.ResticProgress) {
+	backupErr := e.restic.Backup(e.ctx, appID, func(p *common.ResticProgress) {
 		rt.SetProgress(p)
+	}, func(line string) {
+		rt.PhaseLog.Write(line)
 	})
 	e.agent.backupMu.Unlock()
 	rt.ClearProgress()
 
 	// Step 3: Update backup state
 	e.agent.runtimeMu.Lock()
+	rt.Backup.LastBackupAt = time.Now() // Always update to prevent immediate retry on failure
 	if backupErr != nil {
 		rt.Backup.LastError = backupErr.Error()
 		log.Printf("Executor: backup failed for %s: %s", appID, backupErr)
 	} else {
-		rt.Backup.LastBackupAt = time.Now()
 		rt.Backup.LastError = ""
 		log.Printf("Executor: backup completed for %s", appID)
 	}
 	rt.Backup.InProgress = false
 	e.agent.runtimeMu.Unlock()
 
-	// Step 4: Release global backup lease
-	if releaseErr := e.agent.managerClient.ReleaseBackupLease(e.agent.name); releaseErr != nil {
-		log.Printf("Executor: failed to release backup lease for %s: %s", appID, releaseErr)
+	// Step 3b: On success, persist metadata to disk using system time
+	if backupErr == nil {
+		now := time.Now()
+		meta := &BackupMeta{
+			LastBackupAt: now,
+			Node:         e.agent.name,
+		}
+		if err := writeBackupMeta(e.agent.appdataDir, appID, meta); err != nil {
+			log.Printf("Executor: failed to write backup meta for %s: %s", appID, err)
+		}
+		e.agent.runtimeMu.Lock()
+		rt.Backup.LastBackupAt = now
+		rt.Backup.JustBackedUp = true
+		e.agent.runtimeMu.Unlock()
+
+		// Bust snapshot cache so next request sees the new snapshot
+		go e.agent.refreshSnapshotCache(appID)
 	}
 
-	// Step 5: Reset phase — reconcile will restart the app
+	// Step 4: Reset phase — reconcile will restart the app
 	rt.SetPhase(common.PhaseEmpty)
 
 	return backupErr

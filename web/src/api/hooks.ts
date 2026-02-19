@@ -4,7 +4,15 @@ import {
   fetchAgents,
   fetchSystemLogSources,
   fetchContainers,
+  fetchUpcomingBackup,
+  fetchSnapshots,
+  fetchSnapshotFiles,
+  refreshSnapshots,
+  restartApp,
   triggerBackup,
+  triggerRebalance,
+  triggerSync,
+  updateAppRestoreEnabled,
   updateAppDesiredState,
 } from "./client";
 
@@ -40,6 +48,25 @@ export function useContainers() {
   });
 }
 
+export function useUpcomingBackup() {
+  return useQuery({
+    queryKey: ["upcoming-backup"],
+    queryFn: fetchUpcomingBackup,
+    refetchInterval: 2000,
+  });
+}
+
+export function useRestartApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
+      restartApp(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
 export function useTriggerBackup() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -48,6 +75,67 @@ export function useTriggerBackup() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
     },
+  });
+}
+
+export function useSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerSync,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+export function useRebalance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: triggerRebalance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useUpdateAppRestoreEnabled() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, enabled }: { appId: string; enabled: boolean }) =>
+      updateAppRestoreEnabled(appId, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useSnapshots(appId: string | null, node: string | null) {
+  return useQuery({
+    queryKey: ["snapshots", appId, node],
+    queryFn: () => fetchSnapshots(appId!, node!),
+    enabled: !!appId && !!node,
+    refetchInterval: (query) => query.state.data?.loading ? 2000 : false,
+  });
+}
+
+export function useRefreshSnapshots() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
+      refreshSnapshots(appId, node),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["snapshots", variables.appId, variables.node] });
+    },
+  });
+}
+
+export function useSnapshotFiles(snapshotId: string | null, node: string | null, path: string) {
+  return useQuery({
+    queryKey: ["snapshot-files", snapshotId, node, path],
+    queryFn: () => fetchSnapshotFiles(snapshotId!, node!, path),
+    enabled: !!snapshotId && !!node,
+    refetchInterval: false,
   });
 }
 

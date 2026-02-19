@@ -31,6 +31,7 @@ const phaseColors: Record<string, string> = {
   backup_stopping: "bg-amber-500",
   backup_stopped: "bg-amber-500",
   backing_up: "bg-amber-500",
+  pulling: "bg-blue-500",
 };
 
 const desiredColors: Record<string, string> = {
@@ -80,7 +81,7 @@ export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
   if (progress && (phase === "restoring" || phase === "backing_up")) {
     const pct = Math.round(progress.percent_done * 100);
     return (
-      <span className="inline-flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
         >
@@ -94,11 +95,11 @@ export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
             />
           </span>
           <span>{pct}%</span>
-          <span className="text-gray-500">
-            {formatBytes(progress.bytes_done)} / {formatBytes(progress.total_bytes)}
+          <span className="text-gray-500 whitespace-nowrap">
+            {formatBytes(progress.bytes_done)}/{formatBytes(progress.total_bytes)}
           </span>
         </span>
-      </span>
+      </div>
     );
   }
 

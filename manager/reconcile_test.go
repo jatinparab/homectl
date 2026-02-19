@@ -10,14 +10,19 @@ import (
 func strPtr(s string) *string { return &s }
 
 func TestHandleDeadAgents(t *testing.T) {
+	now := time.Now()
 	apps := map[common.AppID]*App{
 		"app1": {ID: "app1", AssignedAgent: strPtr("alive-node")},
 		"app2": {ID: "app2", AssignedAgent: strPtr("dead-node")},
 		"app3": {ID: "app3", AssignedAgent: nil},
 	}
 	alive := map[string]bool{"alive-node": true}
+	lastSeen := map[string]time.Time{
+		"alive-node": now,
+		"dead-node":  now.Add(-10 * time.Minute), // well past grace period
+	}
 
-	handleDeadAgents(apps, alive)
+	handleDeadAgents(apps, alive, lastSeen, now)
 
 	if apps["app1"].AssignedAgent == nil || *apps["app1"].AssignedAgent != "alive-node" {
 		t.Error("app1 should still be assigned to alive-node")
@@ -31,6 +36,7 @@ func TestHandleDeadAgents(t *testing.T) {
 }
 
 func TestHandleDeadAgents_OnlyClearsAssignment(t *testing.T) {
+	now := time.Now()
 	apps := map[common.AppID]*App{
 		"app1": {
 			ID:            "app1",
@@ -43,8 +49,11 @@ func TestHandleDeadAgents_OnlyClearsAssignment(t *testing.T) {
 		},
 	}
 	alive := map[string]bool{}
+	lastSeen := map[string]time.Time{
+		"dead-node": now.Add(-10 * time.Minute), // well past grace period
+	}
 
-	handleDeadAgents(apps, alive)
+	handleDeadAgents(apps, alive, lastSeen, now)
 
 	app := apps["app1"]
 	if app.AssignedAgent != nil {
@@ -64,6 +73,46 @@ func TestHandleDeadAgents_OnlyClearsAssignment(t *testing.T) {
 	}
 }
 
+func TestHandleDeadAgents_GracePeriod(t *testing.T) {
+	now := time.Now()
+	apps := map[common.AppID]*App{
+		"app1": {ID: "app1", AssignedAgent: strPtr("restarting-node")},
+		"app2": {ID: "app2", AssignedAgent: strPtr("long-dead-node")},
+	}
+	alive := map[string]bool{"other-node": true}
+	lastSeen := map[string]time.Time{
+		"restarting-node": now.Add(-1 * time.Minute),  // within 3m grace period
+		"long-dead-node":  now.Add(-10 * time.Minute), // past grace period
+	}
+
+	handleDeadAgents(apps, alive, lastSeen, now)
+
+	// restarting-node is within grace period — app1 should stay assigned
+	if apps["app1"].AssignedAgent == nil || *apps["app1"].AssignedAgent != "restarting-node" {
+		t.Error("app1 should remain assigned to restarting-node (within grace period)")
+	}
+	// long-dead-node is past grace period — app2 should be unassigned
+	if apps["app2"].AssignedAgent != nil {
+		t.Error("app2 should be unassigned (long-dead-node past grace period)")
+	}
+}
+
+func TestHandleDeadAgents_UnknownAgent(t *testing.T) {
+	now := time.Now()
+	apps := map[common.AppID]*App{
+		"app1": {ID: "app1", AssignedAgent: strPtr("unknown-node")},
+	}
+	alive := map[string]bool{}
+	lastSeen := map[string]time.Time{} // unknown-node not in lastSeenMap
+
+	handleDeadAgents(apps, alive, lastSeen, now)
+
+	// unknown-node has no lastSeen entry — should be unassigned immediately
+	if apps["app1"].AssignedAgent != nil {
+		t.Error("app1 should be unassigned (unknown-node not in lastSeenMap)")
+	}
+}
+
 func TestAssignUnassignedApps_LeastLoaded(t *testing.T) {
 	apps := map[common.AppID]*App{
 		"app1": {ID: "app1", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},
@@ -72,7 +121,7 @@ func TestAssignUnassignedApps_LeastLoaded(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	assignUnassignedApps(apps, alive)
+	assignUnassignedApps(apps, alive, nil)
 
 	if apps["app3"].AssignedAgent == nil {
 		t.Fatal("app3 should be assigned")
@@ -93,7 +142,7 @@ func TestAssignUnassignedApps_RespectsQuarantinedOn(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	assignUnassignedApps(apps, alive)
+	assignUnassignedApps(apps, alive, nil)
 
 	if apps["app1"].AssignedAgent == nil {
 		t.Fatal("app1 should be assigned")
@@ -109,7 +158,7 @@ func TestAssignUnassignedApps_SkipsNonRunning(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true}
 
-	assignUnassignedApps(apps, alive)
+	assignUnassignedApps(apps, alive, nil)
 
 	if apps["app1"].AssignedAgent != nil {
 		t.Error("stopped app should not be assigned")
@@ -127,7 +176,7 @@ func TestAssignUnassignedApps_AllQuarantined(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	assignUnassignedApps(apps, alive)
+	assignUnassignedApps(apps, alive, nil)
 
 	if apps["app1"].AssignedAgent != nil {
 		t.Error("app should remain unassigned when all agents quarantined")
@@ -149,7 +198,7 @@ func TestHandleMigrations_QuarantinedPastCooldown(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	handleMigrations(apps, alive, now)
+	handleMigrations(apps, alive, now, nil)
 
 	if apps["app1"].AssignedAgent == nil || *apps["app1"].AssignedAgent != "node2" {
 		t.Error("app1 should be migrated to node2")
@@ -180,7 +229,7 @@ func TestHandleMigrations_WithinCooldown(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	handleMigrations(apps, alive, now)
+	handleMigrations(apps, alive, now, nil)
 
 	if *apps["app1"].AssignedAgent != "node1" {
 		t.Error("app should not be migrated within cooldown")
@@ -205,7 +254,7 @@ func TestHandleMigrations_MaxOnePerCycle(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true, "node3": true}
 
-	handleMigrations(apps, alive, now)
+	handleMigrations(apps, alive, now, nil)
 
 	migrated := 0
 	for _, app := range apps {
@@ -226,7 +275,7 @@ func TestRebalance_OverloadedToUnderloaded(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	rebalance(apps, alive)
+	rebalance(apps, alive, nil, nil)
 
 	// One app should have moved to node2
 	node1Count, node2Count := 0, 0
@@ -253,7 +302,7 @@ func TestRebalance_SkipsQuarantinedApps(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	rebalance(apps, alive)
+	rebalance(apps, alive, nil, nil)
 
 	// No moves: all are quarantined
 	for _, app := range apps {
@@ -272,7 +321,7 @@ func TestRebalance_MaxOnePerCycle(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	rebalance(apps, alive)
+	rebalance(apps, alive, nil, nil)
 
 	node2Count := 0
 	for _, app := range apps {
@@ -292,7 +341,7 @@ func TestRebalance_BalancedNoMove(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
-	rebalance(apps, alive)
+	rebalance(apps, alive, nil, nil)
 
 	if *apps["app1"].AssignedAgent != "node1" || *apps["app2"].AssignedAgent != "node2" {
 		t.Error("already balanced apps should not be moved")
@@ -343,10 +392,10 @@ func TestReconcileOnce_FullIntegration(t *testing.T) {
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", nil)
 
 	// Register apps
-	mgr.appRegistry.Register("app1", common.DesiredRunning)
-	mgr.appRegistry.Register("app2", common.DesiredRunning)
-	mgr.appRegistry.Register("app3", common.DesiredRunning)
-	mgr.appRegistry.Register("app4", common.DesiredStopped)
+	mgr.appRegistry.Register("app1", common.DesiredRunning, false)
+	mgr.appRegistry.Register("app2", common.DesiredRunning, false)
+	mgr.appRegistry.Register("app3", common.DesiredRunning, false)
+	mgr.appRegistry.Register("app4", common.DesiredStopped, false)
 
 	// Assign app1 to a "dead" node (not registered)
 	mgr.appRegistry.WithLock(func(apps map[common.AppID]*App) {

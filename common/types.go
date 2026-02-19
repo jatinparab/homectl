@@ -52,6 +52,7 @@ const (
 	PhaseBackupStopping Phase = "backup_stopping"
 	PhaseBackupStopped  Phase = "backup_stopped"
 	PhaseBackingUp      Phase = "backing_up"
+	PhasePulling        Phase = "pulling"
 )
 
 // ResticProgress tracks progress of a restic backup/restore operation
@@ -73,25 +74,28 @@ type AppReport struct {
 	RestartCount  int           `json:"restart_count"`
 	Quarantined   bool          `json:"quarantined"`
 	Port          int           `json:"port,omitempty"`
-	BackupBusy    bool            `json:"backup_busy,omitempty"`
-	Progress      *ResticProgress `json:"progress,omitempty"`
-}
-
-// BackupLeaseResponse is the manager's response to a backup lease request
-type BackupLeaseResponse struct {
-	Granted           bool      `json:"granted"`
-	LeaseExpiresAt    time.Time `json:"lease_expires_at,omitempty"`
-	Holder            string    `json:"holder,omitempty"`
-	RetryAfterSeconds int       `json:"retry_after_seconds,omitempty"`
+	BackupBusy        bool            `json:"backup_busy,omitempty"`
+	Progress          *ResticProgress `json:"progress,omitempty"`
+	LastBackupAt      time.Time       `json:"last_backup_at,omitempty"`
+	BackupDefer       time.Time       `json:"backup_defer,omitempty"`
+	LastBackupError   string          `json:"last_backup_error,omitempty"`
+	ActiveConnections bool            `json:"active_connections,omitempty"`
+	LastActiveAt      time.Time       `json:"last_active_at,omitempty"`
 }
 
 // DesiredApp is sent from manager to agent with desired state
 type DesiredApp struct {
-	AppID        AppID        `json:"app_id"`
-	DesiredState DesiredState `json:"desired_state"`
+	AppID           AppID        `json:"app_id"`
+	DesiredState    DesiredState `json:"desired_state"`
+	BackupSensitive bool         `json:"backup_sensitive,omitempty"`
+	BackupNow       bool         `json:"backup_now,omitempty"`
+	BackupEnabled   bool         `json:"backup_enabled"`
+	RestoreEnabled  bool         `json:"restore_enabled"`
+	RestoreNow      bool         `json:"restore_now,omitempty"`
 }
 
 // DesiredAppsResponse is the response from /agents/{id}/desired
 type DesiredAppsResponse struct {
-	Apps []DesiredApp `json:"apps"`
+	Apps      []DesiredApp `json:"apps"`
+	IsGateway bool         `json:"is_gateway,omitempty"`
 }

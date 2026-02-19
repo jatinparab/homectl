@@ -6,10 +6,34 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"time"
 
 	"github.com/jatinparab/homectl/common"
 	"gopkg.in/yaml.v3"
 )
+
+// FlexPort unmarshals a port from either a JSON number or a JSON string.
+type FlexPort int
+
+func (f *FlexPort) UnmarshalJSON(data []byte) error {
+	var i int
+	if err := json.Unmarshal(data, &i); err == nil {
+		*f = FlexPort(i)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("port must be a number or string, got %s", string(data))
+	}
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("cannot convert port %q to int: %w", s, err)
+	}
+	*f = FlexPort(i)
+	return nil
+}
 
 const (
 	// DomainSuffix is the base domain for traefik routes
@@ -18,8 +42,31 @@ const (
 
 // HomectlConfig represents the homectl-config.json file for an app
 type HomectlConfig struct {
-	ExposedSubdomains map[string]int `json:"exposed_subdomains,omitempty"`
-	ExcludeNodes      []string       `json:"exclude_nodes,omitempty"`
+	ExposedSubdomains map[string]FlexPort `json:"exposed_subdomains,omitempty"`
+	ExcludeNodes      []string            `json:"exclude_nodes,omitempty"`
+	BackupSensitive   bool                `json:"backup_sensitive,omitempty"`
+	BackupEnabled     *bool               `json:"backup_enabled,omitempty"`   // nil = true (default enabled)
+	BackupInterval    string              `json:"backup_interval,omitempty"`  // e.g. "72h", "168h" — overrides default
+	IsGlobal          bool                `json:"is_global,omitempty"`        // run on all connected nodes
+}
+
+// IsBackupEnabled returns whether backup is enabled for this app (default true)
+func (c HomectlConfig) IsBackupEnabled() bool {
+	if c.BackupEnabled == nil {
+		return true
+	}
+	return *c.BackupEnabled
+}
+
+// GetBackupInterval returns the per-app backup interval, or the default if not set.
+func (c HomectlConfig) GetBackupInterval() time.Duration {
+	if c.BackupInterval != "" {
+		d, err := time.ParseDuration(c.BackupInterval)
+		if err == nil && d > 0 {
+			return d
+		}
+	}
+	return BackupInterval
 }
 
 // TraefikConfig represents the traefik dynamic configuration
@@ -106,8 +153,9 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 	// Load app configs for exposed_subdomains overrides
 	appConfigs := m.loadAppConfigs()
 
-	// Get all agents and their app reports
+	// Get all agents and their app reports, sorted by name for deterministic output
 	agents := m.leaseManager.ListAgents()
+	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 
 	for _, agent := range agents {
 		for _, report := range agent.AppReports {
@@ -128,8 +176,16 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 
 			// Check if app has exposed_subdomains override
 			if appCfg, ok := appConfigs[appName]; ok && len(appCfg.ExposedSubdomains) > 0 {
+				// Sort subdomain keys for deterministic config output
+				subdomains := make([]string, 0, len(appCfg.ExposedSubdomains))
+				for sd := range appCfg.ExposedSubdomains {
+					subdomains = append(subdomains, sd)
+				}
+				sort.Strings(subdomains)
+
 				// Use custom subdomains from homectl-config.json
-				for subdomain, port := range appCfg.ExposedSubdomains {
+				for _, subdomain := range subdomains {
+					port := appCfg.ExposedSubdomains[subdomain]
 					routerName := fmt.Sprintf("%s-%s", appName, subdomain)
 					serviceName := fmt.Sprintf("%s-%s", appName, subdomain)
 
@@ -145,7 +201,7 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 					config.HTTP.Services[serviceName] = TraefikService{
 						LoadBalancer: TraefikLoadBalancer{
 							Servers: []TraefikServer{
-								{URL: fmt.Sprintf("http://%s:%d", ip, port)},
+								{URL: fmt.Sprintf("http://%s:%d", ip, int(port))},
 							},
 						},
 					}

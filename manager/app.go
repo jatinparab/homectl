@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -10,9 +11,11 @@ import (
 
 // App is the manager's view of a single application.
 type App struct {
-	ID            common.AppID
-	DesiredState  common.DesiredState
-	AssignedAgent *string
+	ID             common.AppID
+	DesiredState   common.DesiredState
+	AssignedAgent  *string
+	IsGlobal       bool // Run on all connected nodes
+	RestoreEnabled bool // Whether restore-on-start is enabled (default true)
 
 	// Observational fields updated from heartbeats
 	ObservedState common.ObservedState
@@ -41,17 +44,21 @@ func NewAppRegistry() *AppRegistry {
 }
 
 // Register adds an app with the given desired state. Idempotent: won't overwrite existing apps.
-func (r *AppRegistry) Register(appID common.AppID, desiredState common.DesiredState) {
+func (r *AppRegistry) Register(appID common.AppID, desiredState common.DesiredState, isGlobal bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.apps[appID]; exists {
+	if existing, exists := r.apps[appID]; exists {
+		// Update IsGlobal on re-discovery (config may have changed)
+		existing.IsGlobal = isGlobal
 		return
 	}
 
 	r.apps[appID] = &App{
-		ID:           appID,
-		DesiredState: desiredState,
+		ID:             appID,
+		DesiredState:   desiredState,
+		IsGlobal:       isGlobal,
+		RestoreEnabled: true,
 	}
 }
 
@@ -83,14 +90,17 @@ func (r *AppRegistry) ListAll() []App {
 	return result
 }
 
-// AppsForAgent returns copies of all apps assigned to the given agent.
+// AppsForAgent returns copies of all apps assigned to the given agent,
+// including global apps (which run on all agents).
 func (r *AppRegistry) AppsForAgent(agentName string) []App {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	var result []App
 	for _, app := range r.apps {
-		if app.AssignedAgent != nil && *app.AssignedAgent == agentName {
+		assigned := app.AssignedAgent != nil && *app.AssignedAgent == agentName
+		global := app.IsGlobal && app.DesiredState == common.DesiredRunning
+		if assigned || global {
 			copy := *app
 			copy.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
 			result = append(result, copy)
@@ -117,6 +127,33 @@ func (r *AppRegistry) UpdateFromReport(report common.AppReport, agentName string
 	app.LastSeen = now
 }
 
+// AdoptRunningApps claims assignment for non-global apps that an agent reports as
+// running but that have no AssignedAgent. This preserves existing placement after
+// a manager restart instead of redistributing from scratch.
+func (r *AppRegistry) AdoptRunningApps(agentName string, reports []common.AppReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, report := range reports {
+		app, ok := r.apps[report.AppID]
+		if !ok {
+			continue
+		}
+		if app.IsGlobal {
+			continue
+		}
+		if app.AssignedAgent != nil {
+			continue
+		}
+		if report.ObservedState != common.ObservedRunning {
+			continue
+		}
+		agent := agentName
+		app.AssignedAgent = &agent
+		log.Printf("Adopted app %s on agent %s (from heartbeat)", report.AppID, agentName)
+	}
+}
+
 // UpdateDesiredState updates the desired state for an app.
 func (r *AppRegistry) UpdateDesiredState(appID common.AppID, desiredState common.DesiredState) error {
 	r.mu.Lock()
@@ -128,6 +165,20 @@ func (r *AppRegistry) UpdateDesiredState(appID common.AppID, desiredState common
 	}
 
 	app.DesiredState = desiredState
+	return nil
+}
+
+// UpdateRestoreEnabled sets whether restore-on-start is enabled for an app.
+func (r *AppRegistry) UpdateRestoreEnabled(appID common.AppID, enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appID]
+	if !ok {
+		return fmt.Errorf("app not found: %s", appID)
+	}
+
+	app.RestoreEnabled = enabled
 	return nil
 }
 
