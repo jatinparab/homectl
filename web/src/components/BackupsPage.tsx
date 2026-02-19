@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react"
-import type { AppStatus, Snapshot, SnapshotEntry } from "../api/types"
+import type { AppStatus, ResticProgress, Snapshot, SnapshotEntry } from "../api/types"
 import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock } from "../api/hooks"
 
 function formatBytes(bytes: number): string {
@@ -275,10 +275,24 @@ function AppBackupRow({
   onToggle: () => void
 }) {
   const onlineNode = app.node_reports.find((nr) => nr.node_online)?.node ?? null
+  const sortedReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node))
+  const reportForPrune = sortedReports.find((nr) => nr.node === onlineNode) ?? sortedReports[0]
+  const postBackupReport = sortedReports.find((nr) => !!nr.post_backup_phase)
+  const activeBackupReport = sortedReports.find(
+    (nr) => nr.phase === "backing_up" || nr.phase === "restoring"
+  )
+  const streamReport = postBackupReport ?? activeBackupReport
+  const streamPhase = postBackupReport?.post_backup_phase ?? activeBackupReport?.phase
 
   const backupStatusColor: Record<string, string> = {
     ok: "text-green-400",
     needs_backup: "text-yellow-400",
+    never: "text-gray-500",
+  }
+
+  const pruneStatusColor: Record<string, string> = {
+    ok: "text-green-400",
+    needs_prune: "text-yellow-400",
     never: "text-gray-500",
   }
 
@@ -296,6 +310,23 @@ function AppBackupRow({
           >
             {app.backup_status}
           </span>
+          <span className={`text-xs ${pruneStatusColor[reportForPrune?.prune_status ?? app.prune_status] ?? "text-gray-500"}`}>
+            prune:{" "}
+            {reportForPrune?.last_prune_error ? "failed" : (reportForPrune?.prune_status ?? app.prune_status)}
+          </span>
+          {reportForPrune?.last_prune_at && (
+            <span className="text-xs text-gray-500" title={formatFullDate(reportForPrune.last_prune_at)}>
+              {timeAgo(reportForPrune.last_prune_at)}
+            </span>
+          )}
+          {reportForPrune?.last_prune_error && (
+            <span className="text-xs text-red-400" title={reportForPrune.last_prune_error}>
+              {reportForPrune.last_prune_error.length > 40
+                ? reportForPrune.last_prune_error.slice(0, 40) + "..."
+                : reportForPrune.last_prune_error}
+            </span>
+          )}
+          {streamReport?.progress && <ProgressMini progress={streamReport.progress} />}
           <SnapshotCount appId={app.app_id} node={onlineNode} />
         </div>
         <div className="flex items-center gap-4 text-xs text-gray-400">
@@ -305,13 +336,80 @@ function AppBackupRow({
       </button>
 
       {expanded && onlineNode && (
-        <SnapshotList appId={app.app_id} node={onlineNode} />
+        <div>
+          <AppPhaseLogs appId={app.app_id} node={onlineNode} phase={streamPhase} />
+          <SnapshotList appId={app.app_id} node={onlineNode} />
+        </div>
       )}
       {expanded && !onlineNode && (
         <div className="px-4 pb-3 text-sm text-gray-500">
           No online node available to query snapshots.
         </div>
       )}
+    </div>
+  )
+}
+
+function ProgressMini({ progress }: { progress: ResticProgress }) {
+  const pct = Math.max(0, Math.min(100, Math.round(progress.percent_done * 100)))
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-gray-300">
+      <span className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+        <span className="block h-full bg-purple-300 rounded-full transition-all" style={{ width: `${pct}%` }} />
+      </span>
+      <span>{pct}%</span>
+      {progress.total_files > 0 ? (
+        <span className="text-gray-500">{progress.files_done}/{progress.total_files}</span>
+      ) : (
+        <span className="text-gray-500">{formatBytes(progress.bytes_done)}/{formatBytes(progress.total_bytes)}</span>
+      )}
+    </span>
+  )
+}
+
+function AppPhaseLogs({ appId, node, phase }: { appId: string; node: string; phase?: string }) {
+  const [lines, setLines] = useState<string[]>([])
+  const preRef = useRef<HTMLPreElement>(null)
+  const maxLines = 250
+
+  useEffect(() => {
+    const url = `/api/v1/apps/${encodeURIComponent(appId)}/phase-logs?node=${encodeURIComponent(node)}`
+    const es = new EventSource(url)
+
+    es.onmessage = (e) => {
+      const line: string = e.data
+      if (line.startsWith("__PROGRESS__:")) {
+        return
+      }
+      setLines((prev) => {
+        const next = [...prev, line]
+        return next.length > maxLines ? next.slice(-maxLines) : next
+      })
+    }
+
+    es.onerror = () => {
+      es.close()
+    }
+
+    return () => {
+      es.close()
+    }
+  }, [appId, node])
+
+  useEffect(() => {
+    if (preRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight
+    }
+  }, [lines])
+
+  return (
+    <div className="mx-3 mt-3 bg-gray-900/60 border border-gray-700 rounded">
+      <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700">
+        Live logs{phase ? ` (${phase})` : ""}
+      </div>
+      <pre ref={preRef} className="text-xs text-gray-300 font-mono p-2 overflow-auto max-h-40 whitespace-pre-wrap">
+        {lines.length === 0 ? "Waiting for output..." : lines.join("\n")}
+      </pre>
     </div>
   )
 }
