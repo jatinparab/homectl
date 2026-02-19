@@ -11,7 +11,7 @@ import (
 const BackupInterval = 1 * time.Hour
 
 // PruneInterval is how long since last prune before an app is considered stale.
-const PruneInterval = 3 * time.Hour
+const PruneInterval = 24 * time.Hour
 
 // SensitiveIdleThreshold is how long since the last active connection before a
 // backup-sensitive app is eligible for backup.
