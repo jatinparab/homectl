@@ -27,17 +27,34 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		return
 	}
 	if !m.isAgentOnline(gateway) {
+		m.repoMu.Lock()
+		shouldLog := m.repoLastStatusFetchErrLogAt.IsZero() || now.Sub(m.repoLastStatusFetchErrLogAt) > 2*time.Minute
+		if shouldLog {
+			m.repoLastStatusFetchErrLogAt = now
+		}
+		m.repoMu.Unlock()
+		if shouldLog {
+			log.Printf("Repo ops: gateway offline (%s), skipping status sync", gateway)
+		}
 		return
 	}
 
 	agentCfg := m.config.GetAgentConfig(gateway)
 	if agentCfg == nil {
+		log.Printf("Repo ops: gateway %s not in config, skipping", gateway)
 		return
 	}
 
 	check, unlock, ok := m.fetchRepoStatusesFromAgent(agentCfg.IP)
 	if ok {
 		m.repoMu.Lock()
+		prevCheckBusy := m.repoCheckBusy
+		prevUnlockBusy := m.repoUnlockBusy
+		prevLastCheckAt := m.repoLastCheckAt
+		prevLastUnlockAt := m.repoLastUnlockAt
+		prevCheckErr := m.repoLastCheckErr
+		prevUnlockErr := m.repoLastUnlockErr
+
 		m.repoCheckBusy = check.Busy
 		m.repoUnlockBusy = unlock.Busy
 		changed := false
@@ -59,8 +76,35 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		}
 		m.repoLastStatusSyncAt = now
 		m.repoMu.Unlock()
+
+		if prevCheckBusy != check.Busy || prevUnlockBusy != unlock.Busy {
+			log.Printf("Repo ops: status busy changed (check=%v unlock=%v)", check.Busy, unlock.Busy)
+		}
+		if check.LastAt != nil && prevLastCheckAt.Before(*check.LastAt) {
+			log.Printf("Repo ops: check completed at %s (err=%q)", check.LastAt.Format(time.RFC3339), check.LastError)
+		}
+		if unlock.LastAt != nil && prevLastUnlockAt.Before(*unlock.LastAt) {
+			log.Printf("Repo ops: unlock completed at %s (err=%q)", unlock.LastAt.Format(time.RFC3339), unlock.LastError)
+		}
+		if prevCheckErr != check.LastError && check.LastError != "" {
+			log.Printf("Repo ops: check error updated: %q", check.LastError)
+		}
+		if prevUnlockErr != unlock.LastError && unlock.LastError != "" {
+			log.Printf("Repo ops: unlock error updated: %q", unlock.LastError)
+		}
+
 		if changed {
 			m.saveRepoState()
+		}
+	} else {
+		m.repoMu.Lock()
+		shouldLog := m.repoLastStatusFetchErrLogAt.IsZero() || now.Sub(m.repoLastStatusFetchErrLogAt) > 2*time.Minute
+		if shouldLog {
+			m.repoLastStatusFetchErrLogAt = now
+		}
+		m.repoMu.Unlock()
+		if shouldLog {
+			log.Printf("Repo ops: failed to fetch status from gateway %s (%s)", gateway, agentCfg.IP)
 		}
 	}
 
@@ -76,12 +120,14 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 	m.repoMu.Unlock()
 
 	if busy {
+		log.Printf("Repo ops: repo busy (check=%v unlock=%v), not scheduling", check.Busy, unlock.Busy)
 		return
 	}
 	if !last.IsZero() && now.Sub(last) < RepoCheckInterval {
 		return
 	}
 	if m.anyBackupBusy() {
+		log.Printf("Repo ops: backup in progress, not scheduling")
 		return
 	}
 	// Avoid starting a repo check while a backup assignment is pending.
@@ -89,6 +135,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 	hasAssignment := m.backupAssignment != nil
 	m.backupMu.Unlock()
 	if hasAssignment {
+		log.Printf("Repo ops: backup scheduled, not scheduling")
 		return
 	}
 

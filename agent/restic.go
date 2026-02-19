@@ -193,6 +193,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repo,
+		"--retry-lock", "5m",
 		"--json",
 		"restore",
 		"--target", r.appDataDir,
@@ -238,6 +239,7 @@ func containsNoSnapshotError(line string) bool {
 func (r *RepoRestic) Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repo,
+		"--retry-lock", "5m",
 		"--json",
 		"--tag", "homectl", "--tag", string(appID),
 		"backup", string(appID),
