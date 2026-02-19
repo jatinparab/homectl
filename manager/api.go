@@ -983,7 +983,7 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Proxy logs from agent using config IP
 	agentLogsURL := fmt.Sprintf("http://%s:%d/logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.httpClient.Get(agentLogsURL)
+	resp, err := m.streamHTTPClient.Get(agentLogsURL)
 	if err != nil {
 		// Send error as SSE event
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
@@ -1069,7 +1069,7 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agentURL := fmt.Sprintf("http://%s:%d/phase-logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.httpClient.Get(agentURL)
+	resp, err := m.streamHTTPClient.Get(agentURL)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
@@ -1200,7 +1200,7 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	agentURL := fmt.Sprintf("http://%s:%d/system-logs", agentCfg.IP, agentpkg.ReadyServerPort)
-	resp, err := m.httpClient.Get(agentURL)
+	resp, err := m.streamHTTPClient.Get(agentURL)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
@@ -1508,7 +1508,7 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 	}
 
 	agentURL := fmt.Sprintf("http://%s:%d/container-logs/%s?all=%s", agentCfg.IP, agentpkg.ReadyServerPort, containerID, showAll)
-	resp, err := m.httpClient.Get(agentURL)
+	resp, err := m.streamHTTPClient.Get(agentURL)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
