@@ -40,6 +40,7 @@ export interface NodeReport {
   backup_status: string;
   active_connections: boolean;
   last_active_at?: string;
+  post_backup_phase?: string;
 }
 
 export interface AppStatus {

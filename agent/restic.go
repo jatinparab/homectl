@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
@@ -50,6 +52,8 @@ type SnapshotEntry struct {
 type Restic interface {
 	Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
 	Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
+	Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error
+	Check(ctx context.Context, onLog LogCallback) error
 	LatestSnapshot(ctx context.Context, appID common.AppID) (snapshotTime time.Time, snapshotID string, err error)
 	ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error)
 	ListSnapshotFiles(ctx context.Context, snapshotID, path string) ([]SnapshotEntry, error)
@@ -240,6 +244,66 @@ func (r *RepoRestic) Backup(ctx context.Context, appID common.AppID, onProgress 
 	cmd.Dir = r.appDataDir
 	_, err := r.runWithJSON("backup:"+string(appID), cmd, onProgress, onLog)
 	return err
+}
+
+// runLines streams stdout and stderr of cmd line-by-line to onLog.
+func (r *RepoRestic) runLines(prefix string, cmd *exec.Cmd, onLog LogCallback) error {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	scan := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Printf("[restic:%s] %s", prefix, line)
+			if onLog != nil {
+				onLog(line)
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); scan(stdout) }()
+	go func() { defer wg.Done(); scan(stderr) }()
+	wg.Wait()
+
+	return cmd.Wait()
+}
+
+// Prune removes old snapshots for an app using restic forget --prune.
+// Retention policy: 6 hourly, 7 daily, 5 weekly, 12 monthly, 3 yearly.
+// --retry-lock handles B2 eventual-consistency: the previous backup's lock may
+// still be visible in the backend for a short period after the backup exits.
+func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error {
+	cmd := r.resticCmdCtx(ctx,
+		"-r", r.repo,
+		"--retry-lock", "5m",
+		"forget", "--prune",
+		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
+		"--keep-hourly", "6",
+		"--keep-daily", "7",
+		"--keep-weekly", "5",
+		"--keep-monthly", "12",
+		"--keep-yearly", "3",
+	)
+	return r.runLines("prune:"+string(appID), cmd, onLog)
+}
+
+// Check verifies the integrity of the restic repository.
+// --retry-lock handles transient lock conflicts from concurrent operations.
+func (r *RepoRestic) Check(ctx context.Context, onLog LogCallback) error {
+	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "--retry-lock", "5m", "check", "--read-data-subset=1%")
+	return r.runLines("check", cmd, onLog)
 }
 
 // resticSnapshot represents a snapshot entry from restic snapshots --json

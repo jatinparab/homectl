@@ -38,6 +38,7 @@ type AppRuntime struct {
 	PhaseLog        *PhaseLogBuffer // Ring buffer for phase (pull) logs
 	UnhealthyCount  int  // Consecutive unhealthy health checks
 	LastActiveAt    time.Time // Last time active TCP connections were seen
+	PostBackupPhase string // Phase of post-backup steps (prune/check), separate from lifecycle Phase
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
@@ -160,6 +161,27 @@ func (r *AppRuntime) ClearProgress() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Progress = nil
+}
+
+// SetPostBackupPhase sets the post-backup phase (e.g. "backup_pruning", "backup_checking", "")
+func (r *AppRuntime) SetPostBackupPhase(phase string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.PostBackupPhase = phase
+}
+
+// GetPostBackupPhase returns the current post-backup phase (thread-safe)
+func (r *AppRuntime) GetPostBackupPhase() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.PostBackupPhase
+}
+
+// IsPostProcessing returns true if post-backup steps (prune/check) are in progress
+func (r *AppRuntime) IsPostProcessing() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.PostBackupPhase != ""
 }
 
 // SetBackupSensitive sets the backup-sensitive flag
@@ -304,5 +326,6 @@ func (r *AppRuntime) ToReport() common.AppReport {
 		BackupDefer:     r.Backup.BackupDefer,
 		LastActiveAt:    r.LastActiveAt,
 		LastBackupError: r.Backup.LastError,
+		PostBackupPhase: r.PostBackupPhase,
 	}
 }

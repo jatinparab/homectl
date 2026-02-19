@@ -423,8 +423,8 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 		return ActionQuarantine(app.AppID)
 	}
 
-	// Running + healthy: check if manager assigned BackupNow (only if backup enabled)
-	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy {
+	// Running + healthy: check if manager assigned BackupNow (only if backup enabled and not post-processing)
+	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
 		log.Printf("Reconcile: %s manager requested backup, transitioning to BackupStopping", app.AppID)
 		rt.SetPhase(common.PhaseBackupStopping)
 		return ActionStop(app.AppID)

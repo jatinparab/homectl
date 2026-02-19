@@ -6,10 +6,12 @@ import {
   HealthBadge,
   PhaseBadge,
   DesiredBadge,
+  PostBackupPhaseBadge,
 } from "./StatusBadge";
 import { PhaseLogOverlay } from "./PullLogOverlay";
 
 const BACKUP_PHASES = ["backup_stopping", "backup_stopped", "backing_up"];
+const POST_BACKUP_PHASES = ["backup_pruning", "backup_checking"];
 
 function formatInterval(interval: string): string {
   // Parse Go duration like "1h0m0s", "72h0m0s", "168h0m0s"
@@ -63,13 +65,18 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
   const STREAMABLE_PHASES = ["pulling", "restoring", "backing_up"];
 
   const [phaseLogOpen, setPhaseLogOpen] = useState(false);
+  const [postBackupLogOpen, setPostBackupLogOpen] = useState(false);
   const [realtimeProgress, setRealtimeProgress] = useState<ResticProgress | null>(null);
   const prevStreamable = useRef(false);
+  const prevPostBackupStreamable = useRef(false);
 
   const nodeReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node));
 
   const streamableNode = nodeReports.find((nr) => STREAMABLE_PHASES.includes(nr.phase));
   const isStreamable = !!streamableNode;
+
+  const postBackupStreamableNode = nodeReports.find((nr) => nr.post_backup_phase && POST_BACKUP_PHASES.includes(nr.post_backup_phase));
+  const isPostBackupStreamable = !!postBackupStreamableNode;
 
   // Auto-close when streamable phase ends
   useEffect(() => {
@@ -79,6 +86,14 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
     }
     prevStreamable.current = isStreamable;
   }, [isStreamable]);
+
+  // Auto-close post-backup log when post-processing ends
+  useEffect(() => {
+    if (!isPostBackupStreamable && prevPostBackupStreamable.current) {
+      setPostBackupLogOpen(false);
+    }
+    prevPostBackupStreamable.current = isPostBackupStreamable;
+  }, [isPostBackupStreamable]);
 
   const handleProgress = useCallback((p: ResticProgress) => {
     setRealtimeProgress(p);
@@ -189,29 +204,37 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
 
             {/* Phase — allow wrap for progress bar */}
             <td className="px-3 py-2 align-top">
-              {nr.phase ? (
-                STREAMABLE_PHASES.includes(nr.phase) ? (
-                  <button
-                    onClick={() => setPhaseLogOpen((v) => !v)}
-                    className="relative cursor-pointer hover:opacity-80"
-                    title="Toggle phase logs"
-                  >
-                    <PhaseBadge
-                      phase={nr.phase}
-                      progress={phaseLogOpen && realtimeProgress ? realtimeProgress : nr.progress}
-                    />
-                    <span className={`absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full ${
-                      nr.phase === "pulling" ? "bg-blue-400"
-                        : nr.phase === "restoring" ? "bg-yellow-400"
-                        : "bg-amber-400"
-                    }`} />
-                  </button>
+              <div className="flex flex-wrap items-center gap-1">
+                {nr.phase ? (
+                  STREAMABLE_PHASES.includes(nr.phase) ? (
+                    <button
+                      onClick={() => setPhaseLogOpen((v) => !v)}
+                      className="relative cursor-pointer hover:opacity-80"
+                      title="Toggle phase logs"
+                    >
+                      <PhaseBadge
+                        phase={nr.phase}
+                        progress={phaseLogOpen && realtimeProgress ? realtimeProgress : nr.progress}
+                      />
+                      <span className={`absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full ${
+                        nr.phase === "pulling" ? "bg-blue-400"
+                          : nr.phase === "restoring" ? "bg-yellow-400"
+                          : "bg-amber-400"
+                      }`} />
+                    </button>
+                  ) : (
+                    <PhaseBadge phase={nr.phase} progress={nr.progress} />
+                  )
                 ) : (
-                  <PhaseBadge phase={nr.phase} progress={nr.progress} />
-                )
-              ) : (
-                <span className="text-gray-500 text-sm">-</span>
-              )}
+                  <span className="text-gray-500 text-sm">-</span>
+                )}
+                {nr.post_backup_phase && (
+                  <PostBackupPhaseBadge
+                    phase={nr.post_backup_phase}
+                    onClick={isPostBackupStreamable && postBackupStreamableNode?.node === nr.node ? () => setPostBackupLogOpen((v) => !v) : undefined}
+                  />
+                )}
+              </div>
             </td>
 
             {/* Backup — allow wrap for badge + time */}
@@ -293,7 +316,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
                     Logs
                   </button>
                 )}
-                {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && nr.observed_state === "running" && (
+                {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
                   <button
                     onClick={() => backupMutation.mutate({ appId: app.app_id, node: nr.node })}
                     disabled={backupMutation.isPending}
@@ -330,6 +353,18 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, onShowLogs }: Ap
               phase={streamableNode.phase}
               onClose={() => { setPhaseLogOpen(false); setRealtimeProgress(null); }}
               onProgress={handleProgress}
+            />
+          </td>
+        </tr>
+      )}
+      {postBackupLogOpen && postBackupStreamableNode && postBackupStreamableNode.post_backup_phase && (
+        <tr>
+          <td colSpan={9} className="p-0">
+            <PhaseLogOverlay
+              appId={app.app_id}
+              node={postBackupStreamableNode.node}
+              phase={postBackupStreamableNode.post_backup_phase}
+              onClose={() => setPostBackupLogOpen(false)}
             />
           </td>
         </tr>
