@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -214,6 +215,7 @@ func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress
 				return nil
 			}
 		}
+		r.tryUnlockOnLockConflict(ctx, "restore", err, onLog)
 		return err
 	}
 
@@ -247,6 +249,9 @@ func (r *RepoRestic) Backup(ctx context.Context, appID common.AppID, onProgress 
 	)
 	cmd.Dir = r.appDataDir
 	_, err := r.runWithJSON("backup:"+string(appID), cmd, onProgress, onLog)
+	if err != nil {
+		r.tryUnlockOnLockConflict(ctx, "backup", err, onLog)
+	}
 	return err
 }
 
@@ -301,14 +306,47 @@ func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCal
 		"--keep-monthly", "12",
 		"--keep-yearly", "3",
 	)
-	return r.runLines("prune:"+string(appID), cmd, onLog)
+	err := r.runLines("prune:"+string(appID), cmd, onLog)
+	if err != nil {
+		r.tryUnlockOnLockConflict(ctx, "prune", err, onLog)
+	}
+	return err
 }
 
 // Check verifies the integrity of the restic repository.
 // --retry-lock handles transient lock conflicts from concurrent operations.
 func (r *RepoRestic) Check(ctx context.Context, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "--retry-lock", "5m", "check", "--read-data-subset=1%")
-	return r.runLines("check", cmd, onLog)
+	err := r.runLines("check", cmd, onLog)
+	if err != nil {
+		r.tryUnlockOnLockConflict(ctx, "check", err, onLog)
+	}
+	return err
+}
+
+func (r *RepoRestic) tryUnlockOnLockConflict(ctx context.Context, op string, runErr error, onLog LogCallback) {
+	if !isExitCode11(runErr) {
+		return
+	}
+	msg := fmt.Sprintf("Restic %s failed with lock conflict (exit code 11); running restic unlock once", op)
+	log.Printf("[restic:%s] %s", op, msg)
+	if onLog != nil {
+		onLog(msg)
+	}
+	if err := r.Unlock(ctx, onLog); err != nil {
+		log.Printf("[restic:%s] restic unlock failed after lock conflict: %v", op, err)
+		if onLog != nil {
+			onLog("restic unlock failed after lock conflict: " + err.Error())
+		}
+	}
+}
+
+func isExitCode11(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return exitErr.ExitCode() == 11
 }
 
 // Unlock removes stale locks from the restic repository.
