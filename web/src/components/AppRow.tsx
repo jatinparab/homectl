@@ -49,18 +49,6 @@ const backupStatusLabels: Record<string, string> = {
   never: "Never",
 };
 
-const pruneStatusColors: Record<string, string> = {
-  ok: "bg-green-500",
-  needs_prune: "bg-orange-500",
-  never: "bg-gray-500",
-};
-
-const pruneStatusLabels: Record<string, string> = {
-  ok: "OK",
-  needs_prune: "Stale",
-  never: "Never",
-};
-
 interface AppRowProps {
   app: AppStatus;
   isUpcomingBackup?: boolean;
@@ -402,31 +390,6 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                         className={`ml-1 text-[11px] ${nr.last_backup_error ? "text-red-400" : nr.backup_status === "needs_backup" ? "text-orange-400" : "text-gray-500"}`}
                       >
                         {timeAgo(nr.last_backup_at)}
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-gray-500 mr-1">P</span>
-                    {nr.last_prune_error ? (
-                      <span
-                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white bg-red-600"
-                        title={nr.last_prune_error}
-                      >
-                        Failed
-                      </span>
-                    ) : (
-                      <span
-                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium text-white ${pruneStatusColors[nr.prune_status] || "bg-gray-500"}`}
-                        title={nr.last_prune_at ? `Last: ${new Date(nr.last_prune_at).toLocaleString()}` : "Never pruned"}
-                      >
-                        {pruneStatusLabels[nr.prune_status] || "-"}
-                      </span>
-                    )}
-                    {nr.last_prune_at && (
-                      <span
-                        className={`ml-1 text-[11px] ${nr.last_prune_error ? "text-red-400" : nr.prune_status === "needs_prune" ? "text-orange-400" : "text-gray-500"}`}
-                      >
-                        {timeAgo(nr.last_prune_at)}
                       </span>
                     )}
                   </div>
