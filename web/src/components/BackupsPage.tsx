@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import type { AppStatus, ResticProgress, Snapshot, SnapshotEntry } from "../api/types"
-import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock } from "../api/hooks"
+import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useTriggerPrune } from "../api/hooks"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -275,14 +275,18 @@ function AppBackupRow({
   onToggle: () => void
 }) {
   const onlineNode = app.node_reports.find((nr) => nr.node_online)?.node ?? null
+
+  // Register background polling for this app's snapshots regardless of expanded state
+  useSnapshots(app.app_id, onlineNode)
+
   const sortedReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node))
   const reportForPrune = sortedReports.find((nr) => nr.node === onlineNode) ?? sortedReports[0]
+  const backupReport = reportForPrune
   const postBackupReport = sortedReports.find((nr) => !!nr.post_backup_phase)
   const activeBackupReport = sortedReports.find(
     (nr) => nr.phase === "backing_up" || nr.phase === "restoring"
   )
   const streamReport = postBackupReport ?? activeBackupReport
-  const streamPhase = postBackupReport?.post_backup_phase ?? activeBackupReport?.phase
 
   const backupStatusColor: Record<string, string> = {
     ok: "text-green-400",
@@ -305,13 +309,23 @@ function AppBackupRow({
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-400">{expanded ? "\u25BC" : "\u25B6"}</span>
           <span className="text-white font-medium">{app.app_id}</span>
-          <span
-            className={`text-xs ${backupStatusColor[app.backup_status] ?? "text-gray-500"}`}
-          >
+          <span className="text-xs text-gray-500">B:</span>
+          <span className={`text-xs ${backupStatusColor[app.backup_status] ?? "text-gray-500"}`}>
             {app.backup_status}
           </span>
+          {backupReport?.last_backup_at && (
+            <span className="text-xs text-gray-500" title={formatFullDate(backupReport.last_backup_at)}>
+              {timeAgo(backupReport.last_backup_at)}
+            </span>
+          )}
+          {backupReport?.last_backup_error && (
+            <span className="text-xs text-red-400" title={backupReport.last_backup_error}>
+              err
+            </span>
+          )}
+          <span className="text-xs text-gray-600">|</span>
+          <span className="text-xs text-gray-500">P:</span>
           <span className={`text-xs ${pruneStatusColor[reportForPrune?.prune_status ?? app.prune_status] ?? "text-gray-500"}`}>
-            prune:{" "}
             {reportForPrune?.last_prune_error ? "failed" : (reportForPrune?.prune_status ?? app.prune_status)}
           </span>
           {reportForPrune?.last_prune_at && (
@@ -337,8 +351,7 @@ function AppBackupRow({
 
       {expanded && onlineNode && (
         <div>
-          <AppPhaseLogs appId={app.app_id} node={onlineNode} phase={streamPhase} />
-          <SnapshotList appId={app.app_id} node={onlineNode} />
+          <SnapshotList appId={app.app_id} node={onlineNode} app={app} />
         </div>
       )}
       {expanded && !onlineNode && (
@@ -367,55 +380,9 @@ function ProgressMini({ progress }: { progress: ResticProgress }) {
   )
 }
 
-function AppPhaseLogs({ appId, node, phase }: { appId: string; node: string; phase?: string }) {
-  const [lines, setLines] = useState<string[]>([])
-  const preRef = useRef<HTMLPreElement>(null)
-  const maxLines = 250
 
-  useEffect(() => {
-    const url = `/api/v1/apps/${encodeURIComponent(appId)}/phase-logs?node=${encodeURIComponent(node)}`
-    const es = new EventSource(url)
-
-    es.onmessage = (e) => {
-      const line: string = e.data
-      if (line.startsWith("__PROGRESS__:")) {
-        return
-      }
-      setLines((prev) => {
-        const next = [...prev, line]
-        return next.length > maxLines ? next.slice(-maxLines) : next
-      })
-    }
-
-    es.onerror = () => {
-      es.close()
-    }
-
-    return () => {
-      es.close()
-    }
-  }, [appId, node])
-
-  useEffect(() => {
-    if (preRef.current) {
-      preRef.current.scrollTop = preRef.current.scrollHeight
-    }
-  }, [lines])
-
-  return (
-    <div className="mx-3 mt-3 bg-gray-900/60 border border-gray-700 rounded">
-      <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700">
-        Live logs{phase ? ` (${phase})` : ""}
-      </div>
-      <pre ref={preRef} className="text-xs text-gray-300 font-mono p-2 overflow-auto max-h-40 whitespace-pre-wrap">
-        {lines.length === 0 ? "Waiting for output..." : lines.join("\n")}
-      </pre>
-    </div>
-  )
-}
 
 function SnapshotCount({ appId, node }: { appId: string; node: string | null }) {
-  // Uses cached data if previously fetched; won't trigger a new fetch if cache is empty
   const { data } = useSnapshots(appId, node)
   const count = data?.snapshots?.length
   if (count == null) return null
@@ -426,13 +393,18 @@ function SnapshotCount({ appId, node }: { appId: string; node: string | null }) 
   )
 }
 
-function SnapshotList({ appId, node }: { appId: string; node: string }) {
+function SnapshotList({ appId, node, app }: { appId: string; node: string; app: AppStatus }) {
   const { data, isLoading, error } = useSnapshots(appId, node)
   const refreshMutation = useRefreshSnapshots()
+  const pruneMutation = useTriggerPrune()
   const [expandedSnapshot, setExpandedSnapshot] = useState<string | null>(null)
 
   const snapshots = data?.snapshots
   const cacheLoading = data?.loading === true
+
+  const nodeReport = app.node_reports.find((nr) => nr.node === node)
+  const isBusy = !!nodeReport?.post_backup_phase || nodeReport?.phase === "backing_up"
+  const canPrune = nodeReport?.observed_state === "running" && !isBusy
 
   return (
     <div className="border-t border-gray-700">
@@ -445,13 +417,24 @@ function SnapshotList({ appId, node }: { appId: string; node: string }) {
             <span className="text-yellow-400">Refreshing...</span>
           )}
         </div>
-        <button
-          onClick={() => refreshMutation.mutate({ appId, node })}
-          disabled={cacheLoading || refreshMutation.isPending}
-          className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {cacheLoading ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          {canPrune && (
+            <button
+              onClick={() => pruneMutation.mutate({ appId, node })}
+              disabled={pruneMutation.isPending}
+              className="px-2 py-1 text-xs bg-purple-800 hover:bg-purple-700 text-purple-200 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Prune
+            </button>
+          )}
+          <button
+            onClick={() => refreshMutation.mutate({ appId, node })}
+            disabled={cacheLoading || refreshMutation.isPending}
+            className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {cacheLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {isLoading && !data && (
