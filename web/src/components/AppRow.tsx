@@ -120,6 +120,14 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const pruneMutation = useTriggerPrune();
   const desiredStateMutation = useUpdateAppDesiredState();
   const restoreMutation = useUpdateAppRestoreEnabled();
+  const [openKebab, setOpenKebab] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openKebab) return;
+    const handler = () => setOpenKebab(null);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [openKebab]);
 
   const STREAMABLE_PHASES = ["pulling", "restoring", "backing_up"];
 
@@ -422,61 +430,73 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
               )}
             </td>
 
-            {/* Actions — allow wrap */}
+            {/* Actions */}
             <td className="px-3 py-2 align-top">
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="relative flex items-center gap-1">
                 {nr.last_error && (
                   <span className="text-red-400 text-[11px] break-all" title={nr.last_error}>
                     {nr.last_error.length > 30 ? nr.last_error.slice(0, 30) + "…" : nr.last_error}
                   </span>
                 )}
                 <button
-                  onClick={() => restartMutation.mutate({ appId: app.app_id, node: nr.node })}
-                  disabled={restartMutation.isPending}
-                  className="px-1.5 py-0.5 text-[11px] bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded text-gray-300"
-                  title="Clear status and restart app"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenKebab(openKebab === nr.node ? null : nr.node);
+                  }}
+                  className="px-2 py-0.5 text-sm bg-gray-700 hover:bg-gray-600 rounded text-gray-300 leading-none"
+                  title="Actions"
                 >
-                  Restart
+                  ⋮
                 </button>
-                {onShowLogs && (
-                  <button
-                    onClick={() => onShowLogs(nr.node, app.app_id)}
-                    className="px-1.5 py-0.5 text-[11px] bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+                {openKebab === nr.node && (
+                  <div
+                    className="absolute right-0 top-6 z-50 min-w-[130px] bg-gray-800 border border-gray-600 rounded shadow-lg py-1"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    Logs
-                  </button>
-                )}
-                {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
-                  <button
-                    onClick={() => backupMutation.mutate({ appId: app.app_id, node: nr.node })}
-                    disabled={backupMutation.isPending}
-                    className="px-1.5 py-0.5 text-[11px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded text-white"
-                  >
-                    Backup
-                  </button>
-                )}
-                {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
-                  <button
-                    onClick={() => pruneMutation.mutate({ appId: app.app_id, node: nr.node })}
-                    disabled={pruneMutation.isPending}
-                    className="px-1.5 py-0.5 text-[11px] bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded text-white"
-                  >
-                    Prune
-                  </button>
-                )}
-                {isFirst && app.backup_enabled && (
-                  <button
-                    onClick={() => restoreMutation.mutate({ appId: app.app_id, enabled: !app.restore_enabled })}
-                    disabled={restoreMutation.isPending}
-                    className={`px-1.5 py-0.5 text-[11px] rounded disabled:opacity-50 ${
-                      app.restore_enabled
-                        ? "bg-gray-700 hover:bg-gray-600 text-gray-300"
-                        : "bg-yellow-700 hover:bg-yellow-600 text-yellow-200"
-                    }`}
-                    title={app.restore_enabled ? "Disable restore (force local data)" : "Re-enable restore from backup"}
-                  >
-                    {app.restore_enabled ? "No Restore" : "Restore On"}
-                  </button>
+                    <button
+                      onClick={() => { restartMutation.mutate({ appId: app.app_id, node: nr.node }); setOpenKebab(null); }}
+                      disabled={restartMutation.isPending}
+                      className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+                    >
+                      Restart
+                    </button>
+                    {onShowLogs && (
+                      <button
+                        onClick={() => { onShowLogs(nr.node, app.app_id); setOpenKebab(null); }}
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+                      >
+                        Logs
+                      </button>
+                    )}
+                    {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
+                      <button
+                        onClick={() => { backupMutation.mutate({ appId: app.app_id, node: nr.node }); setOpenKebab(null); }}
+                        disabled={backupMutation.isPending}
+                        className="w-full text-left px-3 py-1.5 text-xs text-amber-300 hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        Backup
+                      </button>
+                    )}
+                    {app.backup_enabled && !BACKUP_PHASES.includes(nr.phase) && !nr.post_backup_phase && nr.observed_state === "running" && (
+                      <button
+                        onClick={() => { pruneMutation.mutate({ appId: app.app_id, node: nr.node }); setOpenKebab(null); }}
+                        disabled={pruneMutation.isPending}
+                        className="w-full text-left px-3 py-1.5 text-xs text-purple-300 hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        Prune
+                      </button>
+                    )}
+                    {isFirst && app.backup_enabled && (
+                      <button
+                        onClick={() => { restoreMutation.mutate({ appId: app.app_id, enabled: !app.restore_enabled }); setOpenKebab(null); }}
+                        disabled={restoreMutation.isPending}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 disabled:opacity-50 ${app.restore_enabled ? "text-gray-300" : "text-yellow-300"}`}
+                        title={app.restore_enabled ? "Disable restore (force local data)" : "Re-enable restore from backup"}
+                      >
+                        {app.restore_enabled ? "No Restore" : "Restore On"}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </td>

@@ -145,7 +145,10 @@ export function useSnapshots(appId: string | null, node: string | null) {
     queryKey: ["snapshots", appId, node],
     queryFn: () => fetchSnapshots(appId!, node!),
     enabled: !!appId && !!node,
-    refetchInterval: (query) => query.state.data?.loading ? 2000 : false,
+    // staleTime: Infinity prevents refetch on mount — expanding SnapshotList just reads cache.
+    // Background polling keeps the data in sync with the agent's state.
+    staleTime: Infinity,
+    refetchInterval: (query) => query.state.data?.loading ? 2000 : 5 * 60 * 1000,
   });
 }
 
