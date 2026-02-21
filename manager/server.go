@@ -232,7 +232,11 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 
 	// Resolve scheduled backup/prune assignments under lock
 	m.backupMu.Lock()
-	backupAssignment, pruneAssignment := m.resolveWorkAssignments()
+	resolvedBackups, pruneAssignment := m.resolveWorkAssignments()
+	backupAssignments := make(map[common.AppID]*BackupAssignment, len(resolvedBackups))
+	for appID, assignment := range resolvedBackups {
+		backupAssignments[appID] = assignment
+	}
 	m.backupMu.Unlock()
 
 	// Check pending global restores under backupMu (do not clear yet; clear after dispatch)
@@ -258,8 +262,10 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 			da.BackupSensitive = cfg.BackupSensitive
 			da.BackupEnabled = cfg.IsBackupEnabled()
 		}
-		if da.BackupEnabled && backupAssignment != nil && backupAssignment.AgentID == agentID && backupAssignment.AppID == app.ID {
-			da.BackupNow = true
+		if da.BackupEnabled {
+			if ba, ok := backupAssignments[app.ID]; ok && ba.AgentID == agentID {
+				da.BackupNow = true
+			}
 		}
 		if da.BackupEnabled && pruneAssignment != nil && pruneAssignment.AgentID == agentID && pruneAssignment.AppID == app.ID {
 			da.PruneNow = true

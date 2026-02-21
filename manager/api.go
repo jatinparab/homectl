@@ -507,7 +507,12 @@ func (m *Manager) handleAPIUpcomingBackup(w http.ResponseWriter, r *http.Request
 	}
 
 	m.backupMu.Lock()
-	a := m.backupAssignment
+	var a *BackupAssignment
+	for _, candidate := range m.backupAssignments {
+		if a == nil || candidate.AssignedAt.Before(a.AssignedAt) {
+			a = candidate
+		}
+	}
 	m.backupMu.Unlock()
 
 	if a == nil {
@@ -809,12 +814,16 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 	m.backupMu.Lock()
 	defer m.backupMu.Unlock()
 
-	if m.backupAssignment != nil || m.pruneAssignment != nil || m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
+	if m.pruneAssignment != nil || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
 		http.Error(w, "global work lane busy", http.StatusConflict)
 		return
 	}
+	if _, ok := m.backupAssignments[common.AppID(appID)]; ok {
+		http.Error(w, "backup already scheduled", http.StatusConflict)
+		return
+	}
 
-	m.backupAssignment = &BackupAssignment{
+	m.backupAssignments[common.AppID(appID)] = &BackupAssignment{
 		Kind:       AssignmentKindBackup,
 		AgentID:    nodeName,
 		AppID:      common.AppID(appID),
@@ -861,7 +870,7 @@ func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) 
 	m.backupMu.Lock()
 	defer m.backupMu.Unlock()
 
-	if m.backupAssignment != nil || m.pruneAssignment != nil || m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
+	if len(m.backupAssignments) > 0 || m.pruneAssignment != nil || m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() || m.isRepoBusy() {
 		http.Error(w, "global work lane busy", http.StatusConflict)
 		return
 	}
