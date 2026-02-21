@@ -416,15 +416,15 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 
 	log.Printf("Executor: starting backup for %s", appID)
 
-	// Step 2: Run restic backup (serialized via backupMu)
+	// Step 2: Run restic backup (parallel with other backups, but blocked by prune/check lane)
 	rt.PhaseLog.Clear()
-	e.agent.backupMu.Lock()
+	e.agent.beginBackup()
 	backupErr := e.restic.Backup(e.ctx, appID, func(p *common.ResticProgress) {
 		rt.SetProgress(p)
 	}, func(line string) {
 		rt.PhaseLog.Write(line)
 	})
-	e.agent.backupMu.Unlock()
+	e.agent.endBackup()
 	rt.ClearProgress()
 
 	// Step 3: Update backup state
@@ -469,8 +469,8 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 // executePrune runs repository prune for an app.
 // Serialized using backupMu as prune/repo lock cannot overlap with backup/restore/check.
 func (e *Executor) executePrune(appID common.AppID, rt *AppRuntime) error {
-	e.agent.backupMu.Lock()
-	defer e.agent.backupMu.Unlock()
+	e.agent.beginExclusiveBackupLane()
+	defer e.agent.endExclusiveBackupLane()
 
 	rt.SetPostBackupPhase("backup_pruning")
 	rt.PhaseLog.Clear()
