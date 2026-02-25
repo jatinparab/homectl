@@ -2,8 +2,10 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -144,7 +146,7 @@ func (a *Agent) runStoragePrune() {
 
 			target := filepath.Join(a.appdataDir, name)
 			sz, _ := dirSize(target)
-			if err := os.RemoveAll(target); err != nil {
+			if err := removePathWithSudoFallback(target, a.appdataDir); err != nil {
 				lastErr = err.Error()
 				continue
 			}
@@ -153,7 +155,7 @@ func (a *Agent) runStoragePrune() {
 			deletedDirs = append(deletedDirs, target)
 			deletedBytes += sz
 
-			_ = os.Remove(backupMetaPath(a.appdataDir, common.AppID(name)))
+			_ = removePathWithSudoFallback(backupMetaPath(a.appdataDir, common.AppID(name)), filepath.Join(a.appdataDir, ".homectl-meta"))
 
 			a.runtimeMu.Lock()
 			delete(a.runtime, common.AppID(name))
@@ -173,6 +175,29 @@ func (a *Agent) runStoragePrune() {
 	a.storagePruneState.DeletedDirs = deletedDirs
 	a.storagePruneState.DeletedBytes = deletedBytes
 	a.storagePruneMu.Unlock()
+}
+
+func removePathWithSudoFallback(targetPath string, allowedRoot string) error {
+	if err := os.RemoveAll(targetPath); err == nil {
+		return nil
+	}
+
+	cleanTarget := filepath.Clean(targetPath)
+	cleanRoot := filepath.Clean(allowedRoot)
+	if cleanTarget != cleanRoot && !strings.HasPrefix(cleanTarget, cleanRoot+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to delete outside allowed root: %s", cleanTarget)
+	}
+
+	cmd := exec.Command("sudo", "-n", "rm", "-rf", "--", cleanTarget)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("sudo delete failed for %s: %s", cleanTarget, msg)
+	}
+
+	return nil
 }
 
 func dirSize(root string) (uint64, error) {
