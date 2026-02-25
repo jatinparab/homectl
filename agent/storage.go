@@ -29,11 +29,18 @@ type StorageStatusResponse struct {
 	DiskUsed    uint64            `json:"disk_used"`
 	DiskFree    uint64            `json:"disk_free"`
 	DiskPercent float64           `json:"disk_percent"`
+	Reclaimable uint64            `json:"reclaimable"`
+	ReclaimPct  float64           `json:"reclaim_pct"`
 	Prune       StoragePruneState `json:"prune"`
 }
 
 func (a *Agent) getStorageStatus() StorageStatusResponse {
 	total, used, free, pct := readDiskUsage(a.appdataDir)
+	reclaimable := a.estimateReclaimableBytes()
+	reclaimPct := 0.0
+	if total > 0 {
+		reclaimPct = float64(reclaimable) / float64(total) * 100
+	}
 
 	a.storagePruneMu.Lock()
 	prune := a.storagePruneState
@@ -46,8 +53,40 @@ func (a *Agent) getStorageStatus() StorageStatusResponse {
 		DiskUsed:    used,
 		DiskFree:    free,
 		DiskPercent: pct,
+		Reclaimable: reclaimable,
+		ReclaimPct:  reclaimPct,
 		Prune:       prune,
 	}
+}
+
+func (a *Agent) estimateReclaimableBytes() uint64 {
+	assigned := make(map[string]bool)
+	a.runtimeMu.RLock()
+	for appID, isAssigned := range a.assignedApps {
+		if isAssigned {
+			assigned[string(appID)] = true
+		}
+	}
+	a.runtimeMu.RUnlock()
+
+	entries, err := os.ReadDir(a.appdataDir)
+	if err != nil {
+		return 0
+	}
+
+	var reclaimable uint64
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || assigned[name] {
+			continue
+		}
+		sz, _ := dirSize(filepath.Join(a.appdataDir, name))
+		reclaimable += sz
+	}
+	return reclaimable
 }
 
 func (a *Agent) startStoragePrune() bool {
