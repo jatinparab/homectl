@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, GatewayInfo, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, GatewayInfo, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -16,6 +16,21 @@ export async function fetchApps(): Promise<AppStatus[]> {
 
 export async function fetchAgents(): Promise<Agent[]> {
   return fetchJSON<Agent[]>(`${API_BASE}/agents`);
+}
+
+export async function fetchStorageStatus(): Promise<StorageStatus> {
+  return fetchJSON<StorageStatus>(`${API_BASE}/storage`);
+}
+
+export async function triggerStoragePrune(node: string): Promise<StoragePruneResponse> {
+  const response = await fetch(`${API_BASE}/storage/prune?node=${encodeURIComponent(node)}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function fetchSystemLogSources(): Promise<string[]> {
