@@ -4,6 +4,7 @@ import {
   fetchAgents,
   fetchSystemLogSources,
   fetchContainers,
+  fetchStorageStatus,
   fetchUpcomingBackup,
   fetchUpcomingPrune,
   fetchSnapshots,
@@ -23,6 +24,7 @@ import {
   setManualGateway,
   clearManualGateway,
   forceRepoUnlock,
+  triggerStoragePrune,
 } from "./client";
 
 export function useApps() {
@@ -54,6 +56,14 @@ export function useContainers() {
     queryKey: ["containers"],
     queryFn: fetchContainers,
     refetchInterval: 5000,
+  });
+}
+
+export function useStorageStatus() {
+  return useQuery({
+    queryKey: ["storage-status"],
+    queryFn: fetchStorageStatus,
+    refetchInterval: (query) => query.state.data?.any_pruning ? 2000 : 5000,
   });
 }
 
@@ -248,6 +258,16 @@ export function useForceRepoUnlock() {
     mutationFn: forceRepoUnlock,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["repo-status"] });
+    },
+  });
+}
+
+export function useTriggerStoragePrune() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ node }: { node: string }) => triggerStoragePrune(node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["storage-status"] });
     },
   });
 }

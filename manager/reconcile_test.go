@@ -388,8 +388,8 @@ func TestReconcileOnce_FullIntegration(t *testing.T) {
 	defer mgr.Stop()
 
 	// Register agents
-	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", nil)
-	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", nil)
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", nil, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", nil, common.NodeMetrics{})
 
 	// Register apps
 	mgr.appRegistry.Register("app1", common.DesiredRunning, false)

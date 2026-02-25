@@ -1,4 +1,4 @@
-export type Tab = "dashboard" | "backups"
+export type Tab = "dashboard" | "backups" | "storage"
 
 interface HeaderProps {
   activeTab: Tab
@@ -30,6 +30,16 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
             }`}
           >
             Backups
+          </button>
+          <button
+            onClick={() => onTabChange("storage")}
+            className={`px-3 py-1.5 text-sm rounded ${
+              activeTab === "storage"
+                ? "bg-gray-600 text-white"
+                : "text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+            }`}
+          >
+            Storage
           </button>
         </nav>
       </div>

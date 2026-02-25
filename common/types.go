@@ -2,6 +2,18 @@ package common
 
 import "time"
 
+// NodeMetrics represents host-level runtime metrics reported by an agent.
+type NodeMetrics struct {
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryTotal   uint64  `json:"memory_total"`
+	MemoryUsed    uint64  `json:"memory_used"`
+	MemoryPercent float64 `json:"memory_percent"`
+	DiskTotal     uint64  `json:"disk_total"`
+	DiskUsed      uint64  `json:"disk_used"`
+	DiskFree      uint64  `json:"disk_free"`
+	DiskPercent   float64 `json:"disk_percent"`
+}
+
 // AppID is a unique identifier for an application
 type AppID string
 

@@ -56,6 +56,8 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/repo/force-unlock", m.handleAPIRepoForceUnlock)
 	mux.HandleFunc("/api/v1/repo/unlock-logs", m.handleAPIRepoUnlockLogs)
 	mux.HandleFunc("/api/v1/gateway", m.handleAPIGateway)
+	mux.HandleFunc("/api/v1/storage", m.handleAPIStorage)
+	mux.HandleFunc("/api/v1/storage/prune", m.handleAPIStoragePrune)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())

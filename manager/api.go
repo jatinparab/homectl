@@ -35,6 +35,7 @@ type APIAgentInfo struct {
 	RegisteredAt string             `json:"registered_at"`
 	Online       bool               `json:"online"`
 	IsGateway    bool               `json:"is_gateway"`
+	Metrics      common.NodeMetrics `json:"metrics,omitempty"`
 	AppReports   []common.AppReport `json:"app_reports"`
 }
 
@@ -107,6 +108,7 @@ func (m *Manager) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 			RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 			Online:       now.Sub(agent.LastSeen) < 30*time.Second,
 			IsGateway:    gatewayNode == agent.Name,
+			Metrics:      agent.Metrics,
 			AppReports:   appReports,
 		})
 	}
@@ -155,6 +157,7 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 		RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 		Online:       now.Sub(agent.LastSeen) < 30*time.Second,
 		IsGateway:    isGateway,
+		Metrics:      agent.Metrics,
 		AppReports:   appReports,
 	}
 
@@ -1252,6 +1255,194 @@ type NodeContainers struct {
 	Online     bool                     `json:"online"`
 	Containers []agentpkg.ContainerInfo `json:"containers"`
 	Error      string                   `json:"error,omitempty"`
+}
+
+type APIStorageNode struct {
+	Node        string                     `json:"node"`
+	Online      bool                       `json:"online"`
+	AppdataPath string                     `json:"appdata_path,omitempty"`
+	DiskTotal   uint64                     `json:"disk_total"`
+	DiskUsed    uint64                     `json:"disk_used"`
+	DiskFree    uint64                     `json:"disk_free"`
+	DiskPercent float64                    `json:"disk_percent"`
+	Prune       agentpkg.StoragePruneState `json:"prune"`
+	Error       string                     `json:"error,omitempty"`
+}
+
+type APIStorageAggregate struct {
+	DiskTotal   uint64  `json:"disk_total"`
+	DiskUsed    uint64  `json:"disk_used"`
+	DiskFree    uint64  `json:"disk_free"`
+	DiskPercent float64 `json:"disk_percent"`
+}
+
+type APIStorageResponse struct {
+	Nodes      []APIStorageNode    `json:"nodes"`
+	Aggregate  APIStorageAggregate `json:"aggregate"`
+	AnyPruning bool                `json:"any_pruning"`
+}
+
+type APIStoragePruneResult struct {
+	Node    string `json:"node"`
+	Started bool   `json:"started"`
+	Error   string `json:"error,omitempty"`
+}
+
+type APIStoragePruneResponse struct {
+	Results []APIStoragePruneResult `json:"results"`
+}
+
+// handleAPIStorage returns per-node and aggregate storage status.
+// GET /api/v1/storage
+func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	agents := m.leaseManager.ListAgents()
+	now := time.Now()
+	results := make([]APIStorageNode, len(agents))
+	var wg sync.WaitGroup
+
+	for i, a := range agents {
+		online := now.Sub(a.LastSeen) < 30*time.Second
+		results[i] = APIStorageNode{Node: a.Name, Online: online}
+		if !online {
+			results[i].Error = "offline"
+			continue
+		}
+
+		agentCfg := m.config.GetAgentConfig(a.Name)
+		if agentCfg == nil {
+			results[i].Error = "not in config"
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, ip string) {
+			defer wg.Done()
+			url := fmt.Sprintf("http://%s:%d/storage/status", ip, agentpkg.ReadyServerPort)
+			resp, err := m.httpClient.Get(url)
+			if err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				results[idx].Error = fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+				return
+			}
+
+			var st agentpkg.StorageStatusResponse
+			if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+				results[idx].Error = err.Error()
+				return
+			}
+
+			results[idx].AppdataPath = st.AppdataPath
+			results[idx].DiskTotal = st.DiskTotal
+			results[idx].DiskUsed = st.DiskUsed
+			results[idx].DiskFree = st.DiskFree
+			results[idx].DiskPercent = st.DiskPercent
+			results[idx].Prune = st.Prune
+		}(i, agentCfg.IP)
+	}
+
+	wg.Wait()
+
+	resp := APIStorageResponse{Nodes: results}
+	for _, node := range results {
+		if !node.Online || node.Error != "" {
+			continue
+		}
+		resp.Aggregate.DiskTotal += node.DiskTotal
+		resp.Aggregate.DiskUsed += node.DiskUsed
+		resp.Aggregate.DiskFree += node.DiskFree
+		if node.Prune.Busy {
+			resp.AnyPruning = true
+		}
+	}
+	if resp.Aggregate.DiskTotal > 0 {
+		resp.Aggregate.DiskPercent = float64(resp.Aggregate.DiskUsed) / float64(resp.Aggregate.DiskTotal) * 100
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleAPIStoragePrune triggers storage prune on one node or all online nodes.
+// POST /api/v1/storage/prune?node={nodeName|all}
+func (m *Manager) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	node := r.URL.Query().Get("node")
+	if node == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now()
+	var targetAgents []AgentInfo
+	if node == "all" {
+		for _, a := range m.leaseManager.ListAgents() {
+			if now.Sub(a.LastSeen) < 30*time.Second {
+				targetAgents = append(targetAgents, a)
+			}
+		}
+	} else {
+		a, ok := m.leaseManager.GetAgent(node)
+		if !ok || now.Sub(a.LastSeen) >= 30*time.Second {
+			http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+			return
+		}
+		targetAgents = []AgentInfo{*a}
+	}
+
+	results := make([]APIStoragePruneResult, 0, len(targetAgents))
+	for _, a := range targetAgents {
+		result := APIStoragePruneResult{Node: a.Name}
+		agentCfg := m.config.GetAgentConfig(a.Name)
+		if agentCfg == nil {
+			result.Error = "not in config"
+			results = append(results, result)
+			continue
+		}
+
+		url := fmt.Sprintf("http://%s:%d/storage/prune", agentCfg.IP, agentpkg.ReadyServerPort)
+		req, err := http.NewRequest(http.MethodPost, url, nil)
+		if err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+
+		resp, err := m.httpClient.Do(req)
+		if err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			result.Error = fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+			results = append(results, result)
+			continue
+		}
+
+		result.Started = true
+		results = append(results, result)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(APIStoragePruneResponse{Results: results})
 }
 
 // handleAPIContainers returns containers from all agents
