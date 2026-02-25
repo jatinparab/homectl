@@ -118,6 +118,8 @@ export interface StorageNode {
   disk_used: number;
   disk_free: number;
   disk_percent: number;
+  reclaimable: number;
+  reclaim_pct: number;
   prune: StoragePruneState;
   error?: string;
 }
@@ -127,6 +129,8 @@ export interface StorageAggregate {
   disk_used: number;
   disk_free: number;
   disk_percent: number;
+  reclaimable: number;
+  reclaim_pct: number;
 }
 
 export interface StorageStatus {

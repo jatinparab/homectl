@@ -1265,6 +1265,8 @@ type APIStorageNode struct {
 	DiskUsed    uint64                     `json:"disk_used"`
 	DiskFree    uint64                     `json:"disk_free"`
 	DiskPercent float64                    `json:"disk_percent"`
+	Reclaimable uint64                     `json:"reclaimable"`
+	ReclaimPct  float64                    `json:"reclaim_pct"`
 	Prune       agentpkg.StoragePruneState `json:"prune"`
 	Error       string                     `json:"error,omitempty"`
 }
@@ -1274,6 +1276,8 @@ type APIStorageAggregate struct {
 	DiskUsed    uint64  `json:"disk_used"`
 	DiskFree    uint64  `json:"disk_free"`
 	DiskPercent float64 `json:"disk_percent"`
+	Reclaimable uint64  `json:"reclaimable"`
+	ReclaimPct  float64 `json:"reclaim_pct"`
 }
 
 type APIStorageResponse struct {
@@ -1347,6 +1351,8 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 			results[idx].DiskUsed = st.DiskUsed
 			results[idx].DiskFree = st.DiskFree
 			results[idx].DiskPercent = st.DiskPercent
+			results[idx].Reclaimable = st.Reclaimable
+			results[idx].ReclaimPct = st.ReclaimPct
 			results[idx].Prune = st.Prune
 		}(i, agentCfg.IP)
 	}
@@ -1361,12 +1367,14 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 		resp.Aggregate.DiskTotal += node.DiskTotal
 		resp.Aggregate.DiskUsed += node.DiskUsed
 		resp.Aggregate.DiskFree += node.DiskFree
+		resp.Aggregate.Reclaimable += node.Reclaimable
 		if node.Prune.Busy {
 			resp.AnyPruning = true
 		}
 	}
 	if resp.Aggregate.DiskTotal > 0 {
 		resp.Aggregate.DiskPercent = float64(resp.Aggregate.DiskUsed) / float64(resp.Aggregate.DiskTotal) * 100
+		resp.Aggregate.ReclaimPct = float64(resp.Aggregate.Reclaimable) / float64(resp.Aggregate.DiskTotal) * 100
 	}
 
 	w.Header().Set("Content-Type", "application/json")

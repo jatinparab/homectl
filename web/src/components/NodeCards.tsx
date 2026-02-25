@@ -18,6 +18,13 @@ function pct(n?: number): string {
   return `${n.toFixed(1)}%`
 }
 
+function usageBarClass(value?: number): string {
+  if (value === undefined || Number.isNaN(value)) return 'bg-gray-600'
+  if (value >= 90) return 'bg-red-500'
+  if (value >= 60) return 'bg-yellow-500'
+  return 'bg-green-500'
+}
+
 interface NodeCardsProps {
   agents: Agent[] | undefined
   gatewayInfo: GatewayInfo | undefined
@@ -104,12 +111,28 @@ function NodeCard({ agent, gatewayInfo }: NodeCardProps) {
               {agent.online ? `${pct(agent.metrics?.memory_percent)} (${formatBytes(agent.metrics?.memory_used)} / ${formatBytes(agent.metrics?.memory_total)})` : '--'}
             </span>
           </div>
+          {agent.online && (
+            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+              <div
+                className={`h-full ${usageBarClass(agent.metrics?.memory_percent)}`}
+                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.memory_percent ?? 0))}%` }}
+              />
+            </div>
+          )}
           <div className="flex justify-between">
             <span>Disk:</span>
             <span className="text-gray-300">
               {agent.online ? `${pct(agent.metrics?.disk_percent)} (${formatBytes(agent.metrics?.disk_used)} / ${formatBytes(agent.metrics?.disk_total)})` : '--'}
             </span>
           </div>
+          {agent.online && (
+            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+              <div
+                className={`h-full ${usageBarClass(agent.metrics?.disk_percent)}`}
+                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.disk_percent ?? 0))}%` }}
+              />
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-3 flex gap-2">
