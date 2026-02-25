@@ -79,6 +79,12 @@ export function StoragePage() {
         <div className="bg-gray-800 border border-gray-700 rounded p-3">
           <div className="text-xs text-gray-400">Used</div>
           <div className="text-white font-semibold">{formatBytes(data?.aggregate.disk_used)} ({formatPercent(data?.aggregate.disk_percent)})</div>
+          <div className="mt-2 h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+            <div
+              className={`h-full ${usageBarClass(data?.aggregate.disk_percent)}`}
+              style={{ width: `${Math.min(100, Math.max(0, data?.aggregate.disk_percent ?? 0))}%` }}
+            />
+          </div>
         </div>
         <div className="bg-gray-800 border border-gray-700 rounded p-3">
           <div className="text-xs text-gray-400">Free</div>
@@ -87,6 +93,12 @@ export function StoragePage() {
         <div className="bg-gray-800 border border-gray-700 rounded p-3 sm:col-span-3">
           <div className="text-xs text-gray-400">Reclaimable by prune</div>
           <div className="text-white font-semibold">{formatBytes(data?.aggregate.reclaimable)} ({formatPercent(data?.aggregate.reclaim_pct)})</div>
+          <div className="mt-2 h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+            <div
+              className={`h-full ${usageBarClass(data?.aggregate.reclaim_pct)}`}
+              style={{ width: `${Math.min(100, Math.max(0, data?.aggregate.reclaim_pct ?? 0))}%` }}
+            />
+          </div>
         </div>
       </div>
 
@@ -118,7 +130,15 @@ export function StoragePage() {
                     />
                   </div>
                 </td>
-                <td className="px-3 py-2">{formatPercent(node.reclaim_pct)} ({formatBytes(node.reclaimable)})</td>
+                <td className="px-3 py-2 min-w-48">
+                  <div>{formatPercent(node.reclaim_pct)} ({formatBytes(node.reclaimable)})</div>
+                  <div className="mt-1 h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+                    <div
+                      className={`h-full ${usageBarClass(node.reclaim_pct)}`}
+                      style={{ width: `${Math.min(100, Math.max(0, node.reclaim_pct ?? 0))}%` }}
+                    />
+                  </div>
+                </td>
                 <td className="px-3 py-2 text-xs">
                   {node.prune.busy ? (
                     <span className="text-yellow-300">Pruning...</span>
