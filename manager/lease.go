@@ -18,6 +18,7 @@ type AgentInfo struct {
 	LastSeen     time.Time          `json:"last_seen"`
 	RegisteredAt time.Time          `json:"registered_at"`
 	AppReports   []common.AppReport `json:"app_reports,omitempty"`
+	Metrics      common.NodeMetrics `json:"metrics,omitempty"`
 }
 
 // LeaseManager manages agent leases
@@ -93,7 +94,7 @@ func (lm *LeaseManager) cleanupExpired() {
 }
 
 // Register registers or renews an agent's lease
-func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport) {
+func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -102,6 +103,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport) {
 		existing.LastSeen = now
 		existing.IP = ip
 		existing.AppReports = reports
+		existing.Metrics = metrics
 		log.Printf("Agent %s renewed lease (%d app reports)", name, len(reports))
 	} else {
 		lm.agents[name] = &AgentInfo{
@@ -110,6 +112,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport) {
 			LastSeen:     now,
 			RegisteredAt: now,
 			AppReports:   reports,
+			Metrics:      metrics,
 		}
 		log.Printf("Agent %s registered (IP: %s, %d app reports)", name, ip, len(reports))
 	}
@@ -167,6 +170,7 @@ type HeartbeatRequest struct {
 	Name    string             `json:"name"`
 	IP      string             `json:"ip"`
 	Reports []common.AppReport `json:"reports,omitempty"`
+	Metrics common.NodeMetrics `json:"metrics,omitempty"`
 }
 
 // HTTP Handlers
@@ -188,7 +192,7 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports, req.Metrics)
 
 	// Adopt running apps that have no assignment (e.g. after manager restart)
 	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)

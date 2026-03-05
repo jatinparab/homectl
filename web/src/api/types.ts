@@ -86,6 +86,67 @@ export interface Agent {
   registered_at: string;
   online: boolean;
   is_gateway: boolean;
+  metrics?: NodeMetrics;
+}
+
+export interface NodeMetrics {
+  cpu_percent: number;
+  memory_total: number;
+  memory_used: number;
+  memory_percent: number;
+  disk_total: number;
+  disk_used: number;
+  disk_free: number;
+  disk_percent: number;
+}
+
+export interface StoragePruneState {
+  busy: boolean;
+  started_at?: string;
+  finished_at?: string;
+  last_error?: string;
+  deleted_apps?: string[];
+  deleted_dirs?: string[];
+  deleted_bytes?: number;
+}
+
+export interface StorageNode {
+  node: string;
+  online: boolean;
+  appdata_path?: string;
+  disk_total: number;
+  disk_used: number;
+  disk_free: number;
+  disk_percent: number;
+  reclaimable: number;
+  reclaim_pct: number;
+  prune: StoragePruneState;
+  error?: string;
+}
+
+export interface StorageAggregate {
+  disk_total: number;
+  disk_used: number;
+  disk_free: number;
+  disk_percent: number;
+  reclaimable: number;
+  reclaim_pct: number;
+}
+
+export interface StorageStatus {
+  nodes: StorageNode[];
+  aggregate: StorageAggregate;
+  any_pruning: boolean;
+}
+
+export interface StoragePruneResult {
+  node: string;
+  started: boolean;
+  error?: string;
+}
+
+export interface StoragePruneResponse {
+  results: StoragePruneResult[];
 }
 
 export interface Snapshot {

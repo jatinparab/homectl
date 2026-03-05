@@ -2,9 +2,14 @@ package manager
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"sort"
 	"time"
 
+	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
 )
 
@@ -60,7 +65,14 @@ func (m *Manager) reconcileOnce(now time.Time) {
 // If a manual gateway is set and valid, uses it. Otherwise it scans for a new one automatically.
 func (m *Manager) resolveGateway() {
 	m.gatewayMu.Lock()
-	defer m.gatewayMu.Unlock()
+	oldGateway := m.gatewayNode
+	defer func() {
+		newGateway := m.gatewayNode
+		m.gatewayMu.Unlock()
+		if oldGateway != newGateway {
+			m.restartNewtOnGatewayChange(oldGateway, newGateway)
+		}
+	}()
 
 	// Check if manual gateway is set and still valid
 	if m.manualGatewayNode != "" {
@@ -102,6 +114,75 @@ func (m *Manager) resolveGateway() {
 		log.Printf("Gateway: no valid candidate, clearing (was %s)", m.gatewayNode)
 		m.gatewayNode = ""
 	}
+}
+
+// restartNewtOnGatewayChange restarts newt when gateway ownership changes.
+func (m *Manager) restartNewtOnGatewayChange(oldGateway, newGateway string) {
+	log.Printf("Gateway: changed %s -> %s, restarting newt", oldGateway, newGateway)
+
+	now := time.Now()
+	targetSet := make(map[string]bool)
+	for _, agent := range m.leaseManager.ListAgents() {
+		if now.Sub(agent.LastSeen) >= 30*time.Second {
+			continue
+		}
+		for _, report := range agent.AppReports {
+			if report.AppID == "newt" {
+				targetSet[agent.Name] = true
+				break
+			}
+		}
+	}
+
+	// Fallback: if newt isn't currently reported, try restarting on the new gateway.
+	if len(targetSet) == 0 && newGateway != "" {
+		targetSet[newGateway] = true
+	}
+
+	targets := make([]string, 0, len(targetSet))
+	for name := range targetSet {
+		targets = append(targets, name)
+	}
+	sort.Strings(targets)
+
+	for _, node := range targets {
+		if err := m.restartAppOnNode("newt", node); err != nil {
+			log.Printf("Gateway: failed restarting newt on %s: %s", node, err)
+			continue
+		}
+		log.Printf("Gateway: restarted newt on %s", node)
+	}
+}
+
+func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		return fmt.Errorf("node %s not found in config", nodeName)
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+		return fmt.Errorf("node %s offline", nodeName)
+	}
+
+	url := fmt.Sprintf("http://%s:%d/restart/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("agent returned %s: %s", resp.Status, string(body))
+	}
+
+	return nil
 }
 
 // isTraefikHealthy checks if an agent reports traefik as running+healthy.

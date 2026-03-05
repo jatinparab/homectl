@@ -12,6 +12,9 @@ GREEN := \033[0;32m
 YELLOW := \033[0;33m
 NC := \033[0m
 
+# SSH options for online checks
+SSH_OPTS ?= -o BatchMode=yes -o ConnectTimeout=3
+
 help:
 	@echo "$(GREEN)Homectl Management Commands$(NC)"
 	@echo ""
@@ -128,8 +131,33 @@ sync-manager: build-manager
 	rsync -avz ./scripts/ jatin@$(MANAGER_HOST):$(REMOTE_PATH)/scripts/
 
 # Deployment - Deploy
-deploy: deploy-1 deploy-2 deploy-manager
-	@echo "$(GREEN)All services deployed!$(NC)"
+deploy:
+	@echo "$(GREEN)Deploying to reachable hosts...$(NC)"
+	@if ssh $(SSH_OPTS) jatin@$(NODE_1_HOST) 'exit 0' >/dev/null 2>&1; then \
+		echo "$(GREEN)Node 1 ($(NODE_1_HOST)) is online, deploying...$(NC)"; \
+		$(MAKE) --no-print-directory deploy-1; \
+	else \
+		echo "$(YELLOW)Node 1 ($(NODE_1_HOST)) is offline, skipping.$(NC)"; \
+	fi
+	@if ssh $(SSH_OPTS) jatin@$(NODE_2_HOST) 'exit 0' >/dev/null 2>&1; then \
+		echo "$(GREEN)Node 2 ($(NODE_2_HOST)) is online, deploying...$(NC)"; \
+		$(MAKE) --no-print-directory deploy-2; \
+	else \
+		echo "$(YELLOW)Node 2 ($(NODE_2_HOST)) is offline, skipping.$(NC)"; \
+	fi
+	@if ssh $(SSH_OPTS) jatin@$(NODE_3_HOST) 'exit 0' >/dev/null 2>&1; then \
+		echo "$(GREEN)Node 3 ($(NODE_3_HOST)) is online, deploying...$(NC)"; \
+		$(MAKE) --no-print-directory deploy-3; \
+	else \
+		echo "$(YELLOW)Node 3 ($(NODE_3_HOST)) is offline, skipping.$(NC)"; \
+	fi
+	@if ssh $(SSH_OPTS) jatin@$(MANAGER_HOST) 'exit 0' >/dev/null 2>&1; then \
+		echo "$(GREEN)Manager ($(MANAGER_HOST)) is online, deploying...$(NC)"; \
+		$(MAKE) --no-print-directory deploy-manager; \
+	else \
+		echo "$(YELLOW)Manager ($(MANAGER_HOST)) is offline, skipping.$(NC)"; \
+	fi
+	@echo "$(GREEN)Deploy run complete (offline hosts skipped).$(NC)"
 
 deploy-1: stop-1 sync-1
 	@echo "$(GREEN)Deploying agent to node 1...$(NC)"
