@@ -8,6 +8,7 @@ import { SystemLogViewer } from './components/SystemLogViewer'
 import { ContainersSection } from './components/ContainersSection'
 import { ContainerLogPanel } from './components/ContainerLogPanel'
 import { BackupsPage } from './components/BackupsPage'
+import { StoragePage } from './components/StoragePage'
 
 type LogPanelState =
   | { type: 'app'; node: string; appId: string }
@@ -95,6 +96,12 @@ function App() {
       {activeTab === "backups" && (
         <main className="max-w-6xl mx-auto px-4 py-6">
           <BackupsPage apps={apps} />
+        </main>
+      )}
+
+      {activeTab === "storage" && (
+        <main className="max-w-6xl mx-auto px-4 py-6">
+          <StoragePage />
         </main>
       )}
 

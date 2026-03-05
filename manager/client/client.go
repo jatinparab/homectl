@@ -117,6 +117,7 @@ type HeartbeatRequest struct {
 	Name    string             `json:"name"`
 	IP      string             `json:"ip"`
 	Reports []common.AppReport `json:"reports,omitempty"`
+	Metrics common.NodeMetrics `json:"metrics,omitempty"`
 }
 
 // AgentInfo represents a registered agent
@@ -128,8 +129,8 @@ type AgentInfo struct {
 }
 
 // Heartbeat sends a heartbeat to the manager with app reports
-func (c *Client) Heartbeat(name, ip string, reports []common.AppReport) error {
-	req := HeartbeatRequest{Name: name, IP: ip, Reports: reports}
+func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
+	req := HeartbeatRequest{Name: name, IP: ip, Reports: reports, Metrics: metrics}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)

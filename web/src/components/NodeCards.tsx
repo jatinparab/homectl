@@ -1,6 +1,30 @@
 import type { Agent, GatewayInfo } from '../api/types'
 import { useSetManualGateway, useClearManualGateway } from '../api/hooks'
 
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '--'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function pct(n?: number): string {
+  if (n === undefined || Number.isNaN(n)) return '--'
+  return `${n.toFixed(1)}%`
+}
+
+function usageBarClass(value?: number): string {
+  if (value === undefined || Number.isNaN(value)) return 'bg-gray-600'
+  if (value >= 90) return 'bg-red-500'
+  if (value >= 60) return 'bg-yellow-500'
+  return 'bg-green-500'
+}
+
 interface NodeCardsProps {
   agents: Agent[] | undefined
   gatewayInfo: GatewayInfo | undefined
@@ -75,6 +99,40 @@ function NodeCard({ agent, gatewayInfo }: NodeCardProps) {
           <span className={agent.online ? 'text-green-400' : 'text-red-400'}>
             {agent.online ? 'Online' : 'Offline'}
           </span>
+        </div>
+        <div className="pt-1 border-t border-gray-700 mt-2 space-y-1">
+          <div className="flex justify-between">
+            <span>CPU:</span>
+            <span className="text-gray-300">{agent.online ? pct(agent.metrics?.cpu_percent) : '--'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>RAM:</span>
+            <span className="text-gray-300">
+              {agent.online ? `${pct(agent.metrics?.memory_percent)} (${formatBytes(agent.metrics?.memory_used)} / ${formatBytes(agent.metrics?.memory_total)})` : '--'}
+            </span>
+          </div>
+          {agent.online && (
+            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+              <div
+                className={`h-full ${usageBarClass(agent.metrics?.memory_percent)}`}
+                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.memory_percent ?? 0))}%` }}
+              />
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span>Disk:</span>
+            <span className="text-gray-300">
+              {agent.online ? `${pct(agent.metrics?.disk_percent)} (${formatBytes(agent.metrics?.disk_used)} / ${formatBytes(agent.metrics?.disk_total)})` : '--'}
+            </span>
+          </div>
+          {agent.online && (
+            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
+              <div
+                className={`h-full ${usageBarClass(agent.metrics?.disk_percent)}`}
+                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.disk_percent ?? 0))}%` }}
+              />
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-3 flex gap-2">

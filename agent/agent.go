@@ -76,6 +76,10 @@ type Agent struct {
 	snapshotCache     map[common.AppID]*SnapshotCache
 	snapshotCancelFns map[common.AppID]context.CancelFunc
 	snapshotCacheMu   sync.RWMutex
+
+	// Storage prune state
+	storagePruneMu    sync.Mutex
+	storagePruneState StoragePruneState
 }
 
 // NewAgent creates a new Agent instance
@@ -239,7 +243,8 @@ func (a *Agent) heartbeatLoop() {
 		case <-ticker.C:
 			if a.IsConnected() {
 				reports := a.GetAppReports()
-				if err := a.managerClient.Heartbeat(a.name, a.ip, reports); err != nil {
+				metrics := collectNodeMetrics(a.appdataDir)
+				if err := a.managerClient.Heartbeat(a.name, a.ip, reports, metrics); err != nil {
 					log.Printf("Heartbeat failed: %s", err)
 					a.setConnected(false)
 				}

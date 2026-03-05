@@ -49,6 +49,8 @@ func (rs *ReadyServer) Start() error {
 	// Snapshot browsing endpoints
 	mux.HandleFunc("/snapshots/", rs.handleSnapshots)
 	mux.HandleFunc("/snapshot-ls/", rs.handleSnapshotLs)
+	mux.HandleFunc("/storage/status", rs.handleStorageStatus)
+	mux.HandleFunc("/storage/prune", rs.handleStoragePrune)
 
 	// Repo-wide maintenance endpoints
 	mux.HandleFunc("/check", rs.handleRepoCheck)

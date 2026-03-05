@@ -45,9 +45,9 @@ type HomectlConfig struct {
 	ExposedSubdomains map[string]FlexPort `json:"exposed_subdomains,omitempty"`
 	ExcludeNodes      []string            `json:"exclude_nodes,omitempty"`
 	BackupSensitive   bool                `json:"backup_sensitive,omitempty"`
-	BackupEnabled     *bool               `json:"backup_enabled,omitempty"`   // nil = true (default enabled)
-	BackupInterval    string              `json:"backup_interval,omitempty"`  // e.g. "72h", "168h" — overrides default
-	IsGlobal          bool                `json:"is_global,omitempty"`        // run on all connected nodes
+	BackupEnabled     *bool               `json:"backup_enabled,omitempty"`  // nil = true (default enabled)
+	BackupInterval    string              `json:"backup_interval,omitempty"` // e.g. "72h", "168h" — overrides default
+	IsGlobal          bool                `json:"is_global,omitempty"`       // run on all connected nodes
 }
 
 // IsBackupEnabled returns whether backup is enabled for this app (default true)
@@ -155,9 +155,13 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 
 	// Get all agents and their app reports, sorted by name for deterministic output
 	agents := m.leaseManager.ListAgents()
+	alive := m.aliveAgents()
 	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 
 	for _, agent := range agents {
+		if !alive[agent.Name] {
+			continue
+		}
 		for _, report := range agent.AppReports {
 			// Skip non-running apps
 			if report.ObservedState != common.ObservedRunning {
