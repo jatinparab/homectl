@@ -113,7 +113,7 @@ func TestParsePort(t *testing.T) {
 
 func TestDiscoverApps(t *testing.T) {
 	rootDir := filepath.Join("..", "testdata", "docker", "v2")
-	apps, err := DiscoverApps(rootDir)
+	apps, err := discoverApps(rootDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 		filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml"),
 	}
 
-	apps, err := DiscoverAppsFromPaths(paths)
+	apps, err := discoverAppsFromPaths(paths)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
