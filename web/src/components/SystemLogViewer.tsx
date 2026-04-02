@@ -1,5 +1,7 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useSystemLogSources } from '../api/hooks'
+
+const ALL_LOG_TAB = 'All'
 
 interface LogEntry {
   source: string
@@ -8,7 +10,7 @@ interface LogEntry {
 
 export function SystemLogViewer() {
   const [expanded, setExpanded] = useState(false)
-  const [activeTab, setActiveTab] = useState<string>('All')
+  const [activeTab, setActiveTab] = useState<string>(ALL_LOG_TAB)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [filter, setFilter] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -29,7 +31,7 @@ export function SystemLogViewer() {
       return
     }
 
-    const activeSources = activeTab === 'All' ? sources : [activeTab]
+    const activeSources = activeTab === ALL_LOG_TAB ? sources : [activeTab]
 
     // Close connections for sources no longer active
     eventSourcesRef.current.forEach((es, src) => {
@@ -83,11 +85,12 @@ export function SystemLogViewer() {
     }
   }
 
-  const filteredLogs = filter
-    ? logs.filter((l) => l.line.toLowerCase().includes(filter.toLowerCase()))
-    : logs
+  const filteredLogs = useMemo(
+    () => (filter ? logs.filter((l) => l.line.toLowerCase().includes(filter.toLowerCase())) : logs),
+    [logs, filter],
+  )
 
-  const tabs = ['All', ...(sources || [])]
+  const tabs = useMemo(() => [ALL_LOG_TAB, ...(sources || [])], [sources])
 
   return (
     <div className="mb-6">
@@ -136,7 +139,7 @@ export function SystemLogViewer() {
               ) : (
                 filteredLogs.map((entry, i) => (
                   <div key={i}>
-                    {activeTab === 'All' && (
+                    {activeTab === ALL_LOG_TAB && (
                       <span className="text-blue-400">[{entry.source}] </span>
                     )}
                     {entry.line}
