@@ -159,15 +159,15 @@ deploy:
 	fi
 	@echo "$(GREEN)Deploy run complete (offline hosts skipped).$(NC)"
 
-deploy-1: stop-1 sync-1
+deploy-1: sync-1
 	@echo "$(GREEN)Deploying agent to node 1...$(NC)"
 	ssh jatin@$(NODE_1_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
-deploy-2: stop-2 sync-2
+deploy-2: sync-2
 	@echo "$(GREEN)Deploying agent to node 2...$(NC)"
 	ssh jatin@$(NODE_2_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
-deploy-3: stop-3 sync-3
+deploy-3: sync-3
 	@echo "$(GREEN)Deploying agent to node 3...$(NC)"
 	ssh jatin@$(NODE_3_HOST) 'cd $(REMOTE_PATH) && ./scripts/deploy-agent.sh'
 
@@ -241,7 +241,7 @@ stop-all: stop-manager stop
 	@echo "$(GREEN)All services stopped!$(NC)"
 
 # Secrets management
-SECRETS_FILE ?= ./secrets.env
+SECRETS_FILE ?= ./.env
 
 setup-secrets: setup-secrets-1 setup-secrets-2 setup-secrets-3
 	@echo "$(GREEN)Secrets deployed to all nodes!$(NC)"
