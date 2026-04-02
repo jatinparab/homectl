@@ -116,6 +116,13 @@ func (r *AppRuntime) IncrementRestarts() {
 	r.RestartCount++
 }
 
+// SetRestartCount sets the restart count
+func (r *AppRuntime) SetRestartCount(count int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.RestartCount = count
+}
+
 // SetQuarantined sets the quarantine status
 func (r *AppRuntime) SetQuarantined(quarantined bool) {
 	r.mu.Lock()

@@ -315,17 +315,16 @@ func (rs *ReadyServer) handleRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear all runtime state so the app gets a fresh start
-	rs.agent.runtimeMu.Lock()
-	rt.RestartCount = 0
-	rt.Quarantined = false
-	rt.LastError = ""
-	rt.Phase = common.PhaseEmpty
-	rt.Health = common.HealthUnknown
-	rt.Progress = nil
-	rt.InFlight = false
-	rt.InFlightAction = ""
-	rs.agent.runtimeMu.Unlock()
+	// Clear runtime state so the app gets a fresh start.
+	// Use thread-safe setters (guarded by rt.mu) instead of writing fields directly.
+	// Do NOT reset InFlight — if an action is executing, clearing it causes
+	// the reconcile loop to submit duplicate starts.
+	rt.SetRestartCount(0)
+	rt.SetQuarantined(false)
+	rt.SetLastError("")
+	rt.SetPhase(common.PhaseEmpty)
+	rt.SetHealth(common.HealthUnknown)
+	rt.SetProgress(nil)
 
 	// If currently running, stop it — the reconcile loop will start it again
 	if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {

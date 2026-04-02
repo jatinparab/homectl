@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"sync"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -426,15 +427,27 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 		return fmt.Errorf("start command: %w", err)
 	}
 
-	// Merge stdout and stderr into a single reader
-	merged := io.MultiReader(stdout, stderr)
-	scanner := bufio.NewScanner(merged)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if onLog != nil {
-			onLog(line)
+	// Read stdout and stderr concurrently to avoid deadlock.
+	// io.MultiReader reads sequentially, which blocks if the command
+	// writes primarily to stderr (e.g. docker compose pull progress).
+	scanLines := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if onLog != nil {
+				onLog(line)
+			}
 		}
 	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanLines(stderr)
+	}()
+	scanLines(stdout)
+	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
 		return err
@@ -442,15 +455,23 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 	return nil
 }
 
+// pullTimeout is the maximum duration allowed for a docker compose pull.
+const pullTimeout = 5 * time.Minute
+
 // Pull pulls images for a docker compose service, streaming output line-by-line.
 func (d *Docker) Pull(appID string, onLog func(string)) error {
 	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	cmd := exec.Command("docker", "compose", "--progress=plain", "-f", path, "pull")
+	ctx, cancel := context.WithTimeout(d.ctx, pullTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "compose", "--progress=plain", "-f", path, "pull")
 	cmd.Env = d.ComposeEnv()
 	if err := d.streamCommand(cmd, onLog); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("docker compose pull timed out after %s", pullTimeout)
+		}
 		return fmt.Errorf("docker compose pull failed: %w", err)
 	}
 	return nil

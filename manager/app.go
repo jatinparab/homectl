@@ -123,7 +123,11 @@ func (r *AppRegistry) UpdateFromReport(report common.AppReport, agentName string
 	app.ObservedState = report.ObservedState
 	app.Health = report.Health
 	app.RestartCount = report.RestartCount
-	app.Quarantined = report.Quarantined
+	// Only accept quarantine status from the currently assigned agent to prevent
+	// a stale report from the old agent re-quarantining an app after migration.
+	if app.AssignedAgent != nil && *app.AssignedAgent == agentName {
+		app.Quarantined = report.Quarantined
+	}
 	app.LastSeen = now
 }
 
