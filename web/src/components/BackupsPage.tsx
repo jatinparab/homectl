@@ -279,10 +279,7 @@ function AppBackupRow({
   // Register background polling for this app's snapshots regardless of expanded state
   useSnapshots(app.app_id, onlineNode)
 
-  const sortedReports = useMemo(
-    () => [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node)),
-    [app.node_reports],
-  )
+  const sortedReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node))
   const reportForPrune = sortedReports.find((nr) => nr.node === onlineNode) ?? sortedReports[0]
   const backupReport = reportForPrune
   const postBackupReport = sortedReports.find((nr) => !!nr.post_backup_phase)
