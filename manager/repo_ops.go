@@ -168,7 +168,7 @@ func (m *Manager) isAgentOnline(agentName string) bool {
 	if !ok {
 		return false
 	}
-	return agent.IsOnline()
+	return time.Since(agent.LastSeen) < 30*time.Second
 }
 
 func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {

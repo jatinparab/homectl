@@ -622,6 +622,19 @@ func (a *Agent) refreshSnapshotCache(appID common.AppID) {
 	}
 }
 
+// cancelSnapshotRefresh cancels any in-flight snapshot refresh and resets loading state
+func (a *Agent) cancelSnapshotRefresh(appID common.AppID) {
+	a.snapshotCacheMu.Lock()
+	defer a.snapshotCacheMu.Unlock()
+	if cancel, ok := a.snapshotCancelFns[appID]; ok {
+		cancel()
+		delete(a.snapshotCancelFns, appID)
+	}
+	if cache, ok := a.snapshotCache[appID]; ok {
+		cache.Loading = false
+	}
+}
+
 // getSnapshotCache returns the cached snapshot data for an app (thread-safe)
 func (a *Agent) getSnapshotCache(appID common.AppID) *SnapshotCache {
 	a.snapshotCacheMu.RLock()
