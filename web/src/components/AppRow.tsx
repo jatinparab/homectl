@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune } from "../api/types";
 import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled } from "../api/hooks";
 import {
@@ -140,21 +140,12 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const streamProgressRef = useRef<ProgressAccumulator>(newProgressAccumulator());
   const postBackupProgressRef = useRef<ProgressAccumulator>(newProgressAccumulator());
 
-  const nodeReports = useMemo(
-    () => [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node)),
-    [app.node_reports],
-  );
+  const nodeReports = [...app.node_reports].sort((a, b) => a.node.localeCompare(b.node));
 
-  const streamableNode = useMemo(
-    () => nodeReports.find((nr) => STREAMABLE_PHASES.includes(nr.phase)),
-    [nodeReports],
-  );
+  const streamableNode = nodeReports.find((nr) => STREAMABLE_PHASES.includes(nr.phase));
   const isStreamable = !!streamableNode;
 
-  const postBackupStreamableNode = useMemo(
-    () => nodeReports.find((nr) => nr.post_backup_phase && POST_BACKUP_PHASES.includes(nr.post_backup_phase)),
-    [nodeReports],
-  );
+  const postBackupStreamableNode = nodeReports.find((nr) => nr.post_backup_phase && POST_BACKUP_PHASES.includes(nr.post_backup_phase));
   const isPostBackupStreamable = !!postBackupStreamableNode;
 
   // Auto-close when streamable phase ends
