@@ -65,10 +65,6 @@ func (ls *LogsHandler) handleContainers(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	if containers == nil {
-		containers = []ContainerInfo{}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(containers)
 }
