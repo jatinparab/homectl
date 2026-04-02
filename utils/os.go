@@ -3,7 +3,6 @@ package utils
 import (
 	"net"
 	"os"
-	"strings"
 )
 
 func GetHostname() string {
@@ -35,7 +34,7 @@ func GetLocalIPInSubnet(subnetPrefix string) string {
 			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 				if ip4 := ipnet.IP.To4(); ip4 != nil {
 					ipStr := ip4.String()
-					if len(subnetPrefix) == 0 || strings.HasPrefix(ipStr, subnetPrefix+".") {
+					if len(subnetPrefix) == 0 || hasPrefix(ipStr, subnetPrefix+".") {
 						return ipStr
 					}
 				}
@@ -43,4 +42,8 @@ func GetLocalIPInSubnet(subnetPrefix string) string {
 		}
 	}
 	return ""
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }

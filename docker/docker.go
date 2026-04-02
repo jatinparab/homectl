@@ -3,7 +3,6 @@ package docker
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -12,14 +11,43 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sync"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 	"gopkg.in/yaml.v3"
 )
+
+// FileReader is an interface for reading files and listing directories
+type FileReader interface {
+	ReadFile(path string) ([]byte, error)
+	ListDir(path string) ([]string, error)
+}
+
+// LocalFileReader reads files from the local filesystem
+type LocalFileReader struct{}
+
+func (l *LocalFileReader) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+func (l *LocalFileReader) ListDir(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			name += "/"
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
 
 type Docker struct {
 	rootDir    string
@@ -27,6 +55,7 @@ type Docker struct {
 	user       string
 	httpClient *http.Client
 	dockerApps map[string]DockerApp
+	fileReader FileReader
 	ctx        context.Context
 }
 
@@ -44,6 +73,7 @@ func NewDocker(rootDir, appdataDir, user string) *Docker {
 			Timeout: 3 * time.Second,
 		},
 		dockerApps: make(map[string]DockerApp),
+		fileReader: &LocalFileReader{},
 		ctx:        context.Background(),
 	}
 }
@@ -51,6 +81,18 @@ func NewDocker(rootDir, appdataDir, user string) *Docker {
 // SetContext sets the context for cancellation
 func (d *Docker) SetContext(ctx context.Context) {
 	d.ctx = ctx
+}
+
+// NewDockerWithFileReader creates a Docker instance with a custom FileReader
+func NewDockerWithFileReader(rootDir string, reader FileReader) *Docker {
+	return &Docker{
+		rootDir: rootDir,
+		httpClient: &http.Client{
+			Timeout: 3 * time.Second,
+		},
+		dockerApps: make(map[string]DockerApp),
+		fileReader: reader,
+	}
 }
 
 // parsePort extracts the host port from a port mapping string.
@@ -172,9 +214,9 @@ func analyzeDockerComposeFile(path string) (DockerApp, error) {
 	return analyzeDockerComposeContent(appName, content)
 }
 
-// discoverApps scans a directory for docker-compose.yml files and returns all discovered apps.
+// DiscoverApps scans a directory for docker-compose.yml files and returns all discovered apps.
 // It expects the directory structure: rootDir/<app-name>/docker-compose.yml
-func discoverApps(rootDir string) ([]DockerApp, error) {
+func DiscoverApps(rootDir string) ([]DockerApp, error) {
 	var apps []DockerApp
 
 	entries, err := os.ReadDir(rootDir)
@@ -203,9 +245,9 @@ func discoverApps(rootDir string) ([]DockerApp, error) {
 	return apps, nil
 }
 
-// discoverAppsFromPaths analyzes docker-compose files from a configurable list of paths.
+// DiscoverAppsFromPaths analyzes docker-compose files from a configurable list of paths.
 // Each path should be a full path to a docker-compose.yml file.
-func discoverAppsFromPaths(paths []string) ([]DockerApp, error) {
+func DiscoverAppsFromPaths(paths []string) ([]DockerApp, error) {
 	var apps []DockerApp
 
 	for _, path := range paths {
@@ -221,20 +263,21 @@ func discoverAppsFromPaths(paths []string) ([]DockerApp, error) {
 
 // LoadApps loads docker apps into the Docker instance from the configured rootDir.
 func (d *Docker) LoadApps() error {
-	entries, err := os.ReadDir(d.rootDir)
+	entries, err := d.fileReader.ListDir(d.rootDir)
 	if err != nil {
 		return fmt.Errorf("failed to list directory %s: %w", d.rootDir, err)
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		// Check if it's a directory (ends with /)
+		if !strings.HasSuffix(entry, "/") {
 			continue
 		}
 
-		appName := entry.Name()
+		appName := strings.TrimSuffix(entry, "/")
 		composePath := filepath.Join(d.rootDir, appName, "docker-compose.yml")
 
-		content, err := os.ReadFile(composePath)
+		content, err := d.fileReader.ReadFile(composePath)
 		if err != nil {
 			continue // No docker-compose.yml or can't read it
 		}
@@ -248,6 +291,12 @@ func (d *Docker) LoadApps() error {
 	}
 
 	return nil
+}
+
+// GetApp returns a discovered docker app by name.
+func (d *Docker) GetApp(name string) (DockerApp, bool) {
+	app, ok := d.dockerApps[name]
+	return app, ok
 }
 
 // ListApps returns all discovered docker apps.
@@ -301,7 +350,7 @@ func (d *Docker) GetPorts(service string) ([]int, error) {
 
 	// Otherwise, read and analyze the docker-compose file
 	path := filepath.Join(d.rootDir, service, "docker-compose.yml")
-	content, err := os.ReadFile(path)
+	content, err := d.fileReader.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read docker compose file: %w", err)
 	}
@@ -479,7 +528,8 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 		return common.RunningStatusStopped, fmt.Errorf("docker compose file not found: %s", path)
 	}
 
-	command := exec.Command("docker", "compose", "-f", path, "ps", "--format", "json")
+	// Use docker compose ps to check if containers are running
+	command := exec.Command("docker", "compose", "-f", path, "ps", "--status=running", "-q")
 	command.Env = d.ComposeEnv()
 	output, err := command.Output()
 	if err != nil {
@@ -487,34 +537,17 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 		return common.RunningStatusStopped, nil
 	}
 
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" || trimmed == "null" {
-		return common.RunningStatusStopped, nil
-	}
-
-	type composeContainer struct {
-		State  string `json:"State"`
-		Status string `json:"Status"`
-	}
-
-	var containers []composeContainer
-	if err := json.Unmarshal([]byte(trimmed), &containers); err != nil {
-		return common.RunningStatusStopped, nil
-	}
-
-	hasRunning := false
-	for _, c := range containers {
-		state := strings.ToLower(c.State)
-		status := strings.ToLower(c.Status)
-		if state == "restarting" || strings.Contains(status, "restarting") {
+	command = exec.Command("docker", "compose", "-f", path, "ps", "--status=restarting", "-q")
+	command.Env = d.ComposeEnv()
+	outputRestarting, errRestarting := command.Output()
+	if errRestarting == nil {
+		if len(strings.TrimSpace(string(outputRestarting))) > 0 {
 			return common.RunningStatusRestarting, nil
 		}
-		if state == "running" || strings.Contains(status, "running") {
-			hasRunning = true
-		}
 	}
 
-	if hasRunning {
+	// If there's any output, at least one container is running
+	if len(strings.TrimSpace(string(output))) > 0 {
 		return common.RunningStatusRunning, nil
 	}
 	return common.RunningStatusStopped, nil
@@ -524,21 +557,22 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 func (d *Docker) ListManaged() (map[string]common.RunningStatus, error) {
 	result := make(map[string]common.RunningStatus)
 
-	entries, err := os.ReadDir(d.rootDir)
+	entries, err := d.fileReader.ListDir(d.rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list directory %s: %w", d.rootDir, err)
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		// Check if it's a directory (ends with /)
+		if !strings.HasSuffix(entry, "/") {
 			continue
 		}
 
-		appID := entry.Name()
+		appID := strings.TrimSuffix(entry, "/")
 		composePath := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 
 		// Check if docker-compose.yml exists
-		if _, err := os.ReadFile(composePath); err != nil {
+		if _, err := d.fileReader.ReadFile(composePath); err != nil {
 			continue // No docker-compose.yml
 		}
 

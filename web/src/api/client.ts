@@ -10,28 +10,6 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return response.json();
 }
 
-async function fetchWithMethod(url: string, method: "POST" | "DELETE"): Promise<Response> {
-  const response = await fetch(url, { method });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `HTTP error! status: ${response.status}`);
-  }
-  return response;
-}
-
-async function fetchPost(url: string): Promise<Response> {
-  return fetchWithMethod(url, "POST");
-}
-
-async function fetchUpcoming<T>(url: string): Promise<T | null> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  const data = await response.json();
-  return data as T | null;
-}
-
 export async function fetchApps(): Promise<AppStatus[]> {
   return fetchJSON<AppStatus[]>(`${API_BASE}/apps`);
 }
@@ -64,40 +42,89 @@ export async function fetchContainers(): Promise<NodeContainers[]> {
 }
 
 export async function fetchUpcomingBackup(): Promise<UpcomingBackup | null> {
-  return fetchUpcoming<UpcomingBackup>(`${API_BASE}/backup/upcoming`);
+  const response = await fetch(`${API_BASE}/backup/upcoming`);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  return data as UpcomingBackup | null;
 }
 
 export async function fetchUpcomingPrune(): Promise<UpcomingPrune | null> {
-  return fetchUpcoming<UpcomingPrune>(`${API_BASE}/prune/upcoming`);
+  const response = await fetch(`${API_BASE}/prune/upcoming`);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  return data as UpcomingPrune | null;
 }
 
 export async function restartApp(
   appId: string,
   node: string,
 ): Promise<void> {
-  await fetchPost(`${API_BASE}/apps/${appId}/restart?node=${node}`);
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/restart?node=${node}`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function triggerBackup(
   appId: string,
   node: string,
 ): Promise<void> {
-  await fetchPost(`${API_BASE}/apps/${appId}/backup?node=${node}`);
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/backup?node=${node}`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function triggerPrune(
   appId: string,
   node: string,
 ): Promise<void> {
-  await fetchPost(`${API_BASE}/apps/${appId}/prune?node=${node}`);
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/prune?node=${node}`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function triggerSync(): Promise<void> {
-  await fetchPost(`${API_BASE}/sync`);
+  const response = await fetch(`${API_BASE}/sync`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function triggerRebalance(): Promise<void> {
-  await fetchPost(`${API_BASE}/rebalance`);
+  const response = await fetch(`${API_BASE}/rebalance`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function updateAppRestoreEnabled(
@@ -121,7 +148,13 @@ export async function fetchSnapshots(appId: string, node: string): Promise<Snaps
 }
 
 export async function refreshSnapshots(appId: string, node: string): Promise<void> {
-  await fetchPost(`${API_BASE}/apps/${appId}/snapshot-refresh?node=${node}`);
+  const response = await fetch(`${API_BASE}/apps/${appId}/snapshot-refresh?node=${node}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function fetchSnapshotFiles(snapshotId: string, node: string, path: string): Promise<SnapshotEntry[]> {
@@ -149,11 +182,19 @@ export async function fetchRepoStatus(): Promise<RepoStatus> {
 }
 
 export async function triggerRepoCheck(): Promise<void> {
-  await fetchPost(`${API_BASE}/repo/check`);
+  const response = await fetch(`${API_BASE}/repo/check`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function triggerRepoUnlock(): Promise<void> {
-  await fetchPost(`${API_BASE}/repo/unlock`);
+  const response = await fetch(`${API_BASE}/repo/unlock`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function fetchGatewayInfo(): Promise<GatewayInfo> {
@@ -161,15 +202,29 @@ export async function fetchGatewayInfo(): Promise<GatewayInfo> {
 }
 
 export async function setManualGateway(node: string): Promise<GatewayInfo> {
-  const response = await fetchPost(`${API_BASE}/gateway?node=${encodeURIComponent(node)}`);
+  const response = await fetch(`${API_BASE}/gateway?node=${encodeURIComponent(node)}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
   return response.json();
 }
 
 export async function forceRepoUnlock(): Promise<void> {
-  await fetchPost(`${API_BASE}/repo/force-unlock`);
+  const response = await fetch(`${API_BASE}/repo/force-unlock`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }
 
 export async function clearManualGateway(): Promise<GatewayInfo> {
-  const response = await fetchWithMethod(`${API_BASE}/gateway`, "DELETE");
+  const response = await fetch(`${API_BASE}/gateway`, { method: "DELETE" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
   return response.json();
 }
