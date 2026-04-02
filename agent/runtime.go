@@ -123,6 +123,20 @@ func (r *AppRuntime) SetRestartCount(count int) {
 	r.RestartCount = count
 }
 
+// ResetForRestart atomically clears runtime state so the app gets a fresh start.
+// It does NOT reset InFlight — if an action is executing, clearing it causes
+// the reconcile loop to submit duplicate starts.
+func (r *AppRuntime) ResetForRestart() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.RestartCount = 0
+	r.Quarantined = false
+	r.LastError = ""
+	r.Phase = common.PhaseEmpty
+	r.Health = common.HealthUnknown
+	r.Progress = nil
+}
+
 // SetQuarantined sets the quarantine status
 func (r *AppRuntime) SetQuarantined(quarantined bool) {
 	r.mu.Lock()
