@@ -108,19 +108,19 @@ sync: build
 
 sync-1: build-agent
 	@echo "Syncing to node 1 ($(NODE_1_HOST))..."
-	ssh jatin@$(NODE_1_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts'
+	ssh jatin@$(NODE_1_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts && if systemctl is-active --quiet homectl-agent 2>/dev/null; then sudo systemctl stop homectl-agent; fi'
 	scp ./bin/agent-amd64 jatin@$(NODE_1_HOST):$(REMOTE_PATH)/bin/agent
 	rsync -avz ./scripts/ jatin@$(NODE_1_HOST):$(REMOTE_PATH)/scripts/
 
 sync-2: build-agent
 	@echo "Syncing to node 2 ($(NODE_2_HOST))..."
-	ssh jatin@$(NODE_2_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts'
+	ssh jatin@$(NODE_2_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts && if systemctl is-active --quiet homectl-agent 2>/dev/null; then sudo systemctl stop homectl-agent; fi'
 	scp ./bin/agent-arm64 jatin@$(NODE_2_HOST):$(REMOTE_PATH)/bin/agent
 	rsync -avz ./scripts/ jatin@$(NODE_2_HOST):$(REMOTE_PATH)/scripts/
 
 sync-3: build-agent
 	@echo "Syncing to node 3 ($(NODE_3_HOST))..."
-	ssh jatin@$(NODE_3_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts'
+	ssh jatin@$(NODE_3_HOST) 'mkdir -p $(REMOTE_PATH)/bin $(REMOTE_PATH)/scripts && if systemctl is-active --quiet homectl-agent 2>/dev/null; then sudo systemctl stop homectl-agent; fi'
 	scp ./bin/agent-amd64 jatin@$(NODE_3_HOST):$(REMOTE_PATH)/bin/agent
 	rsync -avz ./scripts/ jatin@$(NODE_3_HOST):$(REMOTE_PATH)/scripts/
 

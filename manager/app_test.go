@@ -100,6 +100,11 @@ func TestAppRegistry_AppsForAgent(t *testing.T) {
 func TestAppRegistry_UpdateFromReport_KnownApp(t *testing.T) {
 	reg := NewAppRegistry()
 	reg.Register("app1", common.DesiredRunning, false)
+	// Assign the app to node1 so quarantine updates from node1 are accepted
+	reg.WithLock(func(apps map[common.AppID]*App) {
+		agent := "node1"
+		apps["app1"].AssignedAgent = &agent
+	})
 
 	now := time.Now()
 	report := common.AppReport{

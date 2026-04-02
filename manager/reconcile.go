@@ -309,6 +309,7 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 		log.Printf("Migrating app %s from %s to %s (quarantined)", app.ID, oldAgent, target)
 		app.QuarantinedOn = append(app.QuarantinedOn, oldAgent)
 		app.AssignedAgent = &target
+		app.Quarantined = false // clear so the new agent gets a fresh start
 		app.LastMigratedAt = now
 		app.MigrationCount++
 		return // max 1 migration per cycle
