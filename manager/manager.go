@@ -44,7 +44,6 @@ type Manager struct {
 	backupMu              sync.Mutex
 	backupAssignments     map[common.AppID]*BackupAssignment
 	pruneAssignment       *BackupAssignment
-	lastScheduledWorkKind string
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
 	pruneState            map[common.AppID]PruneState
 
