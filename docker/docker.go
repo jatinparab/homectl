@@ -10,8 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
-	"sync"
 	"path/filepath"
+	"sync"
 	"strconv"
 	"strings"
 	"time"
@@ -431,12 +431,12 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 	// io.MultiReader reads sequentially, which blocks if the command
 	// writes primarily to stderr (e.g. docker compose pull progress).
 	scanLines := func(r io.Reader) {
+		if onLog == nil {
+			return
+		}
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if onLog != nil {
-				onLog(line)
-			}
+			onLog(scanner.Text())
 		}
 	}
 
