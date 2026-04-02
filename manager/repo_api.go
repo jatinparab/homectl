@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	agentpkg "github.com/jatinparab/homectl/agent"
@@ -304,52 +303,6 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	// Set up SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
 	agentURL := fmt.Sprintf("http://%s:%d/%s", agentCfg.IP, agentpkg.ReadyServerPort, path)
-	resp, err := m.streamHTTPClient.Get(agentURL)
-	if err != nil {
-		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
-		flusher.Flush()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
-		flusher.Flush()
-		return
-	}
-
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
+	m.streamFromAgent(w, r, agentURL)
 }

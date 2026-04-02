@@ -54,7 +54,7 @@ func (m *Manager) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	response.TotalAgents = len(agents)
 
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) < 30*time.Second {
+		if agent.IsOnlineAt(now) {
 			response.AgentsOnline++
 		}
 	}
@@ -106,7 +106,7 @@ func (m *Manager) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 			IP:           agent.IP,
 			LastSeen:     agent.LastSeen.Format(time.RFC3339),
 			RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
-			Online:       now.Sub(agent.LastSeen) < 30*time.Second,
+			Online:       agent.IsOnlineAt(now),
 			IsGateway:    gatewayNode == agent.Name,
 			Metrics:      agent.Metrics,
 			AppReports:   appReports,
@@ -155,7 +155,7 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 		IP:           agent.IP,
 		LastSeen:     agent.LastSeen.Format(time.RFC3339),
 		RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
-		Online:       now.Sub(agent.LastSeen) < 30*time.Second,
+		Online:       agent.IsOnlineAt(now),
 		IsGateway:    isGateway,
 		Metrics:      agent.Metrics,
 		AppReports:   appReports,
@@ -352,7 +352,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 	m.backupMu.Unlock()
 
 	for _, agent := range agents {
-		agentOnline := now.Sub(agent.LastSeen) < 30*time.Second
+		agentOnline := agent.IsOnlineAt(now)
 		for _, report := range agent.AppReports {
 			appID := string(report.AppID)
 			cfg := appConfigs[appID]
@@ -623,7 +623,7 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) > 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		agentCfg := m.config.GetAgentConfig(agent.Name)
@@ -809,7 +809,7 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 
 	// Check if agent is online
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -832,7 +832,6 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 		AppID:      common.AppID(appID),
 		AssignedAt: time.Now(),
 	}
-	m.lastScheduledWorkKind = AssignmentKindBackup
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "backup_scheduled"})
@@ -865,7 +864,7 @@ func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -884,7 +883,6 @@ func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) 
 		AppID:      common.AppID(appID),
 		AssignedAt: time.Now(),
 	}
-	m.lastScheduledWorkKind = AssignmentKindPrune
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "prune_scheduled"})
@@ -919,7 +917,7 @@ func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -943,45 +941,7 @@ func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-// handleAPIAppLogs streams logs from an agent for a specific app via SSE
-// GET /api/v1/apps/{appId}/logs?node={nodeName}
-func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract appId from path: /api/v1/apps/{appId}/logs
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) < 2 || parts[1] != "logs" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	appID := parts[0]
-
-	// Get node from query params
-	nodeName := r.URL.Query().Get("node")
-	if nodeName == "" {
-		http.Error(w, "node query parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	// Look up agent IP from config
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
-		return
-	}
-
-	// Check if agent is online
-	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
-		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Set up SSE headers
+func (m *Manager) streamFromAgent(w http.ResponseWriter, r *http.Request, agentURL string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -993,94 +953,6 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy logs from agent using config IP
-	agentLogsURL := fmt.Sprintf("http://%s:%d/logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.streamHTTPClient.Get(agentLogsURL)
-	if err != nil {
-		// Send error as SSE event
-		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
-		flusher.Flush()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
-		flusher.Flush()
-		return
-	}
-
-	// Stream the response from agent to client
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				// Parse lines and send as SSE events
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
-}
-
-// handleAPIAppPhaseLogs streams phase logs (e.g. pull output) from an agent as SSE
-// GET /api/v1/apps/{appId}/phase-logs?node={nodeName}
-func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) < 2 || parts[1] != "phase-logs" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	appID := parts[0]
-
-	nodeName := r.URL.Query().Get("node")
-	if nodeName == "" {
-		http.Error(w, "node query parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
-		return
-	}
-
-	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
-		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	agentURL := fmt.Sprintf("http://%s:%d/phase-logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
 	resp, err := m.streamHTTPClient.Get(agentURL)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
@@ -1118,6 +990,87 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// handleAPIAppLogs streams logs from an agent for a specific app via SSE
+// GET /api/v1/apps/{appId}/logs?node={nodeName}
+func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract appId from path: /api/v1/apps/{appId}/logs
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "logs" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	// Get node from query params
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Look up agent IP from config
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	// Check if agent is online
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || !agent.IsOnline() {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Proxy logs from agent using config IP
+	agentLogsURL := fmt.Sprintf("http://%s:%d/logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	m.streamFromAgent(w, r, agentLogsURL)
+}
+
+// handleAPIAppPhaseLogs streams phase logs (e.g. pull output) from an agent as SSE
+// GET /api/v1/apps/{appId}/phase-logs?node={nodeName}
+func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "phase-logs" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	appID := parts[0]
+
+	nodeName := r.URL.Query().Get("node")
+	if nodeName == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg := m.config.GetAgentConfig(nodeName)
+	if agentCfg == nil {
+		http.Error(w, "Node not found in config", http.StatusNotFound)
+		return
+	}
+
+	agent, ok := m.leaseManager.GetAgent(nodeName)
+	if !ok || !agent.IsOnline() {
+		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentURL := fmt.Sprintf("http://%s:%d/phase-logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
+	m.streamFromAgent(w, r, agentURL)
+}
+
 // handleAPISystemLogSources returns a list of available system log sources
 // GET /api/v1/system-logs
 func (m *Manager) handleAPISystemLogSources(w http.ResponseWriter, r *http.Request) {
@@ -1131,7 +1084,7 @@ func (m *Manager) handleAPISystemLogSources(w http.ResponseWriter, r *http.Reque
 
 	sources := []string{"manager"}
 	for _, a := range agents {
-		if now.Sub(a.LastSeen) < 30*time.Second {
+		if a.IsOnlineAt(now) {
 			sources = append(sources, a.Name)
 		}
 	}
@@ -1156,19 +1109,18 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Set up SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
 	if source == "manager" {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
 		// Run journalctl locally for manager
 		cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "homectl-manager", "-f", "--output=short-iso", "-n", "100")
 		stdout, err := cmd.StdoutPipe()
@@ -1206,47 +1158,12 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 	// Proxy to agent
 	agentCfg := m.config.GetAgentConfig(source)
 	if agentCfg == nil {
-		w.Write([]byte("data: Error: source not found in config\n\n"))
-		flusher.Flush()
+		http.Error(w, "source not found in config", http.StatusNotFound)
 		return
 	}
 
 	agentURL := fmt.Sprintf("http://%s:%d/system-logs", agentCfg.IP, agentpkg.ReadyServerPort)
-	resp, err := m.streamHTTPClient.Get(agentURL)
-	if err != nil {
-		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
-		flusher.Flush()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
-		flusher.Flush()
-		return
-	}
-
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
+	m.streamFromAgent(w, r, agentURL)
 }
 
 // NodeContainers represents containers from a single node
@@ -1310,7 +1227,7 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	for i, a := range agents {
-		online := now.Sub(a.LastSeen) < 30*time.Second
+		online := a.IsOnlineAt(now)
 		results[i] = APIStorageNode{Node: a.Name, Online: online}
 		if !online {
 			results[i].Error = "offline"
@@ -1399,13 +1316,13 @@ func (m *Manager) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) 
 	var targetAgents []AgentInfo
 	if node == "all" {
 		for _, a := range m.leaseManager.ListAgents() {
-			if now.Sub(a.LastSeen) < 30*time.Second {
+			if a.IsOnlineAt(now) {
 				targetAgents = append(targetAgents, a)
 			}
 		}
 	} else {
 		a, ok := m.leaseManager.GetAgent(node)
-		if !ok || now.Sub(a.LastSeen) >= 30*time.Second {
+		if !ok || !a.IsOnlineAt(now) {
 			http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 			return
 		}
@@ -1468,7 +1385,7 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	for i, a := range agents {
-		online := now.Sub(a.LastSeen) < 30*time.Second
+		online := a.IsOnlineAt(now)
 		results[i] = NodeContainers{
 			Node:       a.Name,
 			Online:     online,
@@ -1548,7 +1465,7 @@ func (m *Manager) handleAPIAppSnapshots(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -1595,7 +1512,7 @@ func (m *Manager) handleAPIAppSnapshotRefresh(w http.ResponseWriter, r *http.Req
 	}
 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -1654,7 +1571,7 @@ func (m *Manager) handleAPISnapshotLs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -1703,54 +1620,8 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Set up SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
 	agentURL := fmt.Sprintf("http://%s:%d/container-logs/%s?all=%s", agentCfg.IP, agentpkg.ReadyServerPort, containerID, showAll)
-	resp, err := m.streamHTTPClient.Get(agentURL)
-	if err != nil {
-		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
-		flusher.Flush()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
-		flusher.Flush()
-		return
-	}
-
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
+	m.streamFromAgent(w, r, agentURL)
 }
 
 // GatewayInfo contains current gateway information
@@ -1791,7 +1662,7 @@ func (m *Manager) handleAPIGateway(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if time.Since(agent.LastSeen) > 30*time.Second {
+		if !agent.IsOnline() {
 			http.Error(w, "node is offline", http.StatusConflict)
 			return
 		}

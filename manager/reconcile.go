@@ -123,7 +123,7 @@ func (m *Manager) restartNewtOnGatewayChange(oldGateway, newGateway string) {
 	now := time.Now()
 	targetSet := make(map[string]bool)
 	for _, agent := range m.leaseManager.ListAgents() {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -161,7 +161,7 @@ func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
 	}
 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		return fmt.Errorf("node %s offline", nodeName)
 	}
 
@@ -191,7 +191,7 @@ func (m *Manager) isTraefikHealthy(agentName string) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(agent.LastSeen) >= 30*time.Second {
+	if !agent.IsOnline() {
 		return false
 	}
 	for _, report := range agent.AppReports {

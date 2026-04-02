@@ -105,7 +105,6 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 			}
 			log.Printf("Backup assignment: created %s/%s", c.AgentID, c.AppID)
 		}
-		m.lastScheduledWorkKind = AssignmentKindBackup
 		return m.backupAssignments, m.pruneAssignment
 	}
 
@@ -119,7 +118,6 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 			AppID:      pruneApp,
 			AssignedAt: time.Now(),
 		}
-		m.lastScheduledWorkKind = AssignmentKindPrune
 		log.Printf("Prune assignment: created %s/%s", pruneAgent, pruneApp)
 		return m.backupAssignments, m.pruneAssignment
 	}
@@ -135,7 +133,7 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 	candidates := make([]BackupAssignment, 0)
 
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -182,7 +180,7 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 	var stalestTime time.Time
 
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -296,7 +294,7 @@ func (m *Manager) triggerGlobalRestore(agentID string, appID common.AppID) {
 	pending := make(map[string]bool)
 	now := time.Now()
 	for _, a := range agents {
-		if a.Name == gateway || now.Sub(a.LastSeen) >= 30*time.Second {
+		if a.Name == gateway || !a.IsOnlineAt(now) {
 			continue
 		}
 		pending[a.Name] = true
@@ -313,7 +311,7 @@ func (m *Manager) anyBackupBusy() bool {
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -330,7 +328,7 @@ func (m *Manager) anyPruneBusy() bool {
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -347,7 +345,7 @@ func (m *Manager) anyRestoreBusy() bool {
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 	for _, agent := range agents {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
+		if !agent.IsOnlineAt(now) {
 			continue
 		}
 		for _, report := range agent.AppReports {
@@ -361,7 +359,7 @@ func (m *Manager) anyRestoreBusy() bool {
 
 func (m *Manager) isAppBackupBusy(agentID string, appID common.AppID) bool {
 	agent, ok := m.leaseManager.GetAgent(agentID)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		return false
 	}
 	for _, report := range agent.AppReports {
@@ -374,7 +372,7 @@ func (m *Manager) isAppBackupBusy(agentID string, appID common.AppID) bool {
 
 func (m *Manager) isAppPruneBusy(agentID string, appID common.AppID) bool {
 	agent, ok := m.leaseManager.GetAgent(agentID)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		return false
 	}
 	for _, report := range agent.AppReports {
@@ -387,7 +385,7 @@ func (m *Manager) isAppPruneBusy(agentID string, appID common.AppID) bool {
 
 func (m *Manager) appBackupAtNewer(agentID string, appID common.AppID, than time.Time) bool {
 	agent, ok := m.leaseManager.GetAgent(agentID)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		return false
 	}
 	for _, report := range agent.AppReports {
@@ -400,7 +398,7 @@ func (m *Manager) appBackupAtNewer(agentID string, appID common.AppID, than time
 
 func (m *Manager) appPruneAtNewer(agentID string, appID common.AppID, than time.Time) bool {
 	agent, ok := m.leaseManager.GetAgent(agentID)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
+	if !ok || !agent.IsOnline() {
 		return false
 	}
 	for _, report := range agent.AppReports {

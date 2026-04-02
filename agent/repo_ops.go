@@ -74,6 +74,37 @@ func (s *RepoOpState) maybeUpdateProgressFromLine(line string) {
 	s.ProgressPercent = p
 }
 
+func (s *RepoOpState) startOp(startMessage string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.Busy {
+		return ErrRepoOpBusy
+	}
+
+	s.Busy = true
+	s.LastError = ""
+	s.ProgressPercent = 0
+	s.Log.Clear()
+	if startMessage != "" {
+		s.Log.Write(startMessage)
+	}
+
+	return nil
+}
+
+func (s *RepoOpState) finishOp(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.LastAt = time.Now()
+	if err != nil {
+		s.LastError = err.Error()
+	}
+	s.Busy = false
+	s.ProgressPercent = 0
+}
+
 func (a *Agent) RepoCheckStatus() RepoOpStatus {
 	return a.repoCheck.Status()
 }
@@ -83,34 +114,18 @@ func (a *Agent) RepoUnlockStatus() RepoOpStatus {
 }
 
 func (a *Agent) TriggerRepoCheck() error {
-	a.repoCheck.mu.Lock()
-	if a.repoCheck.Busy {
-		a.repoCheck.mu.Unlock()
-		return ErrRepoOpBusy
+	if err := a.repoCheck.startOp("Starting restic check..."); err != nil {
+		return err
 	}
-	a.repoCheck.Busy = true
-	a.repoCheck.LastError = ""
-	a.repoCheck.ProgressPercent = 0
-	a.repoCheck.Log.Clear()
-	a.repoCheck.Log.Write("Starting restic check...")
-	a.repoCheck.mu.Unlock()
 
 	go a.runRepoCheck()
 	return nil
 }
 
 func (a *Agent) TriggerRepoUnlock() error {
-	a.repoUnlock.mu.Lock()
-	if a.repoUnlock.Busy {
-		a.repoUnlock.mu.Unlock()
-		return ErrRepoOpBusy
+	if err := a.repoUnlock.startOp("Starting restic unlock..."); err != nil {
+		return err
 	}
-	a.repoUnlock.Busy = true
-	a.repoUnlock.LastError = ""
-	a.repoUnlock.ProgressPercent = 0
-	a.repoUnlock.Log.Clear()
-	a.repoUnlock.Log.Write("Starting restic unlock...")
-	a.repoUnlock.mu.Unlock()
 
 	go a.runRepoUnlock()
 	return nil
@@ -136,15 +151,12 @@ func (a *Agent) runRepoCheck() {
 		a.repoCheck.mu.Unlock()
 	})
 
-	a.repoCheck.mu.Lock()
-	a.repoCheck.LastAt = time.Now()
 	if err != nil {
-		a.repoCheck.LastError = err.Error()
+		a.repoCheck.mu.Lock()
 		a.repoCheck.Log.Write("ERROR: " + err.Error())
+		a.repoCheck.mu.Unlock()
 	}
-	a.repoCheck.Busy = false
-	a.repoCheck.ProgressPercent = 0
-	a.repoCheck.mu.Unlock()
+	a.repoCheck.finishOp(err)
 
 	a.saveRepoOpsState()
 }
@@ -168,30 +180,20 @@ func (a *Agent) runRepoUnlock() {
 		a.repoUnlock.mu.Unlock()
 	})
 
-	a.repoUnlock.mu.Lock()
-	a.repoUnlock.LastAt = time.Now()
 	if err != nil {
-		a.repoUnlock.LastError = err.Error()
+		a.repoUnlock.mu.Lock()
 		a.repoUnlock.Log.Write("ERROR: " + err.Error())
+		a.repoUnlock.mu.Unlock()
 	}
-	a.repoUnlock.Busy = false
-	a.repoUnlock.mu.Unlock()
+	a.repoUnlock.finishOp(err)
 
 	a.saveRepoOpsState()
 }
 
 func (a *Agent) TriggerRepoForceUnlock() error {
-	a.repoUnlock.mu.Lock()
-	if a.repoUnlock.Busy {
-		a.repoUnlock.mu.Unlock()
-		return ErrRepoOpBusy
+	if err := a.repoUnlock.startOp("Starting restic unlock --remove-all..."); err != nil {
+		return err
 	}
-	a.repoUnlock.Busy = true
-	a.repoUnlock.LastError = ""
-	a.repoUnlock.ProgressPercent = 0
-	a.repoUnlock.Log.Clear()
-	a.repoUnlock.Log.Write("Starting restic unlock --remove-all...")
-	a.repoUnlock.mu.Unlock()
 
 	go a.runRepoForceUnlock()
 	return nil
@@ -209,14 +211,12 @@ func (a *Agent) runRepoForceUnlock() {
 		a.repoUnlock.mu.Unlock()
 	})
 
-	a.repoUnlock.mu.Lock()
-	a.repoUnlock.LastAt = time.Now()
 	if err != nil {
-		a.repoUnlock.LastError = err.Error()
+		a.repoUnlock.mu.Lock()
 		a.repoUnlock.Log.Write("ERROR: " + err.Error())
+		a.repoUnlock.mu.Unlock()
 	}
-	a.repoUnlock.Busy = false
-	a.repoUnlock.mu.Unlock()
+	a.repoUnlock.finishOp(err)
 
 	a.saveRepoOpsState()
 }
