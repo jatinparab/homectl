@@ -303,7 +303,8 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	m.gatewayMu.Unlock()
 
 	if len(response.Apps) == 0 {
-		http.Error(w, "Wating", http.StatusOK)
+		http.Error(w, "Waiting", http.StatusAccepted)
+		return
 	}
 
 	log.Printf("Returning desired apps for agent %s: %d apps", agentID, len(response.Apps))
