@@ -11,6 +11,10 @@ import (
 	"github.com/jatinparab/homectl/common"
 )
 
+// agentOnlineTTL is the maximum time since last heartbeat before an agent is
+// considered offline. This must match the LeaseTTL used by the LeaseManager.
+const agentOnlineTTL = 30 * time.Second
+
 // AgentInfo represents a registered agent
 type AgentInfo struct {
 	Name         string             `json:"name"`
@@ -19,6 +23,16 @@ type AgentInfo struct {
 	RegisteredAt time.Time          `json:"registered_at"`
 	AppReports   []common.AppReport `json:"app_reports,omitempty"`
 	Metrics      common.NodeMetrics `json:"metrics,omitempty"`
+}
+
+// IsOnline returns true if the agent has been seen within agentOnlineTTL.
+func (a *AgentInfo) IsOnline() bool {
+	return time.Since(a.LastSeen) < agentOnlineTTL
+}
+
+// IsOnlineAt returns true if the agent was online at the given time.
+func (a *AgentInfo) IsOnlineAt(now time.Time) bool {
+	return now.Sub(a.LastSeen) < agentOnlineTTL
 }
 
 // LeaseManager manages agent leases
