@@ -2,12 +2,14 @@ package manager
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var appLog = slog.With("area", "app")
 
 // App is the manager's view of a single application.
 type App struct {
@@ -154,7 +156,7 @@ func (r *AppRegistry) AdoptRunningApps(agentName string, reports []common.AppRep
 		}
 		agent := agentName
 		app.AssignedAgent = &agent
-		log.Printf("Adopted app %s on agent %s (from heartbeat)", report.AppID, agentName)
+		appLog.Info("Adopted app from heartbeat", "app", report.AppID, "agent", agentName)
 	}
 }
 

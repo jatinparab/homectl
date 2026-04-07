@@ -2,12 +2,14 @@ package agent
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/jatinparab/homectl/manager/client"
 )
+
+var traefikLog = slog.With("area", "traefik")
 
 // TraefikSync handles syncing traefik config from manager
 type TraefikSync struct {
@@ -50,7 +52,7 @@ func (t *TraefikSync) WriteConfig(content string) error {
 
 	// Read existing file and skip write if identical
 	if existing, err := os.ReadFile(t.configPath); err == nil && string(existing) == content {
-		log.Printf("Traefik config unchanged, skipping write to %s", t.configPath)
+		traefikLog.Info("Config unchanged, skipping write", "path", t.configPath)
 		return nil
 	}
 
@@ -80,6 +82,6 @@ func (t *TraefikSync) Sync() error {
 	}
 
 	t.currentConfig = config
-	log.Printf("Traefik config updated at %s", t.configPath)
+	traefikLog.Info("Config updated", "path", t.configPath)
 	return nil
 }

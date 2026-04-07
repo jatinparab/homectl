@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"math"
 	"regexp"
 	"strconv"
@@ -13,6 +13,8 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/docker"
 )
+
+var executorLog = slog.With("area", "executor")
 
 var resticTextProgressRe = regexp.MustCompile(`\[[0-9]{1,2}:[0-9]{2}\]\s+([0-9]+(?:\.[0-9]+)?)%\s+([0-9]+)\s+/\s+([0-9]+)\b`)
 
@@ -155,7 +157,7 @@ func (e *Executor) Start() {
 		e.wg.Add(1)
 		go e.worker(i)
 	}
-	log.Printf("Executor: started %d workers", ExecutorWorkers)
+	executorLog.Info("Started workers", "count", ExecutorWorkers)
 }
 
 // Stop stops the executor
@@ -163,7 +165,7 @@ func (e *Executor) Stop() {
 	e.cancel()
 	close(e.actionQ)
 	e.wg.Wait()
-	log.Println("Executor: stopped")
+	executorLog.Info("Stopped")
 }
 
 // Submit submits an action for execution
@@ -175,7 +177,7 @@ func (e *Executor) Submit(action Action) {
 	// Check if executor is stopped
 	select {
 	case <-e.ctx.Done():
-		log.Printf("Executor: not accepting %s for %s (stopped)", action.Type, action.AppID)
+		executorLog.Info("Not accepting action (stopped)", "action", action.Type, "app", action.AppID)
 		return
 	default:
 	}
@@ -183,7 +185,7 @@ func (e *Executor) Submit(action Action) {
 	// Check if already in flight (queued or executing)
 	rt := e.agent.getRuntime(action.AppID)
 	if rt != nil && rt.IsInFlight() {
-		log.Printf("Executor: skipping %s for %s (already in flight)", action.Type, action.AppID)
+		executorLog.Info("Skipping action (already in flight)", "action", action.Type, "app", action.AppID)
 		return
 	}
 
@@ -194,17 +196,17 @@ func (e *Executor) Submit(action Action) {
 
 	select {
 	case e.actionQ <- action:
-		log.Printf("Executor: queued %s for %s", action.Type, action.AppID)
+		executorLog.Info("Queued action", "action", action.Type, "app", action.AppID)
 	case <-e.ctx.Done():
 		if rt != nil {
 			rt.SetInFlight(false)
 		}
-		log.Printf("Executor: not accepting %s for %s (stopped)", action.Type, action.AppID)
+		executorLog.Info("Not accepting action (stopped)", "action", action.Type, "app", action.AppID)
 	default:
 		if rt != nil {
 			rt.SetInFlight(false)
 		}
-		log.Printf("Executor: action queue full, dropping %s for %s", action.Type, action.AppID)
+		executorLog.Info("Action queue full, dropping", "action", action.Type, "app", action.AppID)
 	}
 }
 
@@ -230,14 +232,14 @@ func (e *Executor) execute(action Action) {
 	appID := action.AppID
 	rt := e.agent.getRuntime(appID)
 	if rt == nil {
-		log.Printf("Executor: no runtime for %s, creating", appID)
+		executorLog.Info("No runtime for app, creating", "app", appID)
 		rt = e.agent.getOrCreateRuntime(appID)
 	}
 
 	// InFlight was set at Submit time; ensure it's cleared when done
 	defer rt.SetInFlight(false)
 
-	log.Printf("Executor: executing %s for %s", action.Type, appID)
+	executorLog.Info("Executing action", "action", action.Type, "app", appID)
 
 	var err error
 	switch action.Type {
@@ -256,7 +258,7 @@ func (e *Executor) execute(action Action) {
 	}
 
 	if err != nil {
-		log.Printf("Executor: %s failed for %s: %s", action.Type, appID, err)
+		executorLog.Info("Action failed", "action", action.Type, "app", appID, "err", err)
 		rt.SetLastError(err.Error())
 	} else {
 		rt.SetLastError("")
@@ -269,13 +271,13 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 
 	// If backup is disabled for this app, skip all restore logic
 	if !rt.IsBackupEnabled() {
-		log.Printf("Executor: %s backup disabled, skipping restore", appID)
+		executorLog.Info("Backup disabled, skipping restore", "app", appID)
 		needsRestore = false
 	}
 
 	// If restore is disabled (force local data), skip restore
 	if needsRestore && !rt.IsRestoreEnabled() {
-		log.Printf("Executor: %s restore disabled, using local data", appID)
+		executorLog.Info("Restore disabled, using local data", "app", appID)
 		needsRestore = false
 	}
 
@@ -287,7 +289,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 		e.agent.runtimeMu.Unlock()
 
 		if justBacked {
-			log.Printf("Executor: %s restarting after local backup, skipping restore", appID)
+			executorLog.Info("Restarting after local backup, skipping restore", "app", appID)
 			needsRestore = false
 		}
 	}
@@ -295,22 +297,21 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	if needsRestore {
 		meta, metaErr := loadBackupMeta(e.agent.appdataDir, appID)
 		if metaErr != nil {
-			log.Printf("Executor: failed to load backup meta for %s: %s (will restore)", appID, metaErr)
+			executorLog.Info("Failed to load backup meta (will restore)", "app", appID, "err", metaErr)
 		} else if meta == nil {
-			log.Printf("Executor: no backup meta for %s (first start, will restore)", appID)
+			executorLog.Info("No backup meta (first start, will restore)", "app", appID)
 		} else {
 			// Metadata exists — check if a newer snapshot is available
 			snapTime, _, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
 			if snapErr != nil {
-				log.Printf("Executor: failed to query latest snapshot for %s: %s (will restore)", appID, snapErr)
+				executorLog.Info("Failed to query latest snapshot (will restore)", "app", appID, "err", snapErr)
 			} else if snapTime.IsZero() {
-				log.Printf("Executor: no snapshots for %s, skipping restore", appID)
+				executorLog.Info("No snapshots, skipping restore", "app", appID)
 				needsRestore = false
 			} else if snapTime.After(meta.LastBackupAt) {
-				log.Printf("Executor: newer snapshot for %s (snap=%s, local=%s), will restore",
-					appID, snapTime.Format(time.RFC3339), meta.LastBackupAt.Format(time.RFC3339))
+				executorLog.Info("Newer snapshot available, will restore", "app", appID, "snap", snapTime.Format(time.RFC3339), "local", meta.LastBackupAt.Format(time.RFC3339))
 			} else {
-				log.Printf("Executor: local data for %s is current, skipping restore", appID)
+				executorLog.Info("Local data is current, skipping restore", "app", appID)
 				needsRestore = false
 			}
 		}
@@ -334,7 +335,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 		// After restore, write metadata with the actual snapshot timestamp
 		snapTime, snapID, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
 		if snapErr != nil {
-			log.Printf("Executor: failed to query snapshot after restore for %s: %s", appID, snapErr)
+			executorLog.Info("Failed to query snapshot after restore", "app", appID, "err", snapErr)
 		} else if !snapTime.IsZero() {
 			newMeta := &BackupMeta{
 				LastBackupAt: snapTime,
@@ -342,7 +343,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 				Node:         e.agent.name,
 			}
 			if err := writeBackupMeta(e.agent.appdataDir, appID, newMeta); err != nil {
-				log.Printf("Executor: failed to write backup meta after restore for %s: %s", appID, err)
+				executorLog.Info("Failed to write backup meta after restore", "app", appID, "err", err)
 			}
 			e.agent.runtimeMu.Lock()
 			rt.Backup.LastBackupAt = snapTime
@@ -354,14 +355,14 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	rt.SetPhase(common.PhasePulling)
 	rt.PhaseLog.Clear()
 	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		log.Printf("[docker:%s] %s", appID, line)
+		executorLog.Info("docker output", "app", appID, "line", line)
 		rt.PhaseLog.Write(line)
 	}); err != nil {
 		return err
 	}
 	rt.SetPhase(common.PhaseRunning)
 
-	log.Printf("Executor: started %s", appID)
+	executorLog.Info("Started", "app", appID)
 	return nil
 }
 
@@ -369,7 +370,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	// Stop first
 	if err := e.docker.Stop(string(appID)); err != nil {
-		log.Printf("Executor: stop failed during restart for %s: %s", appID, err)
+		executorLog.Info("Stop failed during restart", "app", appID, "err", err)
 		// Continue to try start anyway
 	}
 
@@ -378,14 +379,14 @@ func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	rt.PhaseLog.Clear()
 	rt.IncrementRestarts()
 	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		log.Printf("[docker:%s] %s", appID, line)
+		executorLog.Info("docker output", "app", appID, "line", line)
 		rt.PhaseLog.Write(line)
 	}); err != nil {
 		return err
 	}
 	rt.SetPhase(common.PhaseEmpty)
 
-	log.Printf("Executor: restarted %s", appID)
+	executorLog.Info("Restarted", "app", appID)
 	return nil
 }
 
@@ -395,14 +396,14 @@ func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
 		return err
 	}
 
-	log.Printf("Executor: stopped %s", appID)
+	executorLog.Info("Stopped", "app", appID)
 	return nil
 }
 
 // executeQuarantine quarantines an app
 func (e *Executor) executeQuarantine(appID common.AppID, rt *AppRuntime) {
 	rt.SetQuarantined(true)
-	log.Printf("Executor: QUARANTINED %s (too many restarts)", appID)
+	executorLog.Info("Quarantined (too many restarts)", "app", appID)
 }
 
 // executeBackup runs the restic backup. The global lease is already held (acquired by reconcile).
@@ -414,7 +415,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	rt.Backup.InProgress = true
 	e.agent.runtimeMu.Unlock()
 
-	log.Printf("Executor: starting backup for %s", appID)
+	executorLog.Info("Starting backup", "app", appID)
 
 	// Step 2: Run restic backup (parallel with other backups, but blocked by prune/check lane)
 	rt.PhaseLog.Clear()
@@ -432,10 +433,10 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	rt.Backup.LastBackupAt = time.Now() // Always update to prevent immediate retry on failure
 	if backupErr != nil {
 		rt.Backup.LastError = backupErr.Error()
-		log.Printf("Executor: backup failed for %s: %s", appID, backupErr)
+		executorLog.Info("Backup failed", "app", appID, "err", backupErr)
 	} else {
 		rt.Backup.LastError = ""
-		log.Printf("Executor: backup completed for %s", appID)
+		executorLog.Info("Backup completed", "app", appID)
 	}
 	rt.Backup.InProgress = false
 	e.agent.runtimeMu.Unlock()
@@ -448,7 +449,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 			Node:         e.agent.name,
 		}
 		if err := writeBackupMeta(e.agent.appdataDir, appID, meta); err != nil {
-			log.Printf("Executor: failed to write backup meta for %s: %s", appID, err)
+			executorLog.Info("Failed to write backup meta", "app", appID, "err", err)
 		}
 		e.agent.runtimeMu.Lock()
 		rt.Backup.LastBackupAt = now
@@ -479,7 +480,7 @@ func (e *Executor) executePrune(appID common.AppID, rt *AppRuntime) error {
 	rt.Prune.InProgress = true
 	e.agent.runtimeMu.Unlock()
 
-	log.Printf("Executor: starting prune for %s", appID)
+	executorLog.Info("Starting prune", "app", appID)
 	pruneErr := e.restic.Prune(e.ctx, appID, func(line string) {
 		if p := parseResticTextProgress(line); p != nil {
 			rt.SetProgress(p)
@@ -504,9 +505,9 @@ func (e *Executor) executePrune(appID common.AppID, rt *AppRuntime) error {
 	e.agent.runtimeMu.Unlock()
 
 	if pruneErr != nil {
-		log.Printf("Executor: prune failed for %s: %s", appID, pruneErr)
+		executorLog.Info("Prune failed", "app", appID, "err", pruneErr)
 		return pruneErr
 	}
-	log.Printf("Executor: prune completed for %s", appID)
+	executorLog.Info("Prune completed", "app", appID)
 	return nil
 }

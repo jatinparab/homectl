@@ -2,11 +2,13 @@ package agent
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+var repoLog = slog.With("area", "repo")
 
 type repoOpsStateFile struct {
 	CheckLastAt     time.Time `json:"check_last_at,omitempty"`
@@ -23,14 +25,14 @@ func (a *Agent) loadRepoOpsState() {
 	data, err := os.ReadFile(a.repoOpsStatePath())
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Repo ops: failed to read state: %s", err)
+			repoLog.Info("Failed to read state", "err", err)
 		}
 		return
 	}
 
 	var st repoOpsStateFile
 	if err := json.Unmarshal(data, &st); err != nil {
-		log.Printf("Repo ops: failed to parse state: %s", err)
+		repoLog.Info("Failed to parse state", "err", err)
 		return
 	}
 
@@ -65,17 +67,17 @@ func (a *Agent) saveRepoOpsState() {
 
 	stateDir := filepath.Dir(a.repoOpsStatePath())
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		log.Printf("Repo ops: failed to create state dir: %s", err)
+		repoLog.Info("Failed to create state dir", "err", err)
 		return
 	}
 
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		log.Printf("Repo ops: failed to marshal state: %s", err)
+		repoLog.Info("Failed to marshal state", "err", err)
 		return
 	}
 
 	if err := os.WriteFile(a.repoOpsStatePath(), data, 0644); err != nil {
-		log.Printf("Repo ops: failed to write state: %s", err)
+		repoLog.Info("Failed to write state", "err", err)
 	}
 }
