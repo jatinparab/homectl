@@ -458,7 +458,7 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 }
 
 // pullTimeout is the maximum duration allowed for a docker compose pull.
-const pullTimeout = 5 * time.Minute
+const pullTimeout = 15 * time.Minute
 
 // Pull pulls images for a docker compose service, streaming output line-by-line.
 func (d *Docker) Pull(appID string, onLog func(string)) error {
