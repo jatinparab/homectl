@@ -211,8 +211,9 @@ type UpcomingPruneInfo struct {
 type AppStatus struct {
 	AppID           string       `json:"app_id"`
 	DesiredState    string       `json:"desired_state"`
-	AssignedAgent   *string      `json:"assigned_agent"`
-	IsGlobal        bool         `json:"is_global"`        // Runs on all connected nodes
+	AssignedAgent    *string      `json:"assigned_agent"`
+	ManuallyAssigned bool         `json:"manually_assigned"` // True if placement was set manually via reassign
+	IsGlobal         bool         `json:"is_global"`         // Runs on all connected nodes
 	ObservedState   string       `json:"observed_state"`   // Consolidated (worst case)
 	Health          string       `json:"health"`           // Consolidated (worst case)
 	Phase           string       `json:"phase"`            // Consolidated
@@ -479,10 +480,11 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		}
 
 		status := AppStatus{
-			AppID:           appID,
-			DesiredState:    string(app.DesiredState),
-			AssignedAgent:   app.AssignedAgent,
-			IsGlobal:        app.IsGlobal,
+			AppID:            appID,
+			DesiredState:     string(app.DesiredState),
+			AssignedAgent:    app.AssignedAgent,
+			ManuallyAssigned: app.ManuallyAssigned,
+			IsGlobal:         app.IsGlobal,
 			ObservedState:   consolidateObservedState(states),
 			Health:          consolidateHealth(healths),
 			Phase:           consolidatePhase(phases),
@@ -717,9 +719,58 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 		m.handleAPIAppSnapshots(w, r)
 	case "snapshot-refresh":
 		m.handleAPIAppSnapshotRefresh(w, r)
+	case "reassign":
+		m.handleAPIAppReassign(w, r)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
+}
+
+// handleAPIAppReassign handles manual app reassignment.
+// POST /api/v1/apps/{appId}/reassign?node={nodeName} — move app to node (sticky)
+// DELETE /api/v1/apps/{appId}/reassign                — clear manual assignment
+func (m *Manager) handleAPIAppReassign(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	appID := common.AppID(strings.SplitN(path, "/", 2)[0])
+
+	switch r.Method {
+	case http.MethodPost:
+		node := r.URL.Query().Get("node")
+		if node == "" {
+			http.Error(w, "node query parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		alive := m.aliveAgents()
+		if !alive[node] {
+			http.Error(w, "target node is not online", http.StatusBadRequest)
+			return
+		}
+
+		if err := m.appRegistry.ReassignAgent(appID, node); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		m.saveManualAssignments()
+		apiLog.Info("App manually reassigned", "app", appID, "node", node)
+
+	case http.MethodDelete:
+		if err := m.appRegistry.ClearManualAssignment(appID); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		m.saveManualAssignments()
+		apiLog.Info("Manual assignment cleared", "app", appID)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleAPIAppDesiredState handles PUT requests to update an app's desired state

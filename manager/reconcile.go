@@ -51,12 +51,18 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	activeApps := m.appsWithActiveConnections()
 	excludedNodes := m.buildExcludedNodes()
 
+	var manualAssignmentChanged bool
 	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
+		before := countManuallyAssigned(apps)
 		handleDeadAgents(apps, alive, lastSeenMap, now)
+		manualAssignmentChanged = countManuallyAssigned(apps) != before
 		assignUnassignedApps(apps, alive, excludedNodes)
 		handleMigrations(apps, alive, now, excludedNodes)
 		rebalance(apps, alive, activeApps, excludedNodes)
 	})
+	if manualAssignmentChanged {
+		m.saveManualAssignments()
+	}
 
 	m.resolveGateway()
 	m.invalidateWorkAssignments(alive)
@@ -241,6 +247,16 @@ func (m *Manager) buildExcludedNodes() map[common.AppID][]string {
 	return result
 }
 
+func countManuallyAssigned(apps map[common.AppID]*App) int {
+	n := 0
+	for _, app := range apps {
+		if app.ManuallyAssigned {
+			n++
+		}
+	}
+	return n
+}
+
 // handleDeadAgents clears AssignedAgent for apps whose agent is no longer alive,
 // but only after the deadAgentGracePeriod has elapsed since the agent's last heartbeat.
 // This prevents unnecessary app reshuffling during rolling deploys.
@@ -256,6 +272,7 @@ func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool, lastSee
 		}
 		reconcileLog.Info("Agent dead past grace period, unassigning app", "agent", agent, "app", app.ID)
 		app.AssignedAgent = nil
+		app.ManuallyAssigned = false // dead node clears manual assignment
 	}
 }
 
@@ -289,6 +306,9 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 	for _, app := range apps {
 		if app.IsGlobal {
 			continue
+		}
+		if app.ManuallyAssigned {
+			continue // respect manual placement
 		}
 		if !app.Quarantined {
 			continue
@@ -390,6 +410,9 @@ func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps
 			}
 			if app.AssignedAgent == nil || *app.AssignedAgent != maxAgent {
 				continue
+			}
+			if app.ManuallyAssigned {
+				continue // respect manual placement
 			}
 			if app.Quarantined {
 				continue
