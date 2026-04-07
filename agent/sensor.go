@@ -3,13 +3,15 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var sensorLog = slog.With("area", "sensor")
 
 const (
 	// SensorInterval is how often the sensor samples docker state
@@ -59,7 +61,7 @@ func (a *Agent) sample() {
 	// Get list of managed apps
 	entries, err := a.docker.ListManaged()
 	if err != nil {
-		log.Printf("Sensor: failed to list managed apps: %s", err)
+		sensorLog.Error("Failed to list managed apps", "err", err)
 		return
 	}
 
@@ -96,7 +98,7 @@ func (a *Agent) sample() {
 			if currentPhase == common.PhaseBackupStopping {
 				// Advance backup phase: container confirmed stopped → BackupStopped
 				rt.SetPhase(common.PhaseBackupStopped)
-				log.Printf("Sensor: %s container confirmed stopped, advancing to BackupStopped", status.appID)
+				sensorLog.Info("Container confirmed stopped, advancing to BackupStopped", "app", status.appID)
 			} else if currentPhase == common.PhaseRunning {
 				// Clear stale running phase when container is stopped
 				rt.SetPhase(common.PhaseEmpty)
@@ -162,7 +164,7 @@ func (a *Agent) checkApp(appID string) appStatus {
 	// Check if running
 	running, err := a.docker.IsRunning(appID)
 	if err != nil {
-		log.Printf("Sensor: failed to check running status for %s: %s", appID, err)
+		sensorLog.Error("Failed to check running status", "app", appID, "err", err)
 		return status
 	}
 	status.running = running
@@ -175,7 +177,7 @@ func (a *Agent) checkApp(appID string) appStatus {
 	// Get ports for health check
 	ports, err := a.docker.GetPorts(appID)
 	if err != nil {
-		log.Printf("Sensor: failed to get ports for %s: %s", appID, err)
+		sensorLog.Error("Failed to get ports", "app", appID, "err", err)
 		return status
 	}
 
@@ -223,11 +225,11 @@ func (a *Agent) getOrCreateRuntimeLocked(appID common.AppID) *AppRuntime {
 
 	// Restore persisted backup timestamp so it survives agent restarts
 	if meta, err := loadBackupMeta(a.appdataDir, appID); err != nil {
-		log.Printf("Sensor: failed to load backup meta for %s: %s", appID, err)
+		sensorLog.Warn("Failed to load backup meta", "app", appID, "err", err)
 	} else if meta != nil {
 		rt.Backup.LastBackupAt = meta.LastBackupAt
 		rt.Backup.BackupDefer = time.Time{} // Clear defer since we have real backup data
-		log.Printf("Sensor: restored backup meta for %s (last backup: %s)", appID, meta.LastBackupAt.Format(time.RFC3339))
+		sensorLog.Info("Restored backup meta", "app", appID, "last_backup", meta.LastBackupAt.Format(time.RFC3339))
 	}
 
 	a.runtime[appID] = rt

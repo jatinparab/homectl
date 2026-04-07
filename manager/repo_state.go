@@ -2,11 +2,13 @@ package manager
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+var repoStateLog = slog.With("area", "repo")
 
 type repoStateFile struct {
 	LastCheckAt      time.Time `json:"last_check_at,omitempty"`
@@ -24,14 +26,14 @@ func (m *Manager) loadRepoState() {
 	data, err := os.ReadFile(m.repoStatePath())
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Failed to read repo-state file: %s", err)
+			repoStateLog.Info("Failed to read repo-state file", "err", err)
 		}
 		return
 	}
 
 	var st repoStateFile
 	if err := json.Unmarshal(data, &st); err != nil {
-		log.Printf("Failed to parse repo-state file: %s", err)
+		repoStateLog.Info("Failed to parse repo-state file", "err", err)
 		return
 	}
 
@@ -56,18 +58,18 @@ func (m *Manager) saveRepoState() {
 	m.repoMu.Unlock()
 
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
-		log.Printf("Failed to create state dir: %s", err)
+		repoStateLog.Info("Failed to create state dir", "err", err)
 		return
 	}
 
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		log.Printf("Failed to marshal repo-state: %s", err)
+		repoStateLog.Info("Failed to marshal repo-state", "err", err)
 		return
 	}
 
 	if err := os.WriteFile(m.repoStatePath(), data, 0644); err != nil {
-		log.Printf("Failed to write repo-state file: %s", err)
+		repoStateLog.Info("Failed to write repo-state file", "err", err)
 	}
 }
 

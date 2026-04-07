@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -15,6 +15,8 @@ import (
 	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
 )
+
+var apiLog = slog.With("area", "api")
 
 // DashboardResponse contains aggregated stats for the dashboard
 type DashboardResponse struct {
@@ -656,7 +658,7 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 				mu.Unlock()
 				return
 			}
-			log.Printf("Sync: agent %s synced successfully", name)
+			apiLog.Info("Agent synced successfully", "agent", name)
 		}(agent.Name, agentCfg.IP)
 	}
 
@@ -667,9 +669,9 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(syncErrors) > 0 {
 		response["errors"] = syncErrors
-		log.Printf("Sync completed with errors: %v", syncErrors)
+		apiLog.Warn("Sync completed with errors", "errors", syncErrors)
 	} else {
-		log.Printf("Sync completed successfully for all agents")
+		apiLog.Info("Sync completed successfully for all agents")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1801,7 +1803,7 @@ func (m *Manager) handleAPIGateway(w http.ResponseWriter, r *http.Request) {
 		m.manualGatewayNode = node
 		m.gatewayMu.Unlock()
 
-		log.Printf("Manual gateway set to %s", node)
+		apiLog.Info("Manual gateway set", "node", node)
 
 		// Return updated info
 		info := GatewayInfo{
@@ -1816,7 +1818,7 @@ func (m *Manager) handleAPIGateway(w http.ResponseWriter, r *http.Request) {
 		m.manualGatewayNode = ""
 		m.gatewayMu.Unlock()
 
-		log.Printf("Manual gateway cleared, reverting to automatic")
+		apiLog.Info("Manual gateway cleared, reverting to automatic")
 
 		// Return updated info
 		info := GatewayInfo{

@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -12,6 +12,7 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/docker"
+	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
 	"github.com/jatinparab/homectl/utils"
 )
@@ -22,6 +23,7 @@ const (
 	// UnhealthyThreshold is the number of consecutive unhealthy checks before triggering a restart
 	UnhealthyThreshold = 5
 )
+var agentLog = slog.With("area", "agent")
 
 // Agent manages docker applications on a host
 type Agent struct {
@@ -119,6 +121,7 @@ func Init() (*Agent, error) {
 // InitWithConfig initializes an agent with custom configuration
 func InitWithConfig(agentCfg Config) (*Agent, error) {
 	hostname := utils.GetHostname()
+	logger.Init("agent", hostname)
 	ip := utils.GetLocalIP()
 	cfg := config.NewConfig()
 	hostCfg := cfg.GetAgentConfig(hostname)
@@ -129,8 +132,7 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 	managerURL := cfg.GetManagerURL()
 	agent := NewAgent(hostname, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User)
 
-	log.Printf("Agent initialized: name=%s, dockerRootDir=%s, appdataDir=%s, user=%s",
-		hostname, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User)
+	agentLog.Info("Agent initialized", "name", hostname, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User)
 
 	// Try to connect and load apps (best-effort)
 	agent.tryConnect()
@@ -141,28 +143,28 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 // tryConnect attempts to connect to the manager and sync docker configs
 func (a *Agent) tryConnect() {
 	if err := a.managerClient.Health(); err != nil {
-		log.Printf("Manager not available at %s: %s (will retry)", a.managerURL, err)
+		agentLog.Info("Manager not available (will retry)", "url", a.managerURL, "err", err)
 		a.setConnected(false)
 		return
 	}
 
 	if err := a.SyncConfigs(); err != nil {
-		log.Printf("Failed to sync configs: %s (will retry)", err)
+		agentLog.Info("Failed to sync configs (will retry)", "err", err)
 		a.setConnected(false)
 		return
 	}
 
 	a.setConnected(true)
-	log.Printf("Connected to manager at %s", a.managerURL)
+	agentLog.Info("Connected to manager", "url", a.managerURL)
 }
 
 // SyncConfigs pulls docker configs from the manager and reloads apps.
 func (a *Agent) SyncConfigs() error {
-	log.Printf("Syncing docker configs to %s...", a.dockerRootDir)
+	agentLog.Info("Syncing docker configs", "dir", a.dockerRootDir)
 	if err := a.managerClient.SyncDockerConfigs(a.dockerRootDir); err != nil {
 		return fmt.Errorf("sync docker configs: %w", err)
 	}
-	log.Printf("Docker configs synced successfully")
+	agentLog.Info("Docker configs synced successfully")
 
 	// Create Docker instance using local files
 	d := docker.NewDocker(a.dockerRootDir, a.appdataDir, a.user)
@@ -214,10 +216,7 @@ func (a *Agent) Start() {
 	go a.readyServerLoop()
 	go a.snapshotCacheLoop()
 
-	log.Printf("Agent started (heartbeat: %v, retry: %v, reconcile: %v)",
-		a.agentConfig.RenewalInterval,
-		a.agentConfig.RetryInterval,
-		a.agentConfig.ReconcileInterval)
+	agentLog.Info("Agent started", "heartbeat", a.agentConfig.RenewalInterval, "retry", a.agentConfig.RetryInterval, "reconcile", a.agentConfig.ReconcileInterval)
 }
 
 // readyServerLoop runs the ready server for keepalived health checks
@@ -226,7 +225,7 @@ func (a *Agent) readyServerLoop() {
 
 	a.readyServer = NewReadyServer(a)
 	if err := a.readyServer.Start(); err != nil {
-		log.Printf("Ready server stopped: %s", err)
+		agentLog.Info("Ready server stopped", "err", err)
 	}
 }
 
@@ -245,7 +244,7 @@ func (a *Agent) heartbeatLoop() {
 				reports := a.GetAppReports()
 				metrics := collectNodeMetrics(a.appdataDir)
 				if err := a.managerClient.Heartbeat(a.name, a.ip, reports, metrics); err != nil {
-					log.Printf("Heartbeat failed: %s", err)
+					agentLog.Info("Heartbeat failed", "err", err)
 					a.setConnected(false)
 				}
 			}
@@ -297,12 +296,12 @@ func (a *Agent) reconcileLoop() {
 
 // reconcileOnce performs a single reconciliation cycle.
 func (a *Agent) reconcileOnce() {
-	log.Println("Reconcile: fetching desired apps from manager...")
+	agentLog.Info("Reconcile: fetching desired apps from manager")
 
 	// Fetch desired apps from manager
 	response, err := a.managerClient.FetchDesiredApps(a.name)
 	if err != nil {
-		log.Printf("Reconcile: failed to fetch desired apps: %s", err)
+		agentLog.Info("Reconcile: failed to fetch desired apps", "err", err)
 		return
 	}
 
@@ -313,7 +312,7 @@ func (a *Agent) reconcileOnce() {
 	a.isGateway = response.IsGateway
 	a.isGatewayMu.Unlock()
 
-	log.Printf("Reconcile: got %d desired apps (gateway=%v)", len(desiredApps), response.IsGateway)
+	agentLog.Info("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
 
 	// Track which apps the manager wants running on this node
 	assigned := make(map[common.AppID]bool, len(desiredApps))
@@ -368,7 +367,7 @@ func (a *Agent) reconcileOnce() {
 	// Sync traefik config
 	if a.traefikSync != nil {
 		if err := a.traefikSync.Sync(); err != nil {
-			log.Printf("Reconcile: traefik sync failed: %s", err)
+			agentLog.Info("Reconcile: traefik sync failed", "err", err)
 		}
 	}
 }
@@ -381,23 +380,23 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 	switch phase {
 	case common.PhaseBackupStopping:
 		// Waiting for sensor to confirm container stopped
-		log.Printf("Reconcile: %s in BackupStopping, waiting for sensor confirmation", app.AppID)
+		agentLog.Info("Reconcile: in BackupStopping, waiting for sensor confirmation", "app", app.AppID)
 		return ActionNone()
 
 	case common.PhaseBackupStopped:
 		// Container confirmed stopped by sensor — emit backup action
-		log.Printf("Reconcile: %s in BackupStopped, emitting backup action", app.AppID)
+		agentLog.Info("Reconcile: in BackupStopped, emitting backup action", "app", app.AppID)
 		return ActionBackup(app.AppID)
 
 	case common.PhaseBackingUp:
 		// Backup execution in progress
-		log.Printf("Reconcile: %s in BackingUp, waiting for completion", app.AppID)
+		agentLog.Info("Reconcile: in BackingUp, waiting for completion", "app", app.AppID)
 		return ActionNone()
 	}
 
 	// === RESTORE (non-gateway global app with stale data) ===
 	if app.RestoreNow && app.RestoreEnabled && rt.RunningStatus() == common.RunningStatusRunning {
-		log.Printf("Reconcile: %s restore requested, stopping for restore cycle", app.AppID)
+		agentLog.Info("Reconcile: restore requested, stopping for restore cycle", "app", app.AppID)
 		return ActionStop(app.AppID)
 	}
 
@@ -406,7 +405,7 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 	// Desired stopped
 	if app.DesiredState == common.DesiredStopped {
 		if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
-			log.Printf("Reconcile: %s should be stopped but is running", app.AppID)
+			agentLog.Info("Reconcile: should be stopped but is running", "app", app.AppID)
 			return ActionStop(app.AppID)
 		}
 		return ActionNone()
@@ -414,9 +413,9 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 
 	// Desired running
 	if rt.IsQuarantined() {
-		log.Printf("Reconcile: %s is quarantined, skipping", app.AppID)
+		agentLog.Info("Reconcile: is quarantined, skipping", "app", app.AppID)
 		if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
-			log.Printf("Reconcile: %s is quarantined but is running, stopping", app.AppID)
+			agentLog.Info("Reconcile: is quarantined but is running, stopping", "app", app.AppID)
 			return ActionStop(app.AppID)
 		}
 		return ActionNone()
@@ -424,33 +423,33 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 
 	if rt.RunningStatus() != common.RunningStatusRunning {
 		if a.canRestart(rt) {
-			log.Printf("Reconcile: %s should be running but is not", app.AppID)
+			agentLog.Info("Reconcile: should be running but is not", "app", app.AppID)
 			return ActionStart(app.AppID)
 		}
-		log.Printf("Reconcile: %s exceeded restart limit, quarantining", app.AppID)
+		agentLog.Info("Reconcile: exceeded restart limit, quarantining", "app", app.AppID)
 		return ActionQuarantine(app.AppID)
 	}
 
 	// Running but unhealthy — only act after consecutive failures reach the threshold
 	if rt.GetHealth() == common.HealthUnhealthy && rt.GetUnhealthyCount() >= UnhealthyThreshold {
 		if a.canRestart(rt) {
-			log.Printf("Reconcile: %s is unhealthy (%d consecutive checks), restarting", app.AppID, rt.GetUnhealthyCount())
+			agentLog.Info("Reconcile: is unhealthy, restarting", "app", app.AppID, "unhealthy_count", rt.GetUnhealthyCount())
 			return ActionRestart(app.AppID)
 		}
-		log.Printf("Reconcile: %s is unhealthy and exceeded restart limit, quarantining", app.AppID)
+		agentLog.Info("Reconcile: is unhealthy and exceeded restart limit, quarantining", "app", app.AppID)
 		return ActionQuarantine(app.AppID)
 	}
 
 	// Running + healthy: check if manager assigned BackupNow
 	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
-		log.Printf("Reconcile: %s manager requested backup, transitioning to BackupStopping", app.AppID)
+		agentLog.Info("Reconcile: manager requested backup, transitioning to BackupStopping", "app", app.AppID)
 		rt.SetPhase(common.PhaseBackupStopping)
 		return ActionStop(app.AppID)
 	}
 
 	// Running + healthy: check if manager assigned PruneNow
 	if app.BackupEnabled && app.PruneNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
-		log.Printf("Reconcile: %s manager requested prune, executing prune", app.AppID)
+		agentLog.Info("Reconcile: manager requested prune, executing prune", "app", app.AppID)
 		return ActionPrune(app.AppID)
 	}
 
@@ -615,7 +614,7 @@ func (a *Agent) refreshSnapshotCache(appID common.AppID) {
 	cache.CachedAt = time.Now()
 	if err != nil {
 		cache.Error = err.Error()
-		log.Printf("Snapshot cache refresh failed for %s: %s", appID, err)
+		agentLog.Info("Snapshot cache refresh failed", "app", appID, "err", err)
 	} else {
 		cache.Snapshots = snapshots
 		cache.Error = ""
@@ -644,7 +643,7 @@ func (a *Agent) getSnapshotCache(appID common.AppID) *SnapshotCache {
 
 // Stop stops the agent gracefully
 func (a *Agent) Stop() {
-	log.Println("Stopping agent...")
+	agentLog.Info("Stopping agent")
 
 	// Cancel all in-flight snapshot refreshes
 	a.snapshotCacheMu.Lock()
@@ -669,7 +668,7 @@ func (a *Agent) Stop() {
 
 	close(a.stopChan)
 	a.wg.Wait()
-	log.Println("Agent stopped")
+	agentLog.Info("Agent stopped")
 }
 
 // Name returns the agent name
