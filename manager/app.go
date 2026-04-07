@@ -13,11 +13,12 @@ var appLog = slog.With("area", "app")
 
 // App is the manager's view of a single application.
 type App struct {
-	ID             common.AppID
-	DesiredState   common.DesiredState
-	AssignedAgent  *string
-	IsGlobal       bool // Run on all connected nodes
-	RestoreEnabled bool // Whether restore-on-start is enabled (default true)
+	ID               common.AppID
+	DesiredState     common.DesiredState
+	AssignedAgent    *string
+	ManuallyAssigned bool    // If true, skip automatic rebalancing/migration for this app
+	IsGlobal         bool    // Run on all connected nodes
+	RestoreEnabled   bool    // Whether restore-on-start is enabled (default true)
 
 	// Observational fields updated from heartbeats
 	ObservedState common.ObservedState
@@ -188,8 +189,8 @@ func (r *AppRegistry) UpdateRestoreEnabled(appID common.AppID, enabled bool) err
 	return nil
 }
 
-// ReassignAgent manually moves an app to a different agent.
-// This is a one-time nudge; the reconciler may move the app again later.
+// ReassignAgent manually moves an app to a specific agent and marks it as
+// manually assigned so the reconciler will not rebalance or migrate it.
 func (r *AppRegistry) ReassignAgent(appID common.AppID, agentName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -201,6 +202,22 @@ func (r *AppRegistry) ReassignAgent(appID common.AppID, agentName string) error 
 
 	agent := agentName
 	app.AssignedAgent = &agent
+	app.ManuallyAssigned = true
+	return nil
+}
+
+// ClearManualAssignment removes the manual assignment flag, allowing the
+// reconciler to rebalance or migrate the app freely.
+func (r *AppRegistry) ClearManualAssignment(appID common.AppID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appID]
+	if !ok {
+		return fmt.Errorf("app not found: %s", appID)
+	}
+
+	app.ManuallyAssigned = false
 	return nil
 }
 

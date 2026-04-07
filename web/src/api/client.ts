@@ -231,6 +231,14 @@ export async function reassignApp(appId: string, node: string): Promise<void> {
   }
 }
 
+export async function clearReassignment(appId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/apps/${appId}/reassign`, { method: "DELETE" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
 export async function clearManualGateway(): Promise<GatewayInfo> {
   const response = await fetch(`${API_BASE}/gateway`, { method: "DELETE" });
   if (!response.ok) {
