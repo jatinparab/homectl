@@ -26,6 +26,7 @@ import {
   forceRepoUnlock,
   triggerStoragePrune,
   reassignApp,
+  clearReassignment,
 } from "./client";
 
 export function useApps() {
@@ -278,6 +279,16 @@ export function useReassignApp() {
   return useMutation({
     mutationFn: ({ appId, node }: { appId: string; node: string }) =>
       reassignApp(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useClearReassignment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (appId: string) => clearReassignment(appId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
     },

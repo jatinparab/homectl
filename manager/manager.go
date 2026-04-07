@@ -241,6 +241,56 @@ func (m *Manager) saveRestoreDisabled() {
 	}
 }
 
+// manualAssignmentsPath returns the path to the persisted manual-assignments file.
+func (m *Manager) manualAssignmentsPath() string {
+	return filepath.Join(m.stateDir, "manual-assignments.json")
+}
+
+// loadManualAssignments reads the persisted manual assignments file.
+// Returns a map of appID -> nodeName for apps that were manually assigned.
+func (m *Manager) loadManualAssignments() map[string]string {
+	data, err := os.ReadFile(m.manualAssignmentsPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			managerLog.Error("Failed to read manual-assignments file", "err", err)
+		}
+		return nil
+	}
+
+	var assignments map[string]string
+	if err := json.Unmarshal(data, &assignments); err != nil {
+		managerLog.Error("Failed to parse manual-assignments file", "err", err)
+		return nil
+	}
+	return assignments
+}
+
+// saveManualAssignments persists the current manually-assigned apps.
+func (m *Manager) saveManualAssignments() {
+	allApps := m.appRegistry.ListAll()
+	assignments := make(map[string]string)
+	for _, app := range allApps {
+		if app.ManuallyAssigned && app.AssignedAgent != nil {
+			assignments[string(app.ID)] = *app.AssignedAgent
+		}
+	}
+
+	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
+		managerLog.Error("Failed to create state dir", "err", err)
+		return
+	}
+
+	data, err := json.MarshalIndent(assignments, "", "  ")
+	if err != nil {
+		managerLog.Error("Failed to marshal manual-assignments", "err", err)
+		return
+	}
+
+	if err := os.WriteFile(m.manualAssignmentsPath(), data, 0644); err != nil {
+		managerLog.Error("Failed to write manual-assignments file", "err", err)
+	}
+}
+
 // DiscoverApps scans docker/v2 subdirectories for apps and registers them.
 // By default, traefik and adguard have DesiredRunning state, others have DesiredStopped.
 // Persisted state from the UI overrides defaults. The Register method is idempotent
@@ -256,6 +306,7 @@ func (m *Manager) DiscoverApps() {
 	appConfigs := m.loadAppConfigs()
 	persisted := m.loadDesiredState()
 	restoreDisabled := m.loadRestoreDisabled()
+	manualAssignments := m.loadManualAssignments()
 
 	count := 0
 	runByDefault := map[string]bool{
@@ -288,6 +339,11 @@ func (m *Manager) DiscoverApps() {
 		// Apply restore-disabled state
 		if restoreDisabled[entry.Name()] {
 			m.appRegistry.UpdateRestoreEnabled(appID, false)
+		}
+
+		// Restore manual assignment
+		if node, ok := manualAssignments[entry.Name()]; ok {
+			m.appRegistry.ReassignAgent(appID, node)
 		}
 
 		count++

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune, Agent } from "../api/types";
-import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp } from "../api/hooks";
+import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment } from "../api/hooks";
 import {
   StatusBadge,
   HealthBadge,
@@ -122,6 +122,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const desiredStateMutation = useUpdateAppDesiredState();
   const restoreMutation = useUpdateAppRestoreEnabled();
   const reassignMutation = useReassignApp();
+  const clearReassignMutation = useClearReassignment();
 
   const onlineAgents = agents?.filter((a) => a.online) ?? [];
   const [openKebab, setOpenKebab] = useState<string | null>(null);
@@ -282,6 +283,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span className="font-medium text-white truncate">{app.app_id}</span>
                     {app.is_global && <GlobalIcon />}
+                    {app.manually_assigned && <ManualAssignIcon />}
                     {app.backup_enabled && isUpcomingBackup && <UpcomingTag started={upcomingBackup?.started} kind="backup" />}
                     {app.backup_enabled && isUpcomingPrune && <UpcomingTag started={upcomingPrune?.started} kind="prune" />}
                     {app.backup_enabled && !app.restore_enabled && (
@@ -510,6 +512,16 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                         Move to {a.name}
                       </button>
                     ))}
+                    {app.manually_assigned && isFirst && (
+                      <button
+                        onClick={() => { clearReassignMutation.mutate(app.app_id); setOpenKebab(null); }}
+                        disabled={clearReassignMutation.isPending}
+                        className="w-full text-left px-3 py-1.5 text-xs text-orange-300 hover:bg-gray-700 disabled:opacity-50"
+                        title="Remove manual placement — reconciler will rebalance freely"
+                      >
+                        Clear assignment
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -543,6 +555,16 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
         </tr>
       )}
     </>
+  );
+}
+
+function ManualAssignIcon() {
+  return (
+    <span title="Manually assigned — reconciler will not rebalance or migrate" className="shrink-0 text-sky-400">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+        <path fillRule="evenodd" d="M10 1a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5A.75.75 0 0110 1zM5.05 3.05a.75.75 0 011.06 1.06L4.88 5.34a.75.75 0 01-1.06-1.06l1.23-1.23zm9.9 0l1.23 1.23a.75.75 0 01-1.06 1.06L13.89 4.11a.75.75 0 011.06-1.06zM10 6a4 4 0 100 8 4 4 0 000-8zm-6.75 4a.75.75 0 000 1.5h1.5a.75.75 0 000-1.5h-1.5zm13.5 0a.75.75 0 000 1.5h1.5a.75.75 0 000-1.5h-1.5zM5.05 15.89l-1.23 1.23a.75.75 0 001.06 1.06l1.23-1.23a.75.75 0 00-1.06-1.06zm9.9 1.23l1.23-1.23a.75.75 0 10-1.06-1.06l-1.23 1.23a.75.75 0 101.06 1.06zM10 17.25a.75.75 0 01.75.75v1.5a.75.75 0 01-1.5 0v-1.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
+      </svg>
+    </span>
   );
 }
 
