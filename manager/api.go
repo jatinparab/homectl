@@ -717,9 +717,45 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 		m.handleAPIAppSnapshots(w, r)
 	case "snapshot-refresh":
 		m.handleAPIAppSnapshotRefresh(w, r)
+	case "reassign":
+		m.handleAPIAppReassign(w, r)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
+}
+
+// handleAPIAppReassign handles POST requests to manually move an app to a different node.
+// POST /api/v1/apps/{appId}/reassign?node={nodeName}
+func (m *Manager) handleAPIAppReassign(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	appID := common.AppID(strings.SplitN(path, "/", 2)[0])
+
+	node := r.URL.Query().Get("node")
+	if node == "" {
+		http.Error(w, "node query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the target node is currently online
+	alive := m.aliveAgents()
+	if !alive[node] {
+		http.Error(w, "target node is not online", http.StatusBadRequest)
+		return
+	}
+
+	if err := m.appRegistry.ReassignAgent(appID, node); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	apiLog.Info("App manually reassigned", "app", appID, "node", node)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleAPIAppDesiredState handles PUT requests to update an app's desired state

@@ -188,6 +188,22 @@ func (r *AppRegistry) UpdateRestoreEnabled(appID common.AppID, enabled bool) err
 	return nil
 }
 
+// ReassignAgent manually moves an app to a different agent.
+// This is a one-time nudge; the reconciler may move the app again later.
+func (r *AppRegistry) ReassignAgent(appID common.AppID, agentName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appID]
+	if !ok {
+		return fmt.Errorf("app not found: %s", appID)
+	}
+
+	agent := agentName
+	app.AssignedAgent = &agent
+	return nil
+}
+
 // WithLock gives the reconcile loop raw access to the apps map under a write lock.
 func (r *AppRegistry) WithLock(fn func(apps map[common.AppID]*App)) {
 	r.mu.Lock()

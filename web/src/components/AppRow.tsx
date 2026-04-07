@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune } from "../api/types";
-import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled } from "../api/hooks";
+import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune, Agent } from "../api/types";
+import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp } from "../api/hooks";
 import {
   StatusBadge,
   HealthBadge,
@@ -56,6 +56,7 @@ interface AppRowProps {
   isUpcomingPrune?: boolean;
   upcomingPrune?: UpcomingPrune;
   onShowLogs?: (node: string, appId: string) => void;
+  agents?: Agent[];
 }
 
 interface ProgressAccumulator {
@@ -114,12 +115,15 @@ function accumulateResticProgress(state: ProgressAccumulator, current: ResticPro
   };
 }
 
-export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs }: AppRowProps) {
+export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs, agents }: AppRowProps) {
   const restartMutation = useRestartApp();
   const backupMutation = useTriggerBackup();
   const pruneMutation = useTriggerPrune();
   const desiredStateMutation = useUpdateAppDesiredState();
   const restoreMutation = useUpdateAppRestoreEnabled();
+  const reassignMutation = useReassignApp();
+
+  const onlineAgents = agents?.filter((a) => a.online) ?? [];
   const [openKebab, setOpenKebab] = useState<string | null>(null);
 
   useEffect(() => {
@@ -496,6 +500,16 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                         {app.restore_enabled ? "No Restore" : "Restore On"}
                       </button>
                     )}
+                    {!app.is_global && onlineAgents.filter((a) => a.name !== nr.node).map((a) => (
+                      <button
+                        key={a.name}
+                        onClick={() => { reassignMutation.mutate({ appId: app.app_id, node: a.name }); setOpenKebab(null); }}
+                        disabled={reassignMutation.isPending}
+                        className="w-full text-left px-3 py-1.5 text-xs text-sky-300 hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        Move to {a.name}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
