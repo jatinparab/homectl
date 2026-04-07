@@ -83,7 +83,7 @@ function App() {
               </button>
             </div>
           </div>
-          <AppsTable apps={sortedApps} isLoading={isLoading} upcomingBackup={upcomingBackup} upcomingPrune={upcomingPrune} onShowLogs={handleShowAppLogs} />
+          <AppsTable apps={sortedApps} isLoading={isLoading} upcomingBackup={upcomingBackup} upcomingPrune={upcomingPrune} onShowLogs={handleShowAppLogs} agents={agents} />
 
           {/* System Logs */}
           <SystemLogViewer />

@@ -51,6 +51,7 @@ export interface AppStatus {
   app_id: string;
   desired_state: string;
   assigned_agent: string | null;
+  manually_assigned: boolean;
   is_global: boolean; // Runs on all connected nodes
   observed_state: ObservedState; // Consolidated
   health: HealthStatus; // Consolidated
