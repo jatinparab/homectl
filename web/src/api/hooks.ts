@@ -25,6 +25,7 @@ import {
   clearManualGateway,
   forceRepoUnlock,
   triggerStoragePrune,
+  reassignApp,
 } from "./client";
 
 export function useApps() {
@@ -268,6 +269,17 @@ export function useTriggerStoragePrune() {
     mutationFn: ({ node }: { node: string }) => triggerStoragePrune(node),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["storage-status"] });
+    },
+  });
+}
+
+export function useReassignApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
+      reassignApp(appId, node),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
     },
   });
 }
