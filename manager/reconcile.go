@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -12,6 +12,8 @@ import (
 	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
 )
+
+var reconcileLog = slog.With("area", "reconcile")
 
 const (
 	reconcileInterval    = 30 * time.Second
@@ -28,14 +30,14 @@ func (m *Manager) StartReconcileLoop(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				ticker.Stop()
-				log.Println("Reconcile loop stopped")
+				reconcileLog.Info("Reconcile loop stopped")
 				return
 			case <-ticker.C:
 				m.reconcileOnce(time.Now())
 			}
 		}
 	}()
-	log.Println("Reconcile loop started")
+	reconcileLog.Info("Reconcile loop started")
 }
 
 // reconcileOnce runs one full reconciliation cycle with 5 sequential steps.
@@ -78,12 +80,12 @@ func (m *Manager) resolveGateway() {
 	if m.manualGatewayNode != "" {
 		if m.isTraefikHealthy(m.manualGatewayNode) {
 			if m.gatewayNode != m.manualGatewayNode {
-				log.Printf("Gateway: using manual selection %s", m.manualGatewayNode)
+				reconcileLog.Info("Gateway: using manual selection", "node", m.manualGatewayNode)
 			}
 			m.gatewayNode = m.manualGatewayNode
 			return
 		}
-		log.Printf("Gateway: manual selection %s no longer valid, falling back to automatic", m.manualGatewayNode)
+		reconcileLog.Warn("Gateway: manual selection no longer valid, falling back to automatic", "node", m.manualGatewayNode)
 	}
 
 	// Check if current gateway is still valid
@@ -91,7 +93,7 @@ func (m *Manager) resolveGateway() {
 		if m.isTraefikHealthy(m.gatewayNode) {
 			return
 		}
-		log.Printf("Gateway: %s no longer valid, scanning for new gateway", m.gatewayNode)
+		reconcileLog.Warn("Gateway: node no longer valid, scanning for new gateway", "node", m.gatewayNode)
 	}
 
 	// Scan all online agents for one with traefik running+healthy
@@ -101,9 +103,9 @@ func (m *Manager) resolveGateway() {
 			old := m.gatewayNode
 			m.gatewayNode = agent.Name
 			if old == "" {
-				log.Printf("Gateway: assigned %s", agent.Name)
+				reconcileLog.Info("Gateway: assigned", "node", agent.Name)
 			} else if old != agent.Name {
-				log.Printf("Gateway: transitioned %s -> %s", old, agent.Name)
+				reconcileLog.Info("Gateway: transitioned", "from", old, "to", agent.Name)
 			}
 			return
 		}
@@ -111,14 +113,14 @@ func (m *Manager) resolveGateway() {
 
 	// No valid gateway found
 	if m.gatewayNode != "" {
-		log.Printf("Gateway: no valid candidate, clearing (was %s)", m.gatewayNode)
+		reconcileLog.Warn("Gateway: no valid candidate, clearing", "was", m.gatewayNode)
 		m.gatewayNode = ""
 	}
 }
 
 // restartNewtOnGatewayChange restarts newt when gateway ownership changes.
 func (m *Manager) restartNewtOnGatewayChange(oldGateway, newGateway string) {
-	log.Printf("Gateway: changed %s -> %s, restarting newt", oldGateway, newGateway)
+	reconcileLog.Info("Gateway: changed, restarting newt", "from", oldGateway, "to", newGateway)
 
 	now := time.Now()
 	targetSet := make(map[string]bool)
@@ -147,10 +149,10 @@ func (m *Manager) restartNewtOnGatewayChange(oldGateway, newGateway string) {
 
 	for _, node := range targets {
 		if err := m.restartAppOnNode("newt", node); err != nil {
-			log.Printf("Gateway: failed restarting newt on %s: %s", node, err)
+			reconcileLog.Error("Gateway: failed restarting newt", "node", node, "err", err)
 			continue
 		}
-		log.Printf("Gateway: restarted newt on %s", node)
+		reconcileLog.Info("Gateway: restarted newt", "node", node)
 	}
 }
 
@@ -249,10 +251,10 @@ func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool, lastSee
 		}
 		agent := *app.AssignedAgent
 		if lastSeen, ok := lastSeenMap[agent]; ok && now.Sub(lastSeen) < deadAgentGracePeriod {
-			log.Printf("Agent %s offline, but within grace period for app %s (last seen %s ago)", agent, app.ID, now.Sub(lastSeen).Round(time.Second))
+			reconcileLog.Info("Agent offline within grace period", "agent", agent, "app", app.ID, "offline_for", now.Sub(lastSeen).Round(time.Second))
 			continue
 		}
-		log.Printf("Agent %s dead (past grace period), unassigning app %s", agent, app.ID)
+		reconcileLog.Info("Agent dead past grace period, unassigning app", "agent", agent, "app", app.ID)
 		app.AssignedAgent = nil
 	}
 }
@@ -273,12 +275,12 @@ func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool, exc
 		excluded := append(app.QuarantinedOn, excludedNodes[app.ID]...)
 		target := leastLoadedExcluding(apps, alive, excluded)
 		if target == "" {
-			log.Printf("No available agent for app %s (all quarantined or no agents)", app.ID)
+			reconcileLog.Warn("No available agent for app", "app", app.ID)
 			continue
 		}
 
 		app.AssignedAgent = &target
-		log.Printf("Assigned app %s to agent %s", app.ID, target)
+		reconcileLog.Info("Assigned app to agent", "app", app.ID, "agent", target)
 	}
 }
 
@@ -306,7 +308,7 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 			continue
 		}
 
-		log.Printf("Migrating app %s from %s to %s (quarantined)", app.ID, oldAgent, target)
+		reconcileLog.Info("Migrating app from quarantined agent", "app", app.ID, "from", oldAgent, "to", target)
 		app.QuarantinedOn = append(app.QuarantinedOn, oldAgent)
 		app.AssignedAgent = &target
 		app.Quarantined = false // clear so the new agent gets a fresh start
@@ -425,8 +427,7 @@ func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps
 				continue
 			}
 
-			log.Printf("Rebalancing app %s from %s (%d apps) to %s (%d apps)",
-				app.ID, maxAgent, maxLoad, minAgent, minLoad)
+			reconcileLog.Info("Rebalancing app", "app", app.ID, "from", maxAgent, "from_load", maxLoad, "to", minAgent, "to_load", minLoad)
 			app.AssignedAgent = &minAgent
 			moved = true
 			break // move one app per inner loop iteration
@@ -449,7 +450,7 @@ func (m *Manager) ForceRebalance() {
 		forceRebalance(apps, alive, excludedNodes)
 	})
 
-	log.Println("Force rebalance completed")
+	reconcileLog.Info("Force rebalance completed")
 }
 
 // leastLoadedExcluding returns the alive agent with the fewest assigned apps,

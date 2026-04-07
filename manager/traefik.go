@@ -3,7 +3,7 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +13,8 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"gopkg.in/yaml.v3"
 )
+
+var traefikMgrLog = slog.With("area", "traefik")
 
 // FlexPort unmarshals a port from either a JSON number or a JSON string.
 type FlexPort int
@@ -109,7 +111,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	dockerV2Dir := filepath.Join(m.repoDir, "docker", "v2")
 	entries, err := os.ReadDir(dockerV2Dir)
 	if err != nil {
-		log.Printf("Failed to read docker/v2 directory: %s", err)
+		traefikMgrLog.Error("Failed to read docker/v2 directory", "err", err)
 		return configs
 	}
 
@@ -129,7 +131,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 
 		var cfg HomectlConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			log.Printf("Failed to parse %s: %s", configPath, err)
+			traefikMgrLog.Error("Failed to parse config", "path", configPath, "err", err)
 			continue
 		}
 

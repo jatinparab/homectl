@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os/exec"
 	"sort"
 	"strings"
@@ -16,6 +16,8 @@ import (
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var backupLog = slog.With("area", "backup")
 
 // ProgressCallback is called with progress updates during restic operations
 type ProgressCallback func(*common.ResticProgress)
@@ -128,7 +130,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 		for scanner.Scan() {
 			line := scanner.Text()
 			stderrLines = append(stderrLines, line)
-			log.Printf("[restic:%s:err] %s", prefix, line)
+			backupLog.Info("restic stderr", "op", prefix, "line", line)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -143,7 +145,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 		var status resticStatusLine
 		if err := json.Unmarshal([]byte(line), &status); err != nil {
 			// Not valid JSON, just log it
-			log.Printf("[restic:%s] %s", prefix, line)
+			backupLog.Info("restic output", "op", prefix, "line", line)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -176,12 +178,12 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 				onLog("__PROGRESS__:" + string(progressJSON))
 			}
 		} else if status.MessageType == "summary" {
-			log.Printf("[restic:%s] completed", prefix)
+			backupLog.Info("restic completed", "op", prefix)
 			if onLog != nil {
 				onLog("Completed")
 			}
 		} else {
-			log.Printf("[restic:%s] %s", prefix, line)
+			backupLog.Info("restic output", "op", prefix, "line", line)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -211,7 +213,7 @@ func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress
 	if err != nil {
 		for _, line := range stderrLines {
 			if containsNoSnapshotError(line) {
-				log.Printf("Restore for %s: no snapshots available (valid case, continuing startup)", appID)
+				backupLog.Info("No snapshots available for restore (valid case, continuing startup)", "app", appID)
 				return nil
 			}
 		}
@@ -273,7 +275,7 @@ func (r *RepoRestic) runLines(prefix string, cmd *exec.Cmd, onLog LogCallback) e
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
-			log.Printf("[restic:%s] %s", prefix, line)
+			backupLog.Info("restic output", "op", prefix, "line", line)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -329,12 +331,12 @@ func (r *RepoRestic) tryUnlockOnLockConflict(ctx context.Context, op string, run
 		return
 	}
 	msg := fmt.Sprintf("Restic %s failed with lock conflict (exit code 11); running restic unlock once", op)
-	log.Printf("[restic:%s] %s", op, msg)
+	backupLog.Info("restic lock conflict, attempting unlock", "op", op)
 	if onLog != nil {
 		onLog(msg)
 	}
 	if err := r.Unlock(ctx, onLog); err != nil {
-		log.Printf("[restic:%s] restic unlock failed after lock conflict: %v", op, err)
+		backupLog.Info("restic unlock failed after lock conflict", "op", op, "err", err)
 		if onLog != nil {
 			onLog("restic unlock failed after lock conflict: " + err.Error())
 		}

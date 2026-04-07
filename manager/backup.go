@@ -1,11 +1,13 @@
 package manager
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var backupMgrLog = slog.With("area", "backup")
 
 // BackupInterval is how long since last backup before an app is considered stale.
 const BackupInterval = 1 * time.Hour
@@ -39,23 +41,23 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 		busy := m.isAppBackupBusy(a.AgentID, a.AppID)
 		if !a.BackupStarted && busy {
 			a.BackupStarted = true
-			log.Printf("Backup assignment: %s/%s started", a.AgentID, a.AppID)
+			backupMgrLog.Info("Backup assignment started", "agent", a.AgentID, "app", a.AppID)
 			continue
 		}
 		if a.BackupStarted && !busy {
-			log.Printf("Backup assignment: %s/%s completed", a.AgentID, a.AppID)
+			backupMgrLog.Info("Backup assignment completed", "agent", a.AgentID, "app", a.AppID)
 			m.triggerGlobalRestore(a.AgentID, a.AppID)
 			delete(m.backupAssignments, appID)
 			continue
 		}
 		if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
-			log.Printf("Backup assignment: %s/%s completed (LastBackupAt updated)", a.AgentID, a.AppID)
+			backupMgrLog.Info("Backup assignment completed (LastBackupAt updated)", "agent", a.AgentID, "app", a.AppID)
 			m.triggerGlobalRestore(a.AgentID, a.AppID)
 			delete(m.backupAssignments, appID)
 			continue
 		}
 		if !a.BackupStarted && time.Since(a.AssignedAt) > 5*time.Minute {
-			log.Printf("Backup assignment: %s/%s timed out (not started in 5m)", a.AgentID, a.AppID)
+			backupMgrLog.Info("Backup assignment timed out (not started in 5m)", "agent", a.AgentID, "app", a.AppID)
 			delete(m.backupAssignments, appID)
 		}
 	}
@@ -65,17 +67,17 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 		busy := m.isAppPruneBusy(p.AgentID, p.AppID)
 		if !p.BackupStarted && busy {
 			p.BackupStarted = true
-			log.Printf("Prune assignment: %s/%s started", p.AgentID, p.AppID)
+			backupMgrLog.Info("Prune assignment started", "agent", p.AgentID, "app", p.AppID)
 			return m.backupAssignments, p
 		}
 		if p.BackupStarted && !busy {
-			log.Printf("Prune assignment: %s/%s completed", p.AgentID, p.AppID)
+			backupMgrLog.Info("Prune assignment completed", "agent", p.AgentID, "app", p.AppID)
 			m.pruneAssignment = nil
 		} else if m.appPruneAtNewer(p.AgentID, p.AppID, p.AssignedAt) {
-			log.Printf("Prune assignment: %s/%s completed (LastPruneAt updated)", p.AgentID, p.AppID)
+			backupMgrLog.Info("Prune assignment completed (LastPruneAt updated)", "agent", p.AgentID, "app", p.AppID)
 			m.pruneAssignment = nil
 		} else if !p.BackupStarted && time.Since(p.AssignedAt) > 5*time.Minute {
-			log.Printf("Prune assignment: %s/%s timed out (not started in 5m)", p.AgentID, p.AppID)
+			backupMgrLog.Info("Prune assignment timed out (not started in 5m)", "agent", p.AgentID, "app", p.AppID)
 			m.pruneAssignment = nil
 		} else {
 			return m.backupAssignments, p
@@ -103,7 +105,7 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 				AppID:      c.AppID,
 				AssignedAt: now,
 			}
-			log.Printf("Backup assignment: created %s/%s", c.AgentID, c.AppID)
+			backupMgrLog.Info("Backup assignment created", "agent", c.AgentID, "app", c.AppID)
 		}
 		m.lastScheduledWorkKind = AssignmentKindBackup
 		return m.backupAssignments, m.pruneAssignment
@@ -120,7 +122,7 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 			AssignedAt: time.Now(),
 		}
 		m.lastScheduledWorkKind = AssignmentKindPrune
-		log.Printf("Prune assignment: created %s/%s", pruneAgent, pruneApp)
+		backupMgrLog.Info("Prune assignment created", "agent", pruneAgent, "app", pruneApp)
 		return m.backupAssignments, m.pruneAssignment
 	}
 
@@ -229,13 +231,13 @@ func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 			return
 		}
 		if !alive[cur.AgentID] {
-			log.Printf("%s assignment: clearing %s/%s (agent dead)", prefix, cur.AgentID, cur.AppID)
+			backupMgrLog.Info("Clearing assignment (agent dead)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 			*a = nil
 			return
 		}
 		agent, ok := m.leaseManager.GetAgent(cur.AgentID)
 		if !ok {
-			log.Printf("%s assignment: clearing %s/%s (agent not found)", prefix, cur.AgentID, cur.AppID)
+			backupMgrLog.Info("Clearing assignment (agent not found)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 			*a = nil
 			return
 		}
@@ -247,13 +249,13 @@ func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 				return
 			}
 			if report.ObservedState != common.ObservedRunning {
-				log.Printf("%s assignment: clearing %s/%s (app is %s)", prefix, cur.AgentID, cur.AppID, report.ObservedState)
+				backupMgrLog.Info("Clearing assignment (app not running)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID, "state", report.ObservedState)
 				*a = nil
 				return
 			}
 			return
 		}
-		log.Printf("%s assignment: clearing %s/%s (app not in agent reports)", prefix, cur.AgentID, cur.AppID)
+		backupMgrLog.Info("Clearing assignment (app not in agent reports)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 		*a = nil
 	}
 
@@ -304,7 +306,7 @@ func (m *Manager) triggerGlobalRestore(agentID string, appID common.AppID) {
 
 	if len(pending) > 0 {
 		m.pendingGlobalRestores[appID] = pending
-		log.Printf("Global restore: queued %s for %d non-gateway agents", appID, len(pending))
+		backupMgrLog.Info("Global restore queued", "app", appID, "agents", len(pending))
 	}
 }
 

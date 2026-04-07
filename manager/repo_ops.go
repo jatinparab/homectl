@@ -3,12 +3,14 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	agentpkg "github.com/jatinparab/homectl/agent"
 )
+
+var repoMgrLog = slog.With("area", "repo")
 
 // RepoCheckInterval is the minimum interval between repo-wide restic checks.
 const RepoCheckInterval = 24 * time.Hour
@@ -38,14 +40,14 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		}
 		m.repoMu.Unlock()
 		if shouldLog {
-			log.Printf("Repo ops: gateway offline (%s), skipping status sync", gateway)
+			repoMgrLog.Info("Gateway offline, skipping status sync", "gateway", gateway)
 		}
 		return
 	}
 
 	agentCfg := m.config.GetAgentConfig(gateway)
 	if agentCfg == nil {
-		log.Printf("Repo ops: gateway %s not in config, skipping", gateway)
+		repoMgrLog.Info("Gateway not in config, skipping", "gateway", gateway)
 		return
 	}
 
@@ -82,19 +84,19 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		m.repoMu.Unlock()
 
 		if prevCheckBusy != check.Busy || prevUnlockBusy != unlock.Busy {
-			log.Printf("Repo ops: status busy changed (check=%v unlock=%v)", check.Busy, unlock.Busy)
+			repoMgrLog.Info("Status busy changed", "check", check.Busy, "unlock", unlock.Busy)
 		}
 		if check.LastAt != nil && prevLastCheckAt.Before(*check.LastAt) {
-			log.Printf("Repo ops: check completed at %s (err=%q)", check.LastAt.Format(time.RFC3339), check.LastError)
+			repoMgrLog.Info("Check completed", "at", check.LastAt.Format(time.RFC3339), "err", check.LastError)
 		}
 		if unlock.LastAt != nil && prevLastUnlockAt.Before(*unlock.LastAt) {
-			log.Printf("Repo ops: unlock completed at %s (err=%q)", unlock.LastAt.Format(time.RFC3339), unlock.LastError)
+			repoMgrLog.Info("Unlock completed", "at", unlock.LastAt.Format(time.RFC3339), "err", unlock.LastError)
 		}
 		if prevCheckErr != check.LastError && check.LastError != "" {
-			log.Printf("Repo ops: check error updated: %q", check.LastError)
+			repoMgrLog.Info("Check error updated", "err", check.LastError)
 		}
 		if prevUnlockErr != unlock.LastError && unlock.LastError != "" {
-			log.Printf("Repo ops: unlock error updated: %q", unlock.LastError)
+			repoMgrLog.Info("Unlock error updated", "err", unlock.LastError)
 		}
 
 		if changed {
@@ -108,7 +110,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		}
 		m.repoMu.Unlock()
 		if shouldLog {
-			log.Printf("Repo ops: failed to fetch status from gateway %s (%s)", gateway, agentCfg.IP)
+			repoMgrLog.Info("Failed to fetch status from gateway", "gateway", gateway, "ip", agentCfg.IP)
 		}
 	}
 
@@ -127,14 +129,14 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 	m.repoMu.Unlock()
 
 	if busy {
-		log.Printf("Repo ops: repo busy (check=%v unlock=%v), not scheduling", check.Busy, unlock.Busy)
+		repoMgrLog.Info("Repo busy, not scheduling", "check", check.Busy, "unlock", unlock.Busy)
 		return
 	}
 	if !last.IsZero() && now.Sub(last) < RepoCheckInterval {
 		return
 	}
 	if m.anyBackupBusy() || m.anyPruneBusy() || m.anyRestoreBusy() {
-		log.Printf("Repo ops: backup in progress, not scheduling")
+		repoMgrLog.Info("Backup in progress, not scheduling repo check")
 		return
 	}
 	// Avoid starting a repo check while a backup assignment is pending.
@@ -142,19 +144,19 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 	hasAssignment := len(m.backupAssignments) > 0 || m.pruneAssignment != nil
 	m.backupMu.Unlock()
 	if hasAssignment {
-		log.Printf("Repo ops: backup scheduled, not scheduling")
+		repoMgrLog.Info("Backup scheduled, not scheduling repo check")
 		return
 	}
 
 	if err := m.triggerRepoCheckOnAgent(agentCfg.IP); err != nil {
-		log.Printf("Repo check: trigger failed: %s", err)
+		repoMgrLog.Info("Repo check trigger failed", "err", err)
 		return
 	}
 
 	m.repoMu.Lock()
 	m.repoCheckBusy = true
 	m.repoMu.Unlock()
-	log.Printf("Repo check: triggered on gateway %s", gateway)
+	repoMgrLog.Info("Repo check triggered on gateway", "gateway", gateway)
 }
 
 func (m *Manager) getGatewayNode() string {
