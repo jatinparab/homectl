@@ -5,20 +5,22 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"sync"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 	"gopkg.in/yaml.v3"
 )
+
+var dockerLog = slog.With("area", "docker")
 
 // FileReader is an interface for reading files and listing directories
 type FileReader interface {
@@ -327,7 +329,7 @@ func waitForService(ctx context.Context, port int, tries int, interval time.Dura
 	url := fmt.Sprintf("http://localhost:%d", port)
 	for i := 0; i < tries; i++ {
 		if err := ping(url); err != nil {
-			log.Printf("Service %s not ready: %v (try %d of %d)", url, err, i+1, tries)
+			dockerLog.Info("Service not ready", "url", url, "err", err, "try", i+1, "tries", tries)
 		} else {
 			return nil
 		}

@@ -3,13 +3,15 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var leaseLog = slog.With("area", "lease")
 
 // AgentInfo represents a registered agent
 type AgentInfo struct {
@@ -87,7 +89,7 @@ func (lm *LeaseManager) cleanupExpired() {
 	now := time.Now()
 	for name, agent := range lm.agents {
 		if now.Sub(agent.LastSeen) > staleAgentTTL {
-			log.Printf("Agent %s stale, removing (last seen: %v)", name, agent.LastSeen)
+			leaseLog.Info("Agent stale, removing", "agent", name, "last_seen", agent.LastSeen)
 			delete(lm.agents, name)
 		}
 	}
@@ -104,7 +106,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 		existing.IP = ip
 		existing.AppReports = reports
 		existing.Metrics = metrics
-		log.Printf("Agent %s renewed lease (%d app reports)", name, len(reports))
+		leaseLog.Info("Agent renewed lease", "agent", name, "reports", len(reports))
 	} else {
 		lm.agents[name] = &AgentInfo{
 			Name:         name,
@@ -114,7 +116,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 			AppReports:   reports,
 			Metrics:      metrics,
 		}
-		log.Printf("Agent %s registered (IP: %s, %d app reports)", name, ip, len(reports))
+		leaseLog.Info("Agent registered", "agent", name, "ip", ip, "reports", len(reports))
 	}
 }
 
@@ -125,7 +127,7 @@ func (lm *LeaseManager) Unregister(name string) {
 
 	if _, ok := lm.agents[name]; ok {
 		delete(lm.agents, name)
-		log.Printf("Agent %s unregistered", name)
+		leaseLog.Info("Agent unregistered", "agent", name)
 	}
 }
 

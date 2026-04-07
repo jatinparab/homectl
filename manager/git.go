@@ -2,12 +2,14 @@ package manager
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+var gitLog = slog.With("area", "git")
 
 // GitSync performs a git pull to sync the repository
 func (m *Manager) GitSync() error {
@@ -26,7 +28,7 @@ func (m *Manager) GitSync() error {
 		return fmt.Errorf("git pull failed: %s, output: %s", err, string(output))
 	}
 
-	log.Printf("Git sync completed: %s", strings.TrimSpace(string(output)))
+	gitLog.Info("Git sync completed", "output", strings.TrimSpace(string(output)))
 
 	// Decrypt secrets after sync (.env.enc → .env files)
 	decryptScript := filepath.Join(m.repoDir, "scripts", "decrypt-secrets")
@@ -35,9 +37,9 @@ func (m *Manager) GitSync() error {
 		decryptCmd.Dir = m.repoDir
 		decryptOutput, err := decryptCmd.CombinedOutput()
 		if err != nil {
-			log.Printf("Warning: decrypt-secrets failed: %s, output: %s", err, string(decryptOutput))
+			gitLog.Info("Warning: decrypt-secrets failed", "err", err, "output", string(decryptOutput))
 		} else {
-			log.Printf("Secrets decrypted: %s", strings.TrimSpace(string(decryptOutput)))
+			gitLog.Info("Secrets decrypted", "output", strings.TrimSpace(string(decryptOutput)))
 		}
 	}
 

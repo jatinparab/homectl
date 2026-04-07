@@ -2,13 +2,15 @@ package manager
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var pruneStateLog = slog.With("area", "backup")
 
 type PruneState struct {
 	LastPruneAt    time.Time `json:"last_prune_at,omitempty"`
@@ -23,14 +25,14 @@ func (m *Manager) loadPruneState() {
 	data, err := os.ReadFile(m.pruneStatePath())
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Failed to read prune-state file: %s", err)
+			pruneStateLog.Info("Failed to read prune-state file", "err", err)
 		}
 		return
 	}
 
 	var raw map[string]PruneState
 	if err := json.Unmarshal(data, &raw); err != nil {
-		log.Printf("Failed to parse prune-state file: %s", err)
+		pruneStateLog.Info("Failed to parse prune-state file", "err", err)
 		return
 	}
 
@@ -51,17 +53,17 @@ func (m *Manager) savePruneState() {
 	m.backupMu.Unlock()
 
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
-		log.Printf("Failed to create state dir: %s", err)
+		pruneStateLog.Info("Failed to create state dir", "err", err)
 		return
 	}
 
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
-		log.Printf("Failed to marshal prune-state: %s", err)
+		pruneStateLog.Info("Failed to marshal prune-state", "err", err)
 		return
 	}
 
 	if err := os.WriteFile(m.pruneStatePath(), data, 0644); err != nil {
-		log.Printf("Failed to write prune-state file: %s", err)
+		pruneStateLog.Info("Failed to write prune-state file", "err", err)
 	}
 }

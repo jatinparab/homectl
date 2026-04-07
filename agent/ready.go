@@ -3,13 +3,15 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var readyLog = slog.With("area", "ready")
 
 const (
 	// ReadyServerPort is the port for the ready server
@@ -70,7 +72,7 @@ func (rs *ReadyServer) Start() error {
 		Handler: mux,
 	}
 
-	log.Printf("Ready server starting on :%d", ReadyServerPort)
+	readyLog.Info("Ready server starting", "port", ReadyServerPort)
 	return rs.server.ListenAndServe()
 }
 
@@ -289,7 +291,7 @@ func (rs *ReadyServer) handleTriggerBackup(w http.ResponseWriter, r *http.Reques
 	rt.Backup.LastBackupAt = time.Time{}
 	rs.agent.runtimeMu.Unlock()
 
-	log.Printf("Backup triggered for %s via API", appID)
+	readyLog.Info("Backup triggered via API", "app", appID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "backup_triggered"})
@@ -320,9 +322,9 @@ func (rs *ReadyServer) handleRestart(w http.ResponseWriter, r *http.Request) {
 	// If currently running, stop it — the reconcile loop will start it again
 	if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
 		rs.agent.executor.Submit(ActionStop(common.AppID(appID)))
-		log.Printf("Restart triggered for %s via API (stopping, will restart)", appID)
+		readyLog.Info("Restart triggered via API (stopping, will restart)", "app", appID)
 	} else {
-		log.Printf("Restart triggered for %s via API (not running, will start on next reconcile)", appID)
+		readyLog.Info("Restart triggered via API (not running, will start on next reconcile)", "app", appID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -338,12 +340,12 @@ func (rs *ReadyServer) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rs.agent.SyncConfigs(); err != nil {
-		log.Printf("Sync failed: %s", err)
+		readyLog.Info("Sync failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Sync completed via API")
+	readyLog.Info("Sync completed via API")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "synced"})
 }
@@ -418,7 +420,7 @@ func (rs *ReadyServer) handleSnapshotLs(w http.ResponseWriter, r *http.Request) 
 
 	entries, err := rs.agent.restic.ListSnapshotFiles(r.Context(), snapshotID, path)
 	if err != nil {
-		log.Printf("ListSnapshotFiles(%s, %s) error: %s", snapshotID, path, err)
+		readyLog.Info("ListSnapshotFiles error", "snapshot", snapshotID, "path", path, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

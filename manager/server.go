@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 
 	"github.com/jatinparab/homectl/common"
 )
+
+var serverLog = slog.With("area", "server")
 
 // NewServer creates and returns an HTTP server (for graceful shutdown support)
 func (m *Manager) NewServer() *http.Server {
@@ -71,8 +73,8 @@ func (m *Manager) NewServer() *http.Server {
 // Start starts the HTTP server (blocking)
 func (m *Manager) Start() error {
 	server := m.NewServer()
-	log.Printf("Manager server starting on %s", server.Addr)
-	log.Printf("Serving files from: %s", m.repoDir)
+	serverLog.Info("Manager server starting", "addr", server.Addr)
+	serverLog.Info("Serving files from", "dir", m.repoDir)
 	return server.ListenAndServe()
 }
 
@@ -306,11 +308,11 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		http.Error(w, "Wating", http.StatusOK)
 	}
 
-	log.Printf("Returning desired apps for agent %s: %d apps", agentID, len(response.Apps))
+	serverLog.Info("Returning desired apps", "agent", agentID, "count", len(response.Apps))
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Failed to encode desired apps response: %s", err)
+		serverLog.Error("Failed to encode desired apps response", "err", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
@@ -325,7 +327,7 @@ func (m *Manager) handleTraefikConfig(w http.ResponseWriter, r *http.Request, ag
 
 	config, err := m.GenerateTraefikConfig(agentID)
 	if err != nil {
-		log.Printf("Failed to generate traefik config for %s: %s", agentID, err)
+		serverLog.Error("Failed to generate traefik config", "agent", agentID, "err", err)
 		http.Error(w, "Failed to generate config", http.StatusInternalServerError)
 		return
 	}
@@ -401,10 +403,10 @@ func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		log.Printf("Error creating docker sync archive: %s", err)
+		serverLog.Error("Error creating docker sync archive", "err", err)
 		// Can't send error to client as we've already started writing
 		return
 	}
 
-	log.Printf("Docker sync archive sent successfully")
+	serverLog.Info("Docker sync archive sent successfully")
 }

@@ -3,7 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +13,8 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 )
+
+var managerLog = slog.With("area", "manager")
 
 // Config holds manager configuration
 type Config struct {
@@ -137,14 +139,14 @@ func (m *Manager) loadDesiredState() map[string]common.DesiredState {
 	data, err := os.ReadFile(m.desiredStatePath())
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Failed to read desired-state file: %s", err)
+			managerLog.Error("Failed to read desired-state file", "err", err)
 		}
 		return nil
 	}
 
 	var states map[string]common.DesiredState
 	if err := json.Unmarshal(data, &states); err != nil {
-		log.Printf("Failed to parse desired-state file: %s", err)
+		managerLog.Error("Failed to parse desired-state file", "err", err)
 		return nil
 	}
 	return states
@@ -171,18 +173,18 @@ func (m *Manager) saveDesiredState() {
 	}
 
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
-		log.Printf("Failed to create state dir: %s", err)
+		managerLog.Error("Failed to create state dir", "err", err)
 		return
 	}
 
 	data, err := json.MarshalIndent(states, "", "  ")
 	if err != nil {
-		log.Printf("Failed to marshal desired-state: %s", err)
+		managerLog.Error("Failed to marshal desired-state", "err", err)
 		return
 	}
 
 	if err := os.WriteFile(m.desiredStatePath(), data, 0644); err != nil {
-		log.Printf("Failed to write desired-state file: %s", err)
+		managerLog.Error("Failed to write desired-state file", "err", err)
 	}
 }
 
@@ -196,14 +198,14 @@ func (m *Manager) loadRestoreDisabled() map[string]bool {
 	data, err := os.ReadFile(m.restoreDisabledPath())
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("Failed to read restore-disabled file: %s", err)
+			managerLog.Error("Failed to read restore-disabled file", "err", err)
 		}
 		return nil
 	}
 
 	var disabled []string
 	if err := json.Unmarshal(data, &disabled); err != nil {
-		log.Printf("Failed to parse restore-disabled file: %s", err)
+		managerLog.Error("Failed to parse restore-disabled file", "err", err)
 		return nil
 	}
 	result := make(map[string]bool, len(disabled))
@@ -224,18 +226,18 @@ func (m *Manager) saveRestoreDisabled() {
 	}
 
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
-		log.Printf("Failed to create state dir: %s", err)
+		managerLog.Error("Failed to create state dir", "err", err)
 		return
 	}
 
 	data, err := json.MarshalIndent(disabled, "", "  ")
 	if err != nil {
-		log.Printf("Failed to marshal restore-disabled: %s", err)
+		managerLog.Error("Failed to marshal restore-disabled", "err", err)
 		return
 	}
 
 	if err := os.WriteFile(m.restoreDisabledPath(), data, 0644); err != nil {
-		log.Printf("Failed to write restore-disabled file: %s", err)
+		managerLog.Error("Failed to write restore-disabled file", "err", err)
 	}
 }
 
@@ -247,7 +249,7 @@ func (m *Manager) DiscoverApps() {
 	dockerV2Dir := filepath.Join(m.repoDir, "docker", "v2")
 	entries, err := os.ReadDir(dockerV2Dir)
 	if err != nil {
-		log.Printf("Failed to read docker/v2 directory for app discovery: %s", err)
+		managerLog.Error("Failed to read docker/v2 directory for app discovery", "err", err)
 		return
 	}
 
@@ -290,5 +292,5 @@ func (m *Manager) DiscoverApps() {
 
 		count++
 	}
-	log.Printf("App discovery: found %d apps in docker/v2", count)
+	managerLog.Info("App discovery complete", "count", count)
 }

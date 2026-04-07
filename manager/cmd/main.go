@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jatinparab/homectl/config"
+	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager"
 	"github.com/jatinparab/homectl/utils"
 )
@@ -17,19 +18,20 @@ import (
 func main() {
 	// Load .env file if present (local dev)
 	if err := utils.LoadEnv(".env"); err != nil {
-		log.Printf("Warning: failed to load .env: %s", err)
+		slog.Info("Warning: failed to load .env", "err", err)
 	}
 
 	hostname := utils.GetHostname()
+	logger.Init("manager", hostname)
 	repoDir := config.GetGitRepoDir(hostname)
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
 
 	// Best-effort initial git sync
-	log.Println("Performing initial git sync...")
+	slog.Info("Performing initial git sync")
 	if err := mgr.GitSync(); err != nil {
-		log.Printf("Warning: Initial git sync failed: %s (continuing anyway)", err)
+		slog.Info("Warning: Initial git sync failed (continuing anyway)", "err", err)
 	}
 
 	// Discover apps from docker/v2 and start reconcile loop
@@ -42,10 +44,11 @@ func main() {
 	// Start server in goroutine
 	server := mgr.NewServer()
 	go func() {
-		log.Printf("Manager server starting on :%d", port)
-		log.Printf("Serving files from: %s", repoDir)
+		slog.Info("Manager server starting", "port", port)
+		slog.Info("Serving files from", "dir", repoDir)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %s", err)
+			slog.Error("Server failed", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -53,18 +56,18 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Println("Manager running. Press Ctrl+C to stop.")
+	slog.Info("Manager running. Press Ctrl+C to stop.")
 	<-sigCh
 
 	// Graceful shutdown
-	log.Println("Shutting down...")
+	slog.Info("Shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %s", err)
+		slog.Info("Server shutdown error", "err", err)
 	}
 
 	mgr.Stop()
-	log.Println("Manager stopped")
+	slog.Info("Manager stopped")
 }
