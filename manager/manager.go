@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,11 @@ type Manager struct {
 	gatewayNode       string
 	manualGatewayNode string // User-selected gateway (overrides automatic selection)
 	gatewayMu         sync.Mutex
+
+	linkMu         sync.RWMutex
+	agentLinks     map[string]*agentLinkPeer // by agent name
+	agentLinksByIP map[string]*agentLinkPeer
+	tcpListener    net.Listener
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -92,6 +98,8 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		backupAssignments:     make(map[common.AppID]*BackupAssignment),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
 		pruneState:            make(map[common.AppID]PruneState),
+		agentLinks:            make(map[string]*agentLinkPeer),
+		agentLinksByIP:        make(map[string]*agentLinkPeer),
 	}
 	mgr.loadRepoState()
 	mgr.loadPruneState()
@@ -125,6 +133,9 @@ func (m *Manager) Stop() {
 	}
 	if m.leaseManager != nil {
 		m.leaseManager.Stop()
+	}
+	if m.tcpListener != nil {
+		_ = m.tcpListener.Close()
 	}
 }
 

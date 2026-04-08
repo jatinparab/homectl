@@ -23,6 +23,7 @@ const (
 	// UnhealthyThreshold is the number of consecutive unhealthy checks before triggering a restart
 	UnhealthyThreshold = 5
 )
+
 var agentLog = slog.With("area", "agent")
 
 // Agent manages docker applications on a host
@@ -108,6 +109,8 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 	}
+	a.managerClient.SetIdentity(name, ip)
+	a.managerClient.SetRequestHandler(a.handleManagerLinkRequest)
 	a.backupCond = sync.NewCond(&a.backupMu)
 	a.loadRepoOpsState()
 	return a
@@ -142,6 +145,14 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 
 // tryConnect attempts to connect to the manager and sync docker configs
 func (a *Agent) tryConnect() {
+	if !a.managerClient.IsConnected() {
+		if err := a.managerClient.Connect(a.agentConfig.ConnectionTimeout); err != nil {
+			agentLog.Info("Manager TCP link unavailable (will retry)", "url", a.managerURL, "err", err)
+			a.setConnected(false)
+			return
+		}
+	}
+
 	if err := a.managerClient.Health(); err != nil {
 		agentLog.Info("Manager not available (will retry)", "url", a.managerURL, "err", err)
 		a.setConnected(false)
@@ -155,7 +166,7 @@ func (a *Agent) tryConnect() {
 	}
 
 	a.setConnected(true)
-	agentLog.Info("Connected to manager", "url", a.managerURL)
+	agentLog.Info("Connected to manager over TCP", "url", a.managerURL)
 }
 
 // SyncConfigs pulls docker configs from the manager and reloads apps.
@@ -205,28 +216,17 @@ func (a *Agent) IsConnected() bool {
 	return a.connected
 }
 
-// Start starts all background loops (heartbeat, reconnection, reconcile, sensor, ready server, logs server)
+// Start starts all background loops.
 func (a *Agent) Start() {
-	a.wg.Add(6)
+	a.wg.Add(5)
 
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
 	go a.sensorLoop(a.sensorCtx)
-	go a.readyServerLoop()
 	go a.snapshotCacheLoop()
 
 	agentLog.Info("Agent started", "heartbeat", a.agentConfig.RenewalInterval, "retry", a.agentConfig.RetryInterval, "reconcile", a.agentConfig.ReconcileInterval)
-}
-
-// readyServerLoop runs the ready server for keepalived health checks
-func (a *Agent) readyServerLoop() {
-	defer a.wg.Done()
-
-	a.readyServer = NewReadyServer(a)
-	if err := a.readyServer.Start(); err != nil {
-		agentLog.Info("Ready server stopped", "err", err)
-	}
 }
 
 // heartbeatLoop sends periodic heartbeats to the manager.
