@@ -263,7 +263,7 @@ setup-secrets-3:
 # Web UI
 build-web:
 	@echo "$(GREEN)Building web UI...$(NC)"
-	cd web && npm install && npm run build
+	cd web && npm --loglevel=error install && npm --loglevel=error run build
 	rm -rf manager/ui/dist
 	mkdir -p manager/ui
 	cp -r web/dist manager/ui/
