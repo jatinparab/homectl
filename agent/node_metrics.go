@@ -114,7 +114,7 @@ func readMemoryUsage() (total, used uint64, percent float64) {
 	}
 
 	total = memTotalKB * 1024
-	available := max(memAvailKB*1024, total)
+	available := min(memAvailKB*1024, total)
 	used = total - available
 	percent = float64(used) / float64(total) * 100
 	return total, used, percent
