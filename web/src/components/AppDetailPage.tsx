@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useApp, useContainers, useUpdateAppDesiredState, useRestartApp, useTriggerBackup, useSnapshots, useGatewayInfo } from '../api/hooks'
 import { HealthBadge, PhaseBadge, DesiredToggle, ContainerStateBadge } from './StatusBadge'
-import { openStreamSocket, decodeStreamMessage } from '../api/ws'
+import { useLiveState } from '../api/live'
 import type { NodeReport } from '../api/types'
 
 function timeAgo(dateStr?: string): string {
@@ -24,6 +24,7 @@ let logIdSeq = 0
 function useAppLogs(appId: string, node: string | null) {
   const [lines, setLines] = useState<LogLine[]>([])
   const seenRef = useRef<Set<string>>(new Set())
+  const { subscribe, unsubscribe } = useLiveState()
 
   const addLines = useCallback((raw: string) => {
     const incoming = raw.split('\n').filter(Boolean)
@@ -44,16 +45,13 @@ function useAppLogs(appId: string, node: string | null) {
     seenRef.current.clear()
     setLines([])
 
-    const path = `/api/v1/apps/${encodeURIComponent(appId)}/logs?node=${encodeURIComponent(node)}`
-    const ws = openStreamSocket(path)
-    ws.onmessage = (e) => {
-      const line = decodeStreamMessage(e.data)
-      if (line) addLines(line)
-    }
-    ws.onerror = () => ws.close()
+    const id = subscribe('app-logs', { appId, node }, (line, _source, done) => {
+      if (done || !line) return
+      addLines(line)
+    })
 
-    return () => ws.close()
-  }, [appId, node, addLines])
+    return () => unsubscribe(id)
+  }, [appId, node, addLines, subscribe, unsubscribe])
 
   return lines
 }

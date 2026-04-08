@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import type { AppStatus, ResticProgress, Snapshot, SnapshotEntry } from "../api/types"
 import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useTriggerPrune } from "../api/hooks"
-import { decodeStreamMessage, openStreamSocket } from "../api/ws"
+import { useLiveState } from "../api/live"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -117,6 +117,7 @@ function RepoMaintenancePanel() {
 	const checkPreRef = useRef<HTMLPreElement>(null)
 	const unlockPreRef = useRef<HTMLPreElement>(null)
 	const maxLines = 200
+	const { subscribe, unsubscribe } = useLiveState()
 
 	const checkBusy = data?.check.busy === true
 	const unlockBusy = data?.unlock.busy === true
@@ -125,20 +126,15 @@ function RepoMaintenancePanel() {
 	useEffect(() => {
 		if (!gatewayOnline) return
 		if (!(showCheckLogs || checkBusy)) return
-		const ws = openStreamSocket("/api/v1/repo/check-logs")
-		ws.onmessage = (e) => {
-			const line = decodeStreamMessage(e.data)
-			if (line == null) return
+		const id = subscribe('repo-check-logs', {}, (line, _source, done) => {
+			if (done || !line) return
 			setCheckLines((prev) => {
 				const next = [...prev, line]
 				return next.length > maxLines ? next.slice(-maxLines) : next
 			})
-		}
-		ws.onerror = () => {
-			ws.close()
-		}
-		return () => ws.close()
-	}, [showCheckLogs, checkBusy, gatewayOnline])
+		})
+		return () => unsubscribe(id)
+	}, [showCheckLogs, checkBusy, gatewayOnline, subscribe, unsubscribe])
 
 	useEffect(() => {
 		if (checkPreRef.current) {
@@ -149,20 +145,15 @@ function RepoMaintenancePanel() {
 	useEffect(() => {
 		if (!gatewayOnline) return
 		if (!(showUnlockLogs || unlockBusy)) return
-		const ws = openStreamSocket("/api/v1/repo/unlock-logs")
-		ws.onmessage = (e) => {
-			const line = decodeStreamMessage(e.data)
-			if (line == null) return
+		const id = subscribe('repo-unlock-logs', {}, (line, _source, done) => {
+			if (done || !line) return
 			setUnlockLines((prev) => {
 				const next = [...prev, line]
 				return next.length > maxLines ? next.slice(-maxLines) : next
 			})
-		}
-		ws.onerror = () => {
-			ws.close()
-		}
-		return () => ws.close()
-	}, [showUnlockLogs, unlockBusy, gatewayOnline])
+		})
+		return () => unsubscribe(id)
+	}, [showUnlockLogs, unlockBusy, gatewayOnline, subscribe, unsubscribe])
 
 	useEffect(() => {
 		if (unlockPreRef.current) {

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { decodeStreamMessage, openStreamSocket } from '../api/ws'
+import { useLiveState } from '../api/live'
 
 interface LogPanelProps {
   isOpen: boolean
@@ -14,6 +14,7 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
   const [connected, setConnected] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { subscribe, unsubscribe } = useLiveState()
 
   useEffect(() => {
     if (!isOpen || !node || !appId) {
@@ -23,33 +24,22 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
       return
     }
 
-    const ws = openStreamSocket(`/api/v1/apps/${encodeURIComponent(appId)}/logs?node=${encodeURIComponent(node)}`)
+    setConnected(true)
+    setError(null)
 
-    ws.onopen = () => {
-      setConnected(true)
-      setError(null)
-    }
-
-    ws.onmessage = (e) => {
-      const line = decodeStreamMessage(e.data)
-      if (line == null) return
-      setLogs((prev) => [...prev.slice(-500), line])
-    }
-
-    ws.onerror = () => {
-      setConnected(false)
-      setError('Connection lost. Retrying...')
-    }
-
-    ws.onclose = () => {
-      setConnected(false)
-    }
+    const id = subscribe('app-logs', { appId, node }, (line, _source, done) => {
+      if (done) {
+        setConnected(false)
+        return
+      }
+      if (line) setLogs((prev) => [...prev.slice(-500), line])
+    })
 
     return () => {
-      ws.close()
+      unsubscribe(id)
       setConnected(false)
     }
-  }, [isOpen, node, appId])
+  }, [isOpen, node, appId, subscribe, unsubscribe])
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current

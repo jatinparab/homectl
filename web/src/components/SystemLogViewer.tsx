@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useSystemLogSources } from '../api/hooks'
+import { useLiveState } from '../api/live'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -152,37 +153,17 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
     })
   }, [])
 
-  // Single WebSocket for all log sources
-  const logSocketRef = useRef<WebSocket | null>(null)
+  const { subscribe, unsubscribe } = useLiveState()
 
   useEffect(() => {
-    if (!expanded) {
-      logSocketRef.current?.close()
-      logSocketRef.current = null
-      return
-    }
-    if (logSocketRef.current) return // already open
+    if (!expanded) return
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws/logs`)
-    logSocketRef.current = ws
+    const id = subscribe('system-logs', {}, (line, source, _done) => {
+      if (line && source) addLog(source, line)
+    })
 
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data as string) as { type?: string; source?: string; line?: string }
-        if (msg.type === 'log' && msg.source && msg.line) {
-          addLog(msg.source, msg.line)
-        }
-      } catch { /* ignore */ }
-    }
-    ws.onerror = () => { ws.close(); logSocketRef.current = null }
-    ws.onclose = () => { logSocketRef.current = null }
-
-    return () => {
-      ws.close()
-      logSocketRef.current = null
-    }
-  }, [expanded, addLog])
+    return () => unsubscribe(id)
+  }, [expanded, addLog, subscribe, unsubscribe])
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ResticProgress } from "../api/types";
-import { decodeStreamMessage, openStreamSocket } from "../api/ws";
+import { useLiveState } from "../api/live";
 
 interface PhaseLogOverlayProps {
   appId: string;
@@ -22,16 +22,11 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
   const [lines, setLines] = useState<string[]>([]);
   const preRef = useRef<HTMLPreElement>(null);
   const maxLines = 200;
+  const { subscribe, unsubscribe } = useLiveState();
 
   useEffect(() => {
-    const path = `/api/v1/apps/${encodeURIComponent(appId)}/phase-logs?node=${encodeURIComponent(node)}`;
-    const ws = openStreamSocket(path);
-
-    ws.onmessage = (e) => {
-      const line = decodeStreamMessage(e.data);
-      if (line == null) {
-        return;
-      }
+    const id = subscribe('phase-logs', { appId, node }, (line, _source, done) => {
+      if (done || !line) return;
 
       if (line.startsWith("__PROGRESS__:") && onProgress) {
         try {
@@ -47,16 +42,12 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
         const next = [...prev, line];
         return next.length > maxLines ? next.slice(-maxLines) : next;
       });
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
+    });
 
     return () => {
-      ws.close();
+      unsubscribe(id);
     };
-  }, [appId, node, onProgress]);
+  }, [appId, node, onProgress, subscribe, unsubscribe]);
 
   useEffect(() => {
     if (preRef.current) {

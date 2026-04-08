@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune, Agent } from "../api/types";
 import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment } from "../api/hooks";
-import { decodeStreamMessage, openStreamSocket } from "../api/ws";
+import { useLiveState } from "../api/live";
 import {
   StatusBadge,
   HealthBadge,
@@ -95,6 +95,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const restoreMutation = useUpdateAppRestoreEnabled();
   const reassignMutation = useReassignApp();
   const clearReassignMutation = useClearReassignment();
+  const { subscribe, unsubscribe } = useLiveState();
 
   const onlineAgents = agents?.filter((a) => a.online) ?? [];
   const [openKebab, setOpenKebab] = useState<string | null>(null);
@@ -140,20 +141,15 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       return;
     }
     streamProgressRef.current = newProgressAccumulator();
-    const path = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(streamableNode.node)}`;
-    const ws = openStreamSocket(path);
-    ws.onmessage = (e) => {
-      const line = decodeStreamMessage(e.data);
-      if (line == null) return;
-      if (!line.startsWith("__PROGRESS__:")) return;
+    const id = subscribe('phase-logs', { appId: app.app_id, node: streamableNode.node }, (line, _source, done) => {
+      if (done || !line || !line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
         setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));
       } catch { /* ignore */ }
-    };
-    ws.onerror = () => ws.close();
-    return () => ws.close();
-  }, [app.app_id, streamableNode?.node, streamableNode?.phase]);
+    });
+    return () => unsubscribe(id);
+  }, [app.app_id, streamableNode?.node, streamableNode?.phase, subscribe, unsubscribe]);
 
   useEffect(() => {
     if (!isPostBackupStreamable && prevPostBackupStreamable.current) {
@@ -173,20 +169,15 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       return;
     }
     postBackupProgressRef.current = newProgressAccumulator();
-    const path = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(postBackupStreamableNode.node)}`;
-    const ws = openStreamSocket(path);
-    ws.onmessage = (e) => {
-      const line = decodeStreamMessage(e.data);
-      if (line == null) return;
-      if (!line.startsWith("__PROGRESS__:")) return;
+    const id = subscribe('phase-logs', { appId: app.app_id, node: postBackupStreamableNode.node }, (line, _source, done) => {
+      if (done || !line || !line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
         setRealtimePostBackupProgress(accumulateResticProgress(postBackupProgressRef.current, p));
       } catch { /* ignore */ }
-    };
-    ws.onerror = () => ws.close();
-    return () => ws.close();
-  }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase]);
+    });
+    return () => unsubscribe(id);
+  }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase, subscribe, unsubscribe]);
 
   const handleProgress = useCallback((p: ResticProgress) => {
     setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));
