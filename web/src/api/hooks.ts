@@ -1,154 +1,111 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchApps,
-  fetchAgents,
-  fetchSystemLogSources,
-  fetchContainers,
-  fetchStorageStatus,
-  fetchUpcomingBackup,
-  fetchUpcomingPrune,
-  fetchSnapshots,
   fetchSnapshotFiles,
+  fetchSnapshots,
   refreshSnapshots,
   restartApp,
   triggerBackup,
   triggerPrune,
+  triggerRebalance,
   triggerRepoCheck,
   triggerRepoUnlock,
-  triggerRebalance,
+  triggerStoragePrune,
   triggerSync,
-  updateAppRestoreEnabled,
   updateAppDesiredState,
-  fetchRepoStatus,
-  fetchGatewayInfo,
+  updateAppRestoreEnabled,
   setManualGateway,
   clearManualGateway,
   forceRepoUnlock,
-  triggerStoragePrune,
   reassignApp,
   clearReassignment,
 } from "./client";
+import { useLiveState } from "./live";
+
+type LiveResult<T> = {
+  data: T | undefined;
+  isLoading: boolean;
+  error: Error | null;
+};
+
+function useLiveSlice<T>(selector: (payload: NonNullable<ReturnType<typeof useLiveState>["payload"]>) => T): LiveResult<T> {
+  const { payload, initialized, error } = useLiveState();
+  return {
+    data: payload ? selector(payload) : undefined,
+    isLoading: !initialized,
+    error,
+  };
+}
 
 export function useApps() {
-  return useQuery({
-    queryKey: ["apps"],
-    queryFn: fetchApps,
-    refetchInterval: 2000,
-  });
+  return useLiveSlice((payload) => payload.apps);
 }
 
 export function useAgents() {
-  return useQuery({
-    queryKey: ["agents"],
-    queryFn: fetchAgents,
-    refetchInterval: 2000,
-  });
+  return useLiveSlice((payload) => payload.agents);
 }
 
 export function useSystemLogSources() {
-  return useQuery({
-    queryKey: ["system-log-sources"],
-    queryFn: fetchSystemLogSources,
-    refetchInterval: 10000,
-  });
+  return useLiveSlice((payload) => payload.system_log_sources);
 }
 
 export function useContainers() {
-  return useQuery({
-    queryKey: ["containers"],
-    queryFn: fetchContainers,
-    refetchInterval: 5000,
-  });
+  return useLiveSlice((payload) => payload.containers);
 }
 
 export function useStorageStatus() {
-  return useQuery({
-    queryKey: ["storage-status"],
-    queryFn: fetchStorageStatus,
-    refetchInterval: (query) => query.state.data?.any_pruning ? 2000 : 5000,
-  });
+  return useLiveSlice((payload) => payload.storage);
 }
 
 export function useUpcomingBackup() {
-  return useQuery({
-    queryKey: ["upcoming-backup"],
-    queryFn: fetchUpcomingBackup,
-    refetchInterval: 2000,
-  });
+  return useLiveSlice((payload) => payload.upcoming_backup);
 }
 
 export function useUpcomingPrune() {
-  return useQuery({
-    queryKey: ["upcoming-prune"],
-    queryFn: fetchUpcomingPrune,
-    refetchInterval: 2000,
-  });
+  return useLiveSlice((payload) => payload.upcoming_prune);
+}
+
+export function useRepoStatus() {
+  return useLiveSlice((payload) => payload.repo_status);
+}
+
+export function useGatewayInfo() {
+  return useLiveSlice((payload) => payload.gateway);
 }
 
 export function useRestartApp() {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
-      restartApp(appId, node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
+    mutationFn: ({ appId, node }: { appId: string; node: string }) => restartApp(appId, node),
   });
 }
 
 export function useTriggerBackup() {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
-      triggerBackup(appId, node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-      queryClient.invalidateQueries({ queryKey: ["upcoming-backup"] });
-    },
+    mutationFn: ({ appId, node }: { appId: string; node: string }) => triggerBackup(appId, node),
   });
 }
 
 export function useTriggerPrune() {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
-      triggerPrune(appId, node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-      queryClient.invalidateQueries({ queryKey: ["upcoming-prune"] });
-    },
+    mutationFn: ({ appId, node }: { appId: string; node: string }) => triggerPrune(appId, node),
   });
 }
 
 export function useSync() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: triggerSync,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-    },
   });
 }
 
 export function useRebalance() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: triggerRebalance,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
   });
 }
 
 export function useUpdateAppRestoreEnabled() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ appId, enabled }: { appId: string; enabled: boolean }) =>
       updateAppRestoreEnabled(appId, enabled),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
   });
 }
 
@@ -157,18 +114,15 @@ export function useSnapshots(appId: string | null, node: string | null) {
     queryKey: ["snapshots", appId, node],
     queryFn: () => fetchSnapshots(appId!, node!),
     enabled: !!appId && !!node,
-    // staleTime: Infinity prevents refetch on mount — expanding SnapshotList just reads cache.
-    // Background polling keeps the data in sync with the agent's state.
     staleTime: Infinity,
-    refetchInterval: (query) => query.state.data?.loading ? 2000 : 5 * 60 * 1000,
+    refetchInterval: false,
   });
 }
 
 export function useRefreshSnapshots() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
-      refreshSnapshots(appId, node),
+    mutationFn: ({ appId, node }: { appId: string; node: string }) => refreshSnapshots(appId, node),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["snapshots", variables.appId, variables.node] });
     },
@@ -185,112 +139,46 @@ export function useSnapshotFiles(snapshotId: string | null, node: string | null,
 }
 
 export function useUpdateAppDesiredState() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ appId, state }: { appId: string; state: "running" | "stopped" }) =>
       updateAppDesiredState(appId, state),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
-  });
-}
-
-export function useRepoStatus() {
-  return useQuery({
-    queryKey: ["repo-status"],
-    queryFn: fetchRepoStatus,
-    refetchInterval: (query) =>
-      query.state.data?.check.busy || query.state.data?.unlock.busy ? 2000 : 10000,
   });
 }
 
 export function useTriggerRepoCheck() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: triggerRepoCheck,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
-    },
-  });
+  return useMutation({ mutationFn: triggerRepoCheck });
 }
 
 export function useTriggerRepoUnlock() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: triggerRepoUnlock,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
-    },
-  });
-}
-
-export function useGatewayInfo() {
-  return useQuery({
-    queryKey: ["gateway"],
-    queryFn: fetchGatewayInfo,
-    refetchInterval: 5000,
-  });
+  return useMutation({ mutationFn: triggerRepoUnlock });
 }
 
 export function useSetManualGateway() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (node: string) => setManualGateway(node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["gateway"] });
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-    },
-  });
+  return useMutation({ mutationFn: (node: string) => setManualGateway(node) });
 }
 
 export function useClearManualGateway() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: clearManualGateway,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["gateway"] });
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-    },
-  });
+  return useMutation({ mutationFn: clearManualGateway });
 }
 
 export function useForceRepoUnlock() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: forceRepoUnlock,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repo-status"] });
-    },
-  });
+  return useMutation({ mutationFn: forceRepoUnlock });
 }
 
 export function useTriggerStoragePrune() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ node }: { node: string }) => triggerStoragePrune(node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["storage-status"] });
-    },
   });
 }
 
 export function useReassignApp() {
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, node }: { appId: string; node: string }) =>
-      reassignApp(appId, node),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
+    mutationFn: ({ appId, node }: { appId: string; node: string }) => reassignApp(appId, node),
   });
 }
 
 export function useClearReassignment() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (appId: string) => clearReassignment(appId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["apps"] });
-    },
   });
 }
