@@ -51,7 +51,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		return
 	}
 
-	check, unlock, ok := m.fetchRepoStatusesFromAgent(agentCfg.IP)
+	check, unlock, ok := m.fetchRepoStatusesFromAgent(gateway)
 	if ok {
 		m.repoMu.Lock()
 		prevCheckBusy := m.repoCheckBusy
@@ -148,7 +148,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		return
 	}
 
-	if err := m.triggerRepoCheckOnAgent(agentCfg.IP); err != nil {
+	if err := m.triggerRepoCheckOnAgent(gateway); err != nil {
 		repoMgrLog.Info("Repo check trigger failed", "err", err)
 		return
 	}
@@ -173,8 +173,8 @@ func (m *Manager) isAgentOnline(agentName string) bool {
 	return time.Since(agent.LastSeen) < 30*time.Second
 }
 
-func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {
-	status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoCheckStatus, nil)
+func (m *Manager) fetchRepoStatusesFromAgent(agentID string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {
+	status, body, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoCheckStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
@@ -185,7 +185,7 @@ func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
 
-	status2, body2, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoUnlockStatus, nil)
+	status2, body2, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoUnlockStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
@@ -199,8 +199,8 @@ func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus
 	return check, unlock, true
 }
 
-func (m *Manager) triggerRepoCheckOnAgent(ip string) error {
-	status, _, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoCheck, nil)
+func (m *Manager) triggerRepoCheckOnAgent(agentID string) error {
+	status, _, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoCheck, nil)
 	if err != nil {
 		return err
 	}

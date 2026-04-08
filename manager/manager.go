@@ -66,10 +66,9 @@ type Manager struct {
 	manualGatewayNode string // User-selected gateway (overrides automatic selection)
 	gatewayMu         sync.Mutex
 
-	linkMu         sync.RWMutex
-	agentLinks     map[string]*agentLinkPeer // by agent name
-	agentLinksByIP map[string]*agentLinkPeer
-	tcpListener    net.Listener
+	linkMu      sync.RWMutex
+	agentLinks  map[string]*agentLinkPeer // by agent name
+	tcpListener net.Listener
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -99,7 +98,6 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
 		pruneState:            make(map[common.AppID]PruneState),
 		agentLinks:            make(map[string]*agentLinkPeer),
-		agentLinksByIP:        make(map[string]*agentLinkPeer),
 	}
 	mgr.loadRepoState()
 	mgr.loadPruneState()
