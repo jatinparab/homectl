@@ -28,6 +28,19 @@ const (
 
 var agentLog = slog.With("area", "agent")
 
+// initPackageLoggers reinitializes all package-level loggers after logger.Init() has been called.
+// Package-level vars capture slog.Default() at declaration time (before Init), so they must be
+// refreshed to pick up the JSON handler.
+func initPackageLoggers() {
+	agentLog = slog.Default().With("area", "agent")
+	executorLog = slog.Default().With("area", "executor")
+	readyLog = slog.Default().With("area", "ready")
+	repoLog = slog.Default().With("area", "repo")
+	backupLog = slog.Default().With("area", "backup")
+	sensorLog = slog.Default().With("area", "sensor")
+	traefikLog = slog.Default().With("area", "traefik")
+}
+
 // Agent manages docker applications on a host
 type Agent struct {
 	name          string
@@ -127,6 +140,7 @@ func Init() (*Agent, error) {
 func InitWithConfig(agentCfg Config) (*Agent, error) {
 	hostname := utils.GetHostname()
 	logger.Init("agent", hostname)
+	initPackageLoggers()
 	ip := utils.GetLocalIP()
 	cfg := config.NewConfig()
 	hostCfg := cfg.GetAgentConfig(hostname)
@@ -308,7 +322,7 @@ func (a *Agent) reconcileLoop() {
 
 // reconcileOnce performs a single reconciliation cycle.
 func (a *Agent) reconcileOnce() {
-	agentLog.Info("Reconcile: fetching desired apps from manager")
+	agentLog.Debug("Reconcile: fetching desired apps from manager")
 
 	// Fetch desired apps from manager
 	response, err := a.managerClient.FetchDesiredApps(a.name)
@@ -324,7 +338,7 @@ func (a *Agent) reconcileOnce() {
 	a.isGateway = response.IsGateway
 	a.isGatewayMu.Unlock()
 
-	agentLog.Info("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
+	agentLog.Debug("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
 
 	// Track which apps the manager wants running on this node
 	assigned := make(map[common.AppID]bool, len(desiredApps))

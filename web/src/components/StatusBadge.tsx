@@ -42,7 +42,7 @@ export function HealthBadge({ health }: HealthDotProps) {
   return (
     <div className="tooltip-container inline-flex items-center">
       <span
-        className={`inline-block w-2.5 h-2.5 rounded-full ${dotColors[health]} ${health === "healthy" ? "health-glow" : ""}`}
+        className={`inline-block w-1.5 h-1.5 rounded-full ${dotColors[health]} ${health === "healthy" ? "health-glow" : ""}`}
       />
       <span className="tooltip-content">{health}</span>
     </div>
@@ -75,20 +75,22 @@ export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
   if (progress && (phase === "restoring" || phase === "backing_up")) {
     const pct = Math.round(progress.percent_done * 100);
     return (
-      <div className="flex items-center gap-2">
-        <span className={`text-xs font-medium ${color}`}>{phase}</span>
-        <span className="flex items-center gap-1 text-xs text-stone-400">
-          <span className="w-14 h-1 bg-stone-200 rounded-full overflow-hidden">
-            <span
-              className="block h-full bg-amber-400 rounded-full transition-all"
-              style={{ width: `${pct}%` }}
-            />
-          </span>
-          <span className="text-[10px]">{pct}%</span>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-xs font-medium ${color}`}>{phase}</span>
+          <span className="text-[10px] text-stone-500">{pct}%</span>
+        </div>
+        <span className="w-24 h-1 bg-stone-200 rounded-full overflow-hidden flex-shrink-0">
+          <span
+            className="block h-full bg-amber-400 rounded-full transition-all"
+            style={{ width: `${pct}%` }}
+          />
+        </span>
+        {progress.total_bytes > 0 && (
           <span className="text-[10px] text-stone-400">
             {formatBytes(progress.bytes_done)}/{formatBytes(progress.total_bytes)}
           </span>
-        </span>
+        )}
       </div>
     );
   }
@@ -111,12 +113,12 @@ export function DesiredToggle({ state, onToggle, disabled }: DesiredToggleProps)
         aria-checked={isRunning}
         onClick={onToggle}
         disabled={disabled}
-        className="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none"
+        className="relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none"
         style={{ backgroundColor: isRunning ? "#0d9488" : "#d6d3d1" }}
       >
         <span
-          className="toggle-thumb inline-block h-3.5 w-3.5 rounded-full bg-white"
-          style={{ transform: isRunning ? "translateX(18px)" : "translateX(2px)" }}
+          className="toggle-thumb inline-block h-2.5 w-2.5 rounded-full bg-white"
+          style={{ transform: isRunning ? "translateX(14px)" : "translateX(3px)" }}
         />
       </button>
       <span className="tooltip-content">{isRunning ? "should be running" : "should be stopped"}</span>

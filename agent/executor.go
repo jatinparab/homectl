@@ -355,7 +355,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	rt.SetPhase(common.PhasePulling)
 	rt.PhaseLog.Clear()
 	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		executorLog.Info("docker output", "app", appID, "line", line)
+		executorLog.Debug(line, "app", appID)
 		rt.PhaseLog.Write(line)
 	}); err != nil {
 		return err
@@ -379,7 +379,7 @@ func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	rt.PhaseLog.Clear()
 	rt.IncrementRestarts()
 	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		executorLog.Info("docker output", "app", appID, "line", line)
+		executorLog.Debug(line, "app", appID)
 		rt.PhaseLog.Write(line)
 	}); err != nil {
 		return err

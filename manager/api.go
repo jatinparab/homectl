@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/logger"
 )
 
 var apiLog = slog.With("area", "api")
@@ -1203,38 +1203,27 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	if source == "manager" {
-		// Run journalctl locally for manager
-		cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "homectl-manager", "-f", "--output=short-iso", "-n", "100")
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			w.Write([]byte("data: Error creating pipe: " + err.Error() + "\n\n"))
-			flusher.Flush()
-			return
+		// Stream from in-process ring buffer — no journalctl needed
+		for _, line := range logger.Buffer.Snapshot() {
+			fmt.Fprintf(w, "data: %s\n\n", line)
 		}
+		flusher.Flush()
 
-		if err := cmd.Start(); err != nil {
-			w.Write([]byte("data: Error starting journalctl: " + err.Error() + "\n\n"))
-			flusher.Flush()
-			return
-		}
+		ch := logger.Buffer.Follow()
+		defer logger.Buffer.Unfollow(ch)
 
-		done := make(chan struct{})
-		go func() {
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				w.Write([]byte("data: " + scanner.Text() + "\n\n"))
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case line, ok := <-ch:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "data: %s\n\n", line)
 				flusher.Flush()
 			}
-			close(done)
-		}()
-
-		select {
-		case <-r.Context().Done():
-			cmd.Process.Kill()
-		case <-done:
 		}
-		cmd.Wait()
-		return
 	}
 
 	// Proxy to agent
@@ -1259,25 +1248,19 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
+	// Use a scanner to read complete lines — a raw Read with a small buffer
+	// splits long JSON objects mid-line, corrupting the SSE stream.
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 512*1024), 512*1024) // 512 KB — handles any realistic log line
+	for scanner.Scan() {
 		select {
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := stream.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
+		}
+		if line := scanner.Text(); line != "" {
+			fmt.Fprintf(w, "data: %s\n\n", line)
+			flusher.Flush()
 		}
 	}
 }

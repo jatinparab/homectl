@@ -1,5 +1,27 @@
 export type Tab = "dashboard" | "backups" | "storage" | "containers"
 
+const TAB_PATHS: Record<Tab, string> = {
+  dashboard: "/",
+  backups: "/backups",
+  storage: "/storage",
+  containers: "/containers",
+}
+
+const PATH_TABS: Record<string, Tab> = {
+  "/": "dashboard",
+  "/backups": "backups",
+  "/storage": "storage",
+  "/containers": "containers",
+}
+
+export function tabFromPath(path: string): Tab {
+  return PATH_TABS[path] ?? "dashboard"
+}
+
+export function pathFromTab(tab: Tab): string {
+  return TAB_PATHS[tab]
+}
+
 interface HeaderProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
@@ -23,9 +45,10 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
           <span className="w-px h-4 bg-[#e2ddd7]" />
           <nav className="flex items-center gap-0.5">
             {tabs.map((tab) => (
-              <button
+              <a
                 key={tab.id}
-                onClick={() => onTabChange(tab.id)}
+                href={pathFromTab(tab.id)}
+                onClick={(e) => { e.preventDefault(); onTabChange(tab.id) }}
                 className={`px-3 py-1 text-[11px] font-medium tracking-wider uppercase rounded transition-colors ${
                   activeTab === tab.id
                     ? "text-[#0d9488] bg-[#ccfbf1]"
@@ -33,7 +56,7 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
                 }`}
               >
                 {tab.label}
-              </button>
+              </a>
             ))}
           </nav>
         </div>
