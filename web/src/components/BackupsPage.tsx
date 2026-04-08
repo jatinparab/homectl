@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import type { AppStatus, ResticProgress, Snapshot, SnapshotEntry } from "../api/types"
 import { useSnapshots, useSnapshotFiles, useRefreshSnapshots, useRepoStatus, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useTriggerPrune } from "../api/hooks"
+import { decodeStreamMessage, openStreamSocket } from "../api/ws"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -113,17 +114,19 @@ function RepoMaintenancePanel() {
 	useEffect(() => {
 		if (!gatewayOnline) return
 		if (!(showCheckLogs || checkBusy)) return
-		const es = new EventSource("/api/v1/repo/check-logs")
-		es.onmessage = (e) => {
+		const ws = openStreamSocket("/api/v1/repo/check-logs")
+		ws.onmessage = (e) => {
+			const line = decodeStreamMessage(e.data)
+			if (line == null) return
 			setCheckLines((prev) => {
-				const next = [...prev, e.data]
+				const next = [...prev, line]
 				return next.length > maxLines ? next.slice(-maxLines) : next
 			})
 		}
-		es.onerror = () => {
-			es.close()
+		ws.onerror = () => {
+			ws.close()
 		}
-		return () => es.close()
+		return () => ws.close()
 	}, [showCheckLogs, checkBusy, gatewayOnline])
 
 	useEffect(() => {
@@ -135,17 +138,19 @@ function RepoMaintenancePanel() {
 	useEffect(() => {
 		if (!gatewayOnline) return
 		if (!(showUnlockLogs || unlockBusy)) return
-		const es = new EventSource("/api/v1/repo/unlock-logs")
-		es.onmessage = (e) => {
+		const ws = openStreamSocket("/api/v1/repo/unlock-logs")
+		ws.onmessage = (e) => {
+			const line = decodeStreamMessage(e.data)
+			if (line == null) return
 			setUnlockLines((prev) => {
-				const next = [...prev, e.data]
+				const next = [...prev, line]
 				return next.length > maxLines ? next.slice(-maxLines) : next
 			})
 		}
-		es.onerror = () => {
-			es.close()
+		ws.onerror = () => {
+			ws.close()
 		}
-		return () => es.close()
+		return () => ws.close()
 	}, [showUnlockLogs, unlockBusy, gatewayOnline])
 
 	useEffect(() => {

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { decodeStreamMessage, openStreamSocket } from '../api/ws'
 
 interface LogPanelProps {
   isOpen: boolean
@@ -22,24 +23,30 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
       return
     }
 
-    const eventSource = new EventSource(`/api/v1/apps/${appId}/logs?node=${node}`)
+    const ws = openStreamSocket(`/api/v1/apps/${encodeURIComponent(appId)}/logs?node=${encodeURIComponent(node)}`)
 
-    eventSource.onopen = () => {
+    ws.onopen = () => {
       setConnected(true)
       setError(null)
     }
 
-    eventSource.onmessage = (e) => {
-      setLogs((prev) => [...prev.slice(-500), e.data])
+    ws.onmessage = (e) => {
+      const line = decodeStreamMessage(e.data)
+      if (line == null) return
+      setLogs((prev) => [...prev.slice(-500), line])
     }
 
-    eventSource.onerror = () => {
+    ws.onerror = () => {
       setConnected(false)
       setError('Connection lost. Retrying...')
     }
 
+    ws.onclose = () => {
+      setConnected(false)
+    }
+
     return () => {
-      eventSource.close()
+      ws.close()
       setConnected(false)
     }
   }, [isOpen, node, appId])
