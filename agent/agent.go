@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
@@ -218,13 +220,23 @@ func (a *Agent) IsConnected() bool {
 
 // Start starts all background loops.
 func (a *Agent) Start() {
-	a.wg.Add(5)
+	a.wg.Add(6)
+
+	if a.readyServer == nil {
+		a.readyServer = NewReadyServer(a)
+	}
 
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
 	go a.sensorLoop(a.sensorCtx)
 	go a.snapshotCacheLoop()
+	go func() {
+		defer a.wg.Done()
+		if err := a.readyServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			agentLog.Error("Ready server stopped", "err", err)
+		}
+	}()
 
 	agentLog.Info("Agent started", "heartbeat", a.agentConfig.RenewalInterval, "retry", a.agentConfig.RetryInterval, "reconcile", a.agentConfig.ReconcileInterval)
 }

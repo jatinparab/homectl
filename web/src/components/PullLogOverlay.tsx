@@ -67,24 +67,24 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
   const label = phaseLabels[phase] || "Phase logs";
 
   return (
-    <div className="relative bg-gray-900 border border-gray-700 rounded mx-4 my-1">
-      <div className="flex items-center justify-between px-3 py-1 border-b border-gray-700">
-        <span className="text-xs text-gray-400">
+    <div className="relative bg-[#faf9f7] border border-[#e2ddd7] rounded mx-4 my-1">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#e2ddd7]">
+        <span className="text-[11px] text-stone-500">
           {label} — {appId} on {node}
         </span>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-gray-300 text-sm px-1"
+          className="text-stone-400 hover:text-stone-700 text-xs px-1"
         >
           ✕
         </button>
       </div>
       <pre
         ref={preRef}
-        className="text-xs text-gray-300 font-mono p-2 overflow-auto max-h-40 whitespace-pre-wrap"
+        className="text-[11px] text-stone-600 font-mono p-2 overflow-auto max-h-40 whitespace-pre-wrap log-scroll"
       >
         {lines.length === 0 ? (
-          <span className="text-gray-500">Waiting for output...</span>
+          <span className="text-stone-400">Waiting for output...</span>
         ) : (
           lines.join("\n")
         )}

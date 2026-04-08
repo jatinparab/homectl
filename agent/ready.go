@@ -37,6 +37,7 @@ func NewReadyServer(agent *Agent) *ReadyServer {
 func (rs *ReadyServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ready", rs.handleReady)
+	mux.HandleFunc("/is-gateway", rs.handleReady)
 	mux.HandleFunc("/health", rs.handleHealth)
 
 	// Backup trigger endpoint
