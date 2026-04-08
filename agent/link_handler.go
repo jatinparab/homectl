@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/logger"
 )
 
 func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) []common.LinkMessage {
@@ -162,12 +163,12 @@ func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) []common.LinkMe
 		return []common.LinkMessage{{Status: http.StatusOK, Body: out, Done: true}}
 
 	case common.LinkReqSystemLogs:
-		cmd := exec.Command("journalctl", "-u", "homectl-agent", "--output=short-iso", "-n", "100")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return []common.LinkMessage{{Status: http.StatusInternalServerError, Error: fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))), Done: true}}
+		lines := logger.Buffer.Snapshot()
+		body := []byte(strings.Join(lines, "\n"))
+		if len(body) > 0 {
+			body = append(body, '\n')
 		}
-		return []common.LinkMessage{{Status: http.StatusOK, Body: out, Done: true}}
+		return []common.LinkMessage{{Status: http.StatusOK, Body: body, Done: true}}
 
 	case common.LinkReqContainerLogs:
 		payload, err := common.DecodePayload[common.ContainerLogsPayload](msg)
