@@ -9,6 +9,7 @@ import { ContainerLogPanel } from './components/ContainerLogPanel'
 import { BackupsPage } from './components/BackupsPage'
 import { StoragePage } from './components/StoragePage'
 import { LogPanel } from './components/LogPanel'
+import { AppDetailPage } from './components/AppDetailPage'
 
 type LogPanelState =
   | { type: 'app'; node: string; appId: string }
@@ -24,20 +25,26 @@ function App() {
   const syncMutation = useSync()
   const rebalanceMutation = useRebalance()
   const [logPanel, setLogPanel] = useState<LogPanelState>(null)
-  const [activeTab, setActiveTab] = useState<Tab>(() => tabFromPath(window.location.pathname))
+  const [path, setPath] = useState(() => window.location.pathname)
   const [logPanelExpanded, setLogPanelExpanded] = useState(false)
 
-  // Keep URL in sync with active tab
-  useEffect(() => {
-    const path = pathFromTab(activeTab)
-    if (window.location.pathname !== path) {
-      window.history.pushState(null, '', path)
+  const activeTab = tabFromPath(path)
+  const appDetailId = path.startsWith('/apps/') ? path.slice(6) : null
+
+  function navigate(to: string) {
+    if (window.location.pathname !== to) {
+      window.history.pushState(null, '', to)
     }
-  }, [activeTab])
+    setPath(to)
+  }
+
+  function handleTabChange(tab: Tab) {
+    navigate(pathFromTab(tab))
+  }
 
   // Handle browser back/forward
   useEffect(() => {
-    const onPop = () => setActiveTab(tabFromPath(window.location.pathname))
+    const onPop = () => setPath(window.location.pathname)
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
@@ -66,9 +73,9 @@ function App() {
 
   return (
     <div className="min-h-screen" style={{ paddingBottom: `${LOG_PANEL_HEIGHT}px` }}>
-      <Header activeTab={activeTab} onTabChange={setActiveTab} />
+      <Header activeTab={activeTab} onTabChange={handleTabChange} />
 
-      {activeTab === "dashboard" && (
+      {!appDetailId && activeTab === "dashboard" && (
         <div className="min-h-screen bg-[#faf9f7]">
           <div className="border-b border-[#e2ddd7] bg-white px-4 py-4">
             <div className="max-w-6xl mx-auto flex items-center justify-between">
@@ -107,15 +114,17 @@ function App() {
               upcomingBackup={upcomingBackup}
               upcomingPrune={upcomingPrune}
               onShowLogs={handleShowAppLogs}
+              onNavigate={navigate}
               agents={agents}
             />
           </main>
         </div>
       )}
 
-      {activeTab === "backups" && <BackupsPage apps={apps} />}
-      {activeTab === "storage" && <StoragePage />}
-      {activeTab === "containers" && <ContainersPage onShowLogs={handleShowContainerLogs} />}
+      {appDetailId && <AppDetailPage appId={appDetailId} onBack={() => navigate('/')} />}
+      {!appDetailId && activeTab === "backups" && <BackupsPage apps={apps} />}
+      {!appDetailId && activeTab === "storage" && <StoragePage />}
+      {!appDetailId && activeTab === "containers" && <ContainersPage onShowLogs={handleShowContainerLogs} />}
 
       {/* Sticky system log panel */}
       <SystemLogViewer

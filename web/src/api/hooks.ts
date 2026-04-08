@@ -40,6 +40,10 @@ export function useApps() {
   return useLiveSlice((payload) => payload.apps);
 }
 
+export function useApp(appId: string) {
+  return useLiveSlice((payload) => payload.apps.find((a) => a.app_id === appId));
+}
+
 export function useAgents() {
   return useLiveSlice((payload) => payload.agents);
 }

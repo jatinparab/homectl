@@ -44,6 +44,7 @@ interface AppRowProps {
   isUpcomingPrune?: boolean;
   upcomingPrune?: UpcomingPrune;
   onShowLogs?: (node: string, appId: string) => void;
+  onNavigate?: (path: string) => void;
   agents?: Agent[];
 }
 
@@ -86,7 +87,7 @@ function accumulateResticProgress(state: ProgressAccumulator, current: ResticPro
   return { ...current, percent_done: percent, total_files: totalFiles, files_done: filesDone, total_bytes: totalBytes, bytes_done: bytesDone };
 }
 
-export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs, agents }: AppRowProps) {
+export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, onShowLogs, onNavigate, agents }: AppRowProps) {
   const restartMutation = useRestartApp();
   const backupMutation = useTriggerBackup();
   const pruneMutation = useTriggerPrune();
@@ -197,7 +198,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     return (
       <tr className="app-row border-b border-[#f0ede8]">
         <td className="px-4 py-2.5">
-          <AppNameCell app={app} isUpcomingBackup={isUpcomingBackup} upcomingBackup={upcomingBackup} isUpcomingPrune={isUpcomingPrune} upcomingPrune={upcomingPrune} />
+          <AppNameCell app={app} isUpcomingBackup={isUpcomingBackup} upcomingBackup={upcomingBackup} isUpcomingPrune={isUpcomingPrune} upcomingPrune={upcomingPrune} onNavigate={onNavigate} />
         </td>
         <td className="px-3 py-2.5">
           <DesiredToggle
@@ -239,6 +240,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                   isUpcomingPrune={isUpcomingPrune}
                   upcomingPrune={upcomingPrune}
                   restoreMutation={restoreMutation}
+                  onNavigate={onNavigate}
                 />
               )}
             </td>
@@ -483,12 +485,17 @@ interface AppNameCellProps {
   isUpcomingPrune?: boolean;
   upcomingPrune?: UpcomingPrune;
   restoreMutation?: ReturnType<typeof useUpdateAppRestoreEnabled>;
+  onNavigate?: (path: string) => void;
 }
 
-function AppNameCell({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, restoreMutation }: AppNameCellProps) {
+function AppNameCell({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, upcomingPrune, restoreMutation, onNavigate }: AppNameCellProps) {
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-      <span className="font-semibold text-[#1c1917] text-sm truncate">{app.app_id}</span>
+      <a
+        href={`/apps/${app.app_id}`}
+        onClick={(e) => { e.preventDefault(); onNavigate?.(`/apps/${app.app_id}`) }}
+        className="font-semibold text-[#1c1917] text-sm truncate hover:text-teal-700 hover:underline"
+      >{app.app_id}</a>
       {app.is_global && (
         <span className="tooltip-container inline-flex">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-blue-400">
