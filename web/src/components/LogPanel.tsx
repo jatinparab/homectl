@@ -74,64 +74,47 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
 
   return (
     <div
-      className={`fixed right-0 top-0 h-full w-1/2 bg-gray-800 border-l border-gray-700 transform transition-transform duration-300 ${
+      className={`fixed right-0 top-0 h-full w-1/2 bg-white border-l border-[#e2ddd7] transform transition-transform duration-300 ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
-      } z-50`}
+      } z-50 flex flex-col`}
     >
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <div className="flex items-center gap-3">
-            <h3 className="text-white font-medium">
-              {appId} <span className="text-gray-400">({node})</span>
-            </h3>
-            <span
-              className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
-            />
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 h-12 border-b border-[#e2ddd7] flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-[#1c1917]">{appId}</span>
+          <span className="text-stone-400 text-xs">({node})</span>
+          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-stone-300'}`} />
+        </div>
+        <button onClick={onClose} className="text-stone-400 hover:text-stone-700 text-lg leading-none">×</button>
+      </div>
+
+      {error && (
+        <div className="px-4 py-2 bg-red-50 text-red-500 text-[11px] border-b border-red-100">{error}</div>
+      )}
+
+      <div className="flex-1 overflow-auto p-4 log-scroll relative" ref={scrollRef} onScroll={handleScroll}>
+        <pre className="text-[11px] font-mono text-stone-600 whitespace-pre-wrap leading-relaxed">
+          {logs.length === 0 ? (
+            <span className="text-stone-400">Waiting for logs...</span>
+          ) : (
+            logs.join('\n')
+          )}
+        </pre>
+      </div>
+
+      {!isAtBottom && (
+        <div className="absolute bottom-10 right-4 z-10">
           <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white text-xl"
+            onClick={scrollToBottom}
+            className="bg-white border border-[#e2ddd7] text-stone-500 hover:text-stone-800 rounded-full w-7 h-7 flex items-center justify-center shadow-sm text-xs"
           >
-            &times;
+            ↓
           </button>
         </div>
+      )}
 
-        {/* Error banner */}
-        {error && (
-          <div className="px-4 py-2 bg-red-900/50 text-red-400 text-sm">
-            {error}
-          </div>
-        )}
-
-        {/* Logs */}
-        <div className="flex-1 overflow-auto p-4 relative" ref={scrollRef} onScroll={handleScroll}>
-          <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap">
-            {logs.length === 0 ? (
-              <span className="text-gray-500">Waiting for logs...</span>
-            ) : (
-              logs.join('\n')
-            )}
-          </pre>
-        </div>
-
-        {/* Scroll to bottom button */}
-        {!isAtBottom && (
-          <div className="absolute bottom-12 right-6 z-10">
-            <button
-              onClick={scrollToBottom}
-              className="bg-gray-700 hover:bg-gray-600 text-white rounded-full w-8 h-8 flex items-center justify-center shadow-lg border border-gray-600"
-              title="Scroll to bottom"
-            >
-              &#8595;
-            </button>
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="p-2 border-t border-gray-700 text-xs text-gray-500 text-center">
-          Showing last 500 lines
-        </div>
+      <div className="px-4 py-2 border-t border-[#f0ede8] text-[10px] text-stone-400 text-center">
+        last 500 lines
       </div>
     </div>
   )

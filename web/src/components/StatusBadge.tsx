@@ -8,71 +8,60 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
-const statusColors: Record<ObservedState, string> = {
-  running: "bg-green-500",
-  stopped: "bg-gray-500",
-  restarting: "bg-yellow-500",
-  error: "bg-red-500",
-  unknown: "bg-gray-500",
+const statusTextColors: Record<ObservedState, string> = {
+  running: "text-emerald-700",
+  stopped: "text-stone-400",
+  restarting: "text-amber-600",
+  error: "text-red-600",
+  unknown: "text-stone-400",
 };
 
-const healthColors: Record<HealthStatus, string> = {
-  healthy: "bg-green-500",
-  unhealthy: "bg-red-500",
-  unknown: "bg-yellow-500",
-};
-
-const phaseColors: Record<string, string> = {
-  running: "bg-green-500",
-  ready: "bg-blue-500",
-  restoring: "bg-yellow-500",
-  error: "bg-red-500",
-  empty: "bg-gray-500",
-  backup_stopping: "bg-amber-500",
-  backup_stopped: "bg-amber-500",
-  backing_up: "bg-amber-500",
-  backup_pruning: "bg-purple-500",
-  backup_checking: "bg-purple-500",
-  pulling: "bg-blue-500",
-};
-
-const postBackupPhaseColors: Record<string, string> = {
-  backup_pruning: "bg-purple-500",
-  backup_checking: "bg-purple-500",
-};
-
-const desiredColors: Record<string, string> = {
-  running: "bg-green-600",
-  stopped: "bg-gray-600",
-};
-
-interface StatusBadgeProps {
+interface StatusTextProps {
   status: ObservedState;
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
+export function StatusBadge({ status }: StatusTextProps) {
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${statusColors[status]}`}
-    >
+    <span className={`text-xs font-medium ${statusTextColors[status]}`}>
       {status}
     </span>
   );
 }
 
-interface HealthBadgeProps {
+interface HealthDotProps {
   health: HealthStatus;
 }
 
-export function HealthBadge({ health }: HealthBadgeProps) {
+export function HealthBadge({ health }: HealthDotProps) {
+  const dotColors: Record<HealthStatus, string> = {
+    healthy: "bg-emerald-500",
+    unhealthy: "bg-red-500",
+    unknown: "bg-amber-400",
+  };
+
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${healthColors[health]}`}
-    >
-      {health}
-    </span>
+    <div className="tooltip-container inline-flex items-center">
+      <span
+        className={`inline-block w-2.5 h-2.5 rounded-full ${dotColors[health]} ${health === "healthy" ? "health-glow" : ""}`}
+      />
+      <span className="tooltip-content">{health}</span>
+    </div>
   );
 }
+
+const phaseTextColors: Record<string, string> = {
+  running: "text-emerald-700",
+  ready: "text-blue-600",
+  restoring: "text-amber-600",
+  error: "text-red-600",
+  empty: "text-stone-400",
+  backup_stopping: "text-amber-600",
+  backup_stopped: "text-amber-600",
+  backing_up: "text-amber-600",
+  backup_pruning: "text-violet-600",
+  backup_checking: "text-violet-600",
+  pulling: "text-blue-600",
+};
 
 interface PhaseBadgeProps {
   phase: string;
@@ -80,29 +69,23 @@ interface PhaseBadgeProps {
 }
 
 export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
-  if (!phase) {
-    return <span className="text-gray-500">-</span>;
-  }
-  const color = phaseColors[phase] || "bg-gray-500";
+  if (!phase) return <span className="text-stone-400 text-xs">—</span>;
+  const color = phaseTextColors[phase] || "text-stone-500";
 
   if (progress && (phase === "restoring" || phase === "backing_up")) {
     const pct = Math.round(progress.percent_done * 100);
     return (
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
-        >
-          {phase}
-        </span>
-        <span className="inline-flex items-center gap-1 text-xs text-gray-300">
-          <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-medium ${color}`}>{phase}</span>
+        <span className="flex items-center gap-1 text-xs text-stone-400">
+          <span className="w-14 h-1 bg-stone-200 rounded-full overflow-hidden">
             <span
-              className="block h-full bg-yellow-400 rounded-full transition-all"
+              className="block h-full bg-amber-400 rounded-full transition-all"
               style={{ width: `${pct}%` }}
             />
           </span>
-          <span>{pct}%</span>
-          <span className="text-gray-500 whitespace-nowrap">
+          <span className="text-[10px]">{pct}%</span>
+          <span className="text-[10px] text-stone-400">
             {formatBytes(progress.bytes_done)}/{formatBytes(progress.total_bytes)}
           </span>
         </span>
@@ -110,51 +93,34 @@ export function PhaseBadge({ phase, progress }: PhaseBadgeProps) {
     );
   }
 
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
-    >
-      {phase}
-    </span>
-  );
+  return <span className={`text-xs font-medium ${color}`}>{phase}</span>;
 }
 
-interface DesiredBadgeProps {
+interface DesiredToggleProps {
   state: string;
+  onToggle: () => void;
+  disabled?: boolean;
 }
 
-export function DesiredBadge({ state }: DesiredBadgeProps) {
-  const color = desiredColors[state] || "bg-gray-600";
+export function DesiredToggle({ state, onToggle, disabled }: DesiredToggleProps) {
+  const isRunning = state === "running";
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
-    >
-      {state}
-    </span>
-  );
-}
-
-const containerStateColors: Record<string, string> = {
-  running: "bg-green-500",
-  exited: "bg-red-500",
-  restarting: "bg-yellow-500",
-  created: "bg-gray-500",
-  paused: "bg-yellow-500",
-  dead: "bg-red-500",
-};
-
-interface ContainerStateBadgeProps {
-  state: string;
-}
-
-export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
-  const color = containerStateColors[state] || "bg-gray-500";
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}
-    >
-      {state}
-    </span>
+    <div className="tooltip-container inline-flex items-center">
+      <button
+        role="switch"
+        aria-checked={isRunning}
+        onClick={onToggle}
+        disabled={disabled}
+        className="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none"
+        style={{ backgroundColor: isRunning ? "#0d9488" : "#d6d3d1" }}
+      >
+        <span
+          className="toggle-thumb inline-block h-3.5 w-3.5 rounded-full bg-white"
+          style={{ transform: isRunning ? "translateX(18px)" : "translateX(2px)" }}
+        />
+      </button>
+      <span className="tooltip-content">{isRunning ? "should be running" : "should be stopped"}</span>
+    </div>
   );
 }
 
@@ -164,67 +130,58 @@ interface PostBackupPhaseBadgeProps {
   progress?: ResticProgress;
 }
 
+const postBackupColors: Record<string, string> = {
+  backup_pruning: "text-violet-600",
+  backup_checking: "text-violet-600",
+};
+
 export function PostBackupPhaseBadge({ phase, onClick, progress }: PostBackupPhaseBadgeProps) {
-  const color = postBackupPhaseColors[phase] || "bg-purple-500";
-  const showProgress = !!progress;
+  const color = postBackupColors[phase] || "text-violet-600";
   const pct = progress ? Math.round(progress.percent_done * 100) : 0;
+
+  const content = (
+    <div className="flex items-center gap-1.5">
+      <span className={`text-xs font-medium ${color}`}>{phase}</span>
+      {progress && (
+        <span className="flex items-center gap-1 text-xs text-stone-400">
+          <span className="w-12 h-1 bg-stone-200 rounded-full overflow-hidden">
+            <span
+              className="block h-full bg-violet-400 rounded-full transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </span>
+          <span className="text-[10px]">{pct}%</span>
+        </span>
+      )}
+    </div>
+  );
 
   if (onClick) {
     return (
-      <button onClick={onClick} className="relative cursor-pointer hover:opacity-80" title="Toggle post-backup logs">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
-            {phase}
-          </span>
-          {showProgress && (
-            <span className="inline-flex items-center gap-1 text-xs text-gray-300">
-              <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
-                <span
-                  className="block h-full bg-purple-300 rounded-full transition-all"
-                  style={{ width: `${pct}%` }}
-                />
-              </span>
-              <span>{pct}%</span>
-              {progress && progress.total_files > 0 && (
-                <span className="text-gray-500 whitespace-nowrap">
-                  {progress.files_done}/{progress.total_files}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        <span className="absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
+      <button onClick={onClick} className="relative hover:opacity-70 cursor-pointer">
+        {content}
+        <span className="absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full bg-violet-400" />
       </button>
     );
   }
 
-  if (showProgress) {
-    return (
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
-          {phase}
-        </span>
-        <span className="inline-flex items-center gap-1 text-xs text-gray-300">
-          <span className="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden">
-            <span
-              className="block h-full bg-purple-300 rounded-full transition-all"
-              style={{ width: `${pct}%` }}
-            />
-          </span>
-          <span>{pct}%</span>
-          {progress && progress.total_files > 0 && (
-            <span className="text-gray-500 whitespace-nowrap">
-              {progress.files_done}/{progress.total_files}
-            </span>
-          )}
-        </span>
-      </div>
-    );
-  }
+  return content;
+}
 
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${color}`}>
-      {phase}
-    </span>
-  );
+const containerStateColors: Record<string, string> = {
+  running: "text-emerald-700",
+  exited: "text-red-600",
+  restarting: "text-amber-600",
+  created: "text-stone-500",
+  paused: "text-amber-600",
+  dead: "text-red-600",
+};
+
+interface ContainerStateBadgeProps {
+  state: string;
+}
+
+export function ContainerStateBadge({ state }: ContainerStateBadgeProps) {
+  const color = containerStateColors[state] || "text-stone-500";
+  return <span className={`text-xs font-medium ${color}`}>{state}</span>;
 }
