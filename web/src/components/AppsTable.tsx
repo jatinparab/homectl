@@ -13,7 +13,7 @@ interface AppsTableProps {
 export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onShowLogs, agents }: AppsTableProps) {
   if (isLoading) {
     return (
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-400">
+      <div className="bg-white border border-[#e2ddd7] rounded-lg p-8 text-center text-stone-400 text-sm">
         Loading...
       </div>
     )
@@ -21,37 +21,37 @@ export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onSh
 
   if (apps.length === 0) {
     return (
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-400">
+      <div className="bg-white border border-[#e2ddd7] rounded-lg p-8 text-center text-stone-400 text-sm">
         No apps configured
       </div>
     )
   }
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+    <div className="bg-white border border-[#e2ddd7] rounded-lg overflow-hidden">
       <table className="w-full table-fixed">
         <colgroup>
-          <col className="w-[14%]" />  {/* App */}
-          <col className="w-[8%]" />   {/* Desired */}
-          <col className="w-[14%]" />  {/* Node */}
-          <col className="w-[9%]" />   {/* Status */}
-          <col className="w-[9%]" />   {/* Health */}
+          <col className="w-[15%]" />  {/* App */}
+          <col className="w-[7%]" />   {/* Run */}
+          <col className="w-[13%]" />  {/* Node */}
+          <col className="w-[8%]" />   {/* Status */}
+          <col className="w-[6%]" />   {/* Health */}
           <col className="w-[16%]" />  {/* Phase */}
-          <col className="w-[12%]" />  {/* Backup */}
-          <col className="w-[5%]" />   {/* Conn */}
+          <col className="w-[13%]" />  {/* Backup */}
+          <col className="w-[9%]" />   {/* Conn */}
           <col className="w-[13%]" />  {/* Actions */}
         </colgroup>
-        <thead className="bg-gray-700">
-          <tr>
-            <th className="px-4 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">App</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Desired</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Node</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Status</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Health</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Phase</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Backup</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conn</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider"></th>
+        <thead>
+          <tr className="border-b border-[#e2ddd7]">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">App</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Run</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Node</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Status</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Health</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Phase</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Backup</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Conn</th>
+            <th className="px-3 py-2.5"></th>
           </tr>
         </thead>
         <tbody>
