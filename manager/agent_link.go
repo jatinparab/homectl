@@ -81,9 +81,6 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 
 	m.linkMu.Lock()
 	m.agentLinks[peer.name] = peer
-	if peer.ip != "" {
-		m.agentLinksByIP[peer.ip] = peer
-	}
 	m.linkMu.Unlock()
 
 	defer func() {
@@ -91,11 +88,6 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 		m.linkMu.Lock()
 		if current := m.agentLinks[peer.name]; current == peer {
 			delete(m.agentLinks, peer.name)
-		}
-		if peer.ip != "" {
-			if current := m.agentLinksByIP[peer.ip]; current == peer {
-				delete(m.agentLinksByIP, peer.ip)
-			}
 		}
 		m.linkMu.Unlock()
 	}()
@@ -291,29 +283,12 @@ func (m *Manager) requestAgent(agentName string, req common.LinkMessage, waitFir
 	return ch, nil
 }
 
-func (m *Manager) resolveAgentByIP(ip string) string {
-	m.linkMu.RLock()
-	defer m.linkMu.RUnlock()
-	if peer := m.agentLinksByIP[ip]; peer != nil {
-		return peer.name
-	}
-	return ""
-}
-
-func (m *Manager) requestAgentByIP(ip string, req common.LinkMessage, waitFirst time.Duration) (<-chan common.LinkMessage, error) {
-	name := m.resolveAgentByIP(ip)
-	if name == "" {
-		return nil, fmt.Errorf("no linked agent for ip %s", ip)
-	}
-	return m.requestAgent(name, req, waitFirst)
-}
-
-func (m *Manager) requestAgentUnaryByIP(ctx context.Context, ip string, requestType common.LinkRequestType, payload any) (int, []byte, error) {
+func (m *Manager) requestAgentUnary(ctx context.Context, agentID string, requestType common.LinkRequestType, payload any) (int, []byte, error) {
 	raw, err := common.EncodePayload(payload)
 	if err != nil {
 		return 0, nil, err
 	}
-	ch, err := m.requestAgentByIP(ip, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
+	ch, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -329,12 +304,12 @@ func (m *Manager) requestAgentUnaryByIP(ctx context.Context, ip string, requestT
 	}
 }
 
-func (m *Manager) streamAgentByIP(ip string, requestType common.LinkRequestType, payload any) (io.ReadCloser, int, error) {
+func (m *Manager) streamAgent(agentID string, requestType common.LinkRequestType, payload any) (io.ReadCloser, int, error) {
 	raw, err := common.EncodePayload(payload)
 	if err != nil {
 		return nil, 0, err
 	}
-	ch, err := m.requestAgentByIP(ip, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
+	ch, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
 	if err != nil {
 		return nil, 0, err
 	}

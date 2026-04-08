@@ -170,7 +170,7 @@ func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
 		return fmt.Errorf("node %s offline", nodeName)
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, common.LinkReqRestartApp, common.RestartAppPayload{AppID: string(appID)})
+	status, body, err := m.requestAgentUnary(context.Background(), nodeName, common.LinkReqRestartApp, common.RestartAppPayload{AppID: string(appID)})
 	if err != nil {
 		return err
 	}

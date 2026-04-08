@@ -636,9 +636,9 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wg.Add(1)
-		go func(name, ip string) {
+		go func(name string) {
 			defer wg.Done()
-			status, _, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqAgentManagerSync, nil)
+			status, _, err := m.requestAgentUnary(context.Background(), name, common.LinkReqAgentManagerSync, nil)
 			if err != nil {
 				mu.Lock()
 				syncErrors = append(syncErrors, fmt.Sprintf("%s: %s", name, err))
@@ -652,7 +652,7 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			apiLog.Info("Agent synced successfully", "agent", name)
-		}(agent.Name, agentCfg.IP)
+		}(agent.Name)
 	}
 
 	wg.Wait()
@@ -968,7 +968,7 @@ func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, common.LinkReqRestartApp, common.RestartAppPayload{AppID: appID})
+	status, body, err := m.requestAgentUnary(r.Context(), nodeName, common.LinkReqRestartApp, common.RestartAppPayload{AppID: appID})
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1030,7 +1030,7 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Proxy logs from agent using TCP link
-	stream, status, err := m.streamAgentByIP(agentCfg.IP, common.LinkReqAppLogs, common.AppLogsPayload{AppID: appID})
+	stream, status, err := m.streamAgent(nodeName, common.LinkReqAppLogs, common.AppLogsPayload{AppID: appID})
 	if err != nil {
 		// Send error as SSE event
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
@@ -1115,7 +1115,7 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	stream, status, err := m.streamAgentByIP(agentCfg.IP, common.LinkReqAppPhaseLogs, common.AppPhaseLogsPayload{AppID: appID})
+	stream, status, err := m.streamAgent(nodeName, common.LinkReqAppPhaseLogs, common.AppPhaseLogsPayload{AppID: appID})
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
@@ -1245,7 +1245,7 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	stream, status, err := m.streamAgentByIP(agentCfg.IP, common.LinkReqSystemLogs, nil)
+	stream, status, err := m.streamAgent(source, common.LinkReqSystemLogs, nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
@@ -1357,9 +1357,9 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wg.Add(1)
-		go func(idx int, ip string) {
+		go func(idx int, agentID string) {
 			defer wg.Done()
-			status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqStorageStatus, nil)
+			status, body, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqStorageStatus, nil)
 			if err != nil {
 				results[idx].Error = err.Error()
 				return
@@ -1384,7 +1384,7 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 			results[idx].Reclaimable = st.Reclaimable
 			results[idx].ReclaimPct = st.ReclaimPct
 			results[idx].Prune = st.Prune
-		}(i, agentCfg.IP)
+		}(i, a.Name)
 	}
 
 	wg.Wait()
@@ -1452,7 +1452,7 @@ func (m *Manager) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, common.LinkReqStoragePrune, nil)
+		status, body, err := m.requestAgentUnary(r.Context(), a.Name, common.LinkReqStoragePrune, nil)
 		if err != nil {
 			result.Error = err.Error()
 			results = append(results, result)
@@ -1506,9 +1506,9 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wg.Add(1)
-		go func(idx int, ip string) {
+		go func(idx int, agentID string) {
 			defer wg.Done()
-			status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqContainers, nil)
+			status, body, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqContainers, nil)
 			if err != nil {
 				results[idx].Error = err.Error()
 				return
@@ -1524,7 +1524,7 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			results[idx].Containers = containers
-		}(i, agentCfg.IP)
+		}(i, a.Name)
 	}
 
 	wg.Wait()
@@ -1567,7 +1567,7 @@ func (m *Manager) handleAPIAppSnapshots(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, common.LinkReqSnapshots, common.SnapshotsPayload{AppID: appID})
+	status, body, err := m.requestAgentUnary(r.Context(), nodeName, common.LinkReqSnapshots, common.SnapshotsPayload{AppID: appID})
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1612,7 +1612,7 @@ func (m *Manager) handleAPIAppSnapshotRefresh(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, common.LinkReqSnapshotRefresh, common.SnapshotRefreshPayload{AppID: appID})
+	status, body, err := m.requestAgentUnary(r.Context(), nodeName, common.LinkReqSnapshotRefresh, common.SnapshotRefreshPayload{AppID: appID})
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1663,7 +1663,7 @@ func (m *Manager) handleAPISnapshotLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, common.LinkReqSnapshotLs, common.SnapshotLsPayload{SnapshotID: snapshotID, Path: browsePath})
+	status, body, err := m.requestAgentUnary(r.Context(), nodeName, common.LinkReqSnapshotLs, common.SnapshotLsPayload{SnapshotID: snapshotID, Path: browsePath})
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1717,7 +1717,7 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	stream, status, err := m.streamAgentByIP(agentCfg.IP, common.LinkReqContainerLogs, common.ContainerLogsPayload{ContainerID: containerID, ShowAll: showAll == "true"})
+	stream, status, err := m.streamAgent(nodeName, common.LinkReqContainerLogs, common.ContainerLogsPayload{ContainerID: containerID, ShowAll: showAll == "true"})
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
