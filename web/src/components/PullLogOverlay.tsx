@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ResticProgress } from "../api/types";
+import { decodeStreamMessage, openStreamSocket } from "../api/ws";
 
 interface PhaseLogOverlayProps {
   appId: string;
@@ -23,11 +24,14 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
   const maxLines = 200;
 
   useEffect(() => {
-    const url = `/api/v1/apps/${encodeURIComponent(appId)}/phase-logs?node=${encodeURIComponent(node)}`;
-    const es = new EventSource(url);
+    const path = `/api/v1/apps/${encodeURIComponent(appId)}/phase-logs?node=${encodeURIComponent(node)}`;
+    const ws = openStreamSocket(path);
 
-    es.onmessage = (e) => {
-      const line: string = e.data;
+    ws.onmessage = (e) => {
+      const line = decodeStreamMessage(e.data);
+      if (line == null) {
+        return;
+      }
 
       if (line.startsWith("__PROGRESS__:") && onProgress) {
         try {
@@ -45,12 +49,12 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
       });
     };
 
-    es.onerror = () => {
-      es.close();
+    ws.onerror = () => {
+      ws.close();
     };
 
     return () => {
-      es.close();
+      ws.close();
     };
   }, [appId, node, onProgress]);
 

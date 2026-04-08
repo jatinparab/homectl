@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSystemLogSources } from '../api/hooks'
+import { decodeStreamMessage, openStreamSocket } from '../api/ws'
 
 interface LogEntry {
   source: string
@@ -13,46 +14,48 @@ export function SystemLogViewer() {
   const [filter, setFilter] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map())
+  const socketsRef = useRef<Map<string, WebSocket>>(new Map())
   const { data: sources } = useSystemLogSources()
 
   const addLog = useCallback((source: string, line: string) => {
     setLogs((prev) => [...prev.slice(-499), { source, line }])
   }, [])
 
-  // Manage EventSource connections
+  // Manage websocket connections
   useEffect(() => {
     if (!expanded || !sources) {
       // Close all connections when collapsed
-      eventSourcesRef.current.forEach((es) => es.close())
-      eventSourcesRef.current.clear()
+      socketsRef.current.forEach((ws) => ws.close())
+      socketsRef.current.clear()
       return
     }
 
     const activeSources = activeTab === 'All' ? sources : [activeTab]
 
     // Close connections for sources no longer active
-    eventSourcesRef.current.forEach((es, src) => {
+    socketsRef.current.forEach((ws, src) => {
       if (!activeSources.includes(src)) {
-        es.close()
-        eventSourcesRef.current.delete(src)
+        ws.close()
+        socketsRef.current.delete(src)
       }
     })
 
     // Open connections for new active sources
     for (const src of activeSources) {
-      if (eventSourcesRef.current.has(src)) continue
+      if (socketsRef.current.has(src)) continue
 
-      const es = new EventSource(`/api/v1/system-logs/${src}`)
-      es.onmessage = (e) => {
-        addLog(src, e.data)
+      const ws = openStreamSocket(`/api/v1/system-logs/${encodeURIComponent(src)}`)
+      ws.onmessage = (e) => {
+        const line = decodeStreamMessage(e.data)
+        if (line == null) return
+        addLog(src, line)
       }
-      eventSourcesRef.current.set(src, es)
+      socketsRef.current.set(src, ws)
     }
 
     return () => {
-      eventSourcesRef.current.forEach((es) => es.close())
-      eventSourcesRef.current.clear()
+      socketsRef.current.forEach((ws) => ws.close())
+      socketsRef.current.clear()
     }
   }, [expanded, sources, activeTab, addLog])
 
