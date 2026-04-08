@@ -27,6 +27,10 @@ func main() {
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
+	if err := mgr.StartAgentTCPServer(); err != nil {
+		slog.Error("Failed to start agent TCP server", "err", err)
+		os.Exit(1)
+	}
 
 	// Best-effort initial git sync
 	slog.Info("Performing initial git sync")

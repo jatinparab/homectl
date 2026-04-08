@@ -3,13 +3,10 @@ package manager
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"sort"
 	"time"
 
-	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
 )
 
@@ -173,21 +170,13 @@ func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
 		return fmt.Errorf("node %s offline", nodeName)
 	}
 
-	url := fmt.Sprintf("http://%s:%d/restart/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	status, body, err := m.requestAgentUnary(context.Background(), nodeName, common.LinkReqRestartApp, common.RestartAppPayload{AppID: string(appID)})
 	if err != nil {
 		return err
 	}
 
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("agent returned %s: %s", resp.Status, string(body))
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("agent returned HTTP %d: %s", status, string(body))
 	}
 
 	return nil

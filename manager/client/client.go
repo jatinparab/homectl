@@ -8,119 +8,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
+	"math/rand"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
 
-// Client is an HTTP client for the manager API
-type Client struct {
-	baseURL    string
-	httpClient *http.Client
-}
+const managerTCPPort = "1339"
 
-// NewClient creates a new manager client
-func NewClient(baseURL string) *Client {
-	return &Client{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
-}
-
-// Health checks if the manager is healthy
-func (c *Client) Health() error {
-	resp, err := c.httpClient.Get(c.baseURL + "/health")
-	if err != nil {
-		return fmt.Errorf("health check failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("manager unhealthy: status %d", resp.StatusCode)
-	}
-	return nil
-}
-
-// ReadFile reads a file from the manager
-func (c *Client) ReadFile(path string) ([]byte, error) {
-	url := fmt.Sprintf("%s/files/%s", c.baseURL, strings.TrimPrefix(path, "/"))
-	resp, err := c.httpClient.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch file: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("file not found: %s", path)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch file: status %d", resp.StatusCode)
-	}
-
-	return io.ReadAll(resp.Body)
-}
-
-// ListDir lists files in a directory from the manager
-func (c *Client) ListDir(path string) ([]string, error) {
-	url := fmt.Sprintf("%s/files/%s", c.baseURL, strings.TrimPrefix(path, "/"))
-	resp, err := c.httpClient.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list directory: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("directory not found: %s", path)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to list directory: status %d", resp.StatusCode)
-	}
-
-	var entries []string
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			entries = append(entries, line)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read directory listing: %w", err)
-	}
-
-	return entries, nil
-}
-
-// TriggerSync triggers a git sync on the manager
-func (c *Client) TriggerSync() error {
-	resp, err := c.httpClient.Post(c.baseURL+"/sync", "application/json", nil)
-	if err != nil {
-		return fmt.Errorf("sync request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sync failed: %s", string(body))
-	}
-	return nil
-}
-
-// HeartbeatRequest is the request body for agent heartbeat
-type HeartbeatRequest struct {
-	Name    string             `json:"name"`
-	IP      string             `json:"ip"`
-	Reports []common.AppReport `json:"reports,omitempty"`
-	Metrics common.NodeMetrics `json:"metrics,omitempty"`
-}
-
-// AgentInfo represents a registered agent
+// AgentInfo represents a registered agent.
 type AgentInfo struct {
 	Name         string    `json:"name"`
 	IP           string    `json:"ip"`
@@ -128,117 +30,303 @@ type AgentInfo struct {
 	RegisteredAt time.Time `json:"registered_at"`
 }
 
-// Heartbeat sends a heartbeat to the manager with app reports
-func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
-	req := HeartbeatRequest{Name: name, IP: ip, Reports: reports, Metrics: metrics}
-	body, err := json.Marshal(req)
+// Client is a TCP client for manager-agent messaging.
+type Client struct {
+	managerHost string
+
+	mu        sync.RWMutex
+	conn      net.Conn
+	enc       *json.Encoder
+	dec       *json.Decoder
+	connected bool
+
+	writeMu   sync.Mutex
+	pendingMu sync.Mutex
+	pending   map[string]chan common.LinkMessage
+
+	agentName string
+	agentIP   string
+
+	handlerMu sync.RWMutex
+	handler   func(common.LinkMessage) []common.LinkMessage
+}
+
+// NewClient creates a new manager client.
+func NewClient(baseURL string) *Client {
+	managerHost, _ := parseManagerAddress(baseURL)
+	return &Client{
+		managerHost: managerHost,
+		pending:     make(map[string]chan common.LinkMessage),
+	}
+}
+
+func parseManagerAddress(baseURL string) (string, string) {
+	u, err := url.Parse(baseURL)
+	if err == nil && u.Host != "" {
+		host := u.Hostname()
+		port := u.Port()
+		if port == "" {
+			port = managerTCPPort
+		}
+		if host != "" {
+			return host, port
+		}
+	}
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(baseURL, "http://"), "https://")
+	host, port, found := strings.Cut(trimmed, ":")
+	if found {
+		if port == "" {
+			port = managerTCPPort
+		}
+		return host, port
+	}
+	if trimmed != "" {
+		return trimmed, managerTCPPort
+	}
+	return "127.0.0.1", managerTCPPort
+}
+
+// SetIdentity sets the local agent identity used in the hello frame.
+func (c *Client) SetIdentity(name, ip string) {
+	c.agentName = name
+	c.agentIP = ip
+}
+
+// SetRequestHandler sets the callback used for manager-initiated requests.
+func (c *Client) SetRequestHandler(fn func(common.LinkMessage) []common.LinkMessage) {
+	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
+	c.handler = fn
+}
+
+// Connect establishes a TCP session to manager.
+func (c *Client) Connect(timeout time.Duration) error {
+	addr := net.JoinHostPort(c.managerHost, managerTCPPort)
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return err
 	}
 
-	resp, err := c.httpClient.Post(c.baseURL+"/agents/heartbeat", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("heartbeat request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(bufio.NewReader(conn))
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("heartbeat failed: %s", string(respBody))
+	hello := common.LinkMessage{
+		Type:      common.LinkTypeHello,
+		Source:    "agent",
+		AgentName: c.agentName,
+		AgentIP:   c.agentIP,
 	}
+	if err := enc.Encode(hello); err != nil {
+		_ = conn.Close()
+		return err
+	}
+
+	c.mu.Lock()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+	c.conn = conn
+	c.enc = enc
+	c.dec = dec
+	c.connected = true
+	c.mu.Unlock()
+
+	go c.readLoop(conn, dec)
 	return nil
 }
 
-// ListAgents returns all registered agents
+func (c *Client) readLoop(conn net.Conn, dec *json.Decoder) {
+	defer func() {
+		c.mu.Lock()
+		if c.conn == conn {
+			c.connected = false
+			_ = c.conn.Close()
+			c.conn = nil
+			c.enc = nil
+			c.dec = nil
+		}
+		c.mu.Unlock()
+	}()
+
+	for {
+		var msg common.LinkMessage
+		if err := dec.Decode(&msg); err != nil {
+			return
+		}
+
+		switch msg.Type {
+		case common.LinkTypeResponse:
+			c.pendingMu.Lock()
+			ch := c.pending[msg.ID]
+			if msg.Done {
+				delete(c.pending, msg.ID)
+			}
+			c.pendingMu.Unlock()
+			if ch != nil {
+				ch <- msg
+			}
+		case common.LinkTypeRequest:
+			c.handlerMu.RLock()
+			h := c.handler
+			c.handlerMu.RUnlock()
+			if h == nil {
+				_ = c.send(common.LinkMessage{
+					Type:   common.LinkTypeResponse,
+					ID:     msg.ID,
+					Status: 404,
+					Error:  "no handler",
+					Done:   true,
+				})
+				continue
+			}
+			for _, resp := range h(msg) {
+				resp.Type = common.LinkTypeResponse
+				resp.ID = msg.ID
+				_ = c.send(resp)
+			}
+		}
+	}
+}
+
+func (c *Client) send(msg common.LinkMessage) error {
+	c.mu.RLock()
+	enc := c.enc
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected || enc == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return enc.Encode(msg)
+}
+
+func (c *Client) request(requestType common.LinkRequestType, payload any, timeout time.Duration) (common.LinkMessage, error) {
+	if !c.IsConnected() {
+		return common.LinkMessage{}, fmt.Errorf("not connected")
+	}
+	id := fmt.Sprintf("%d-%06d", time.Now().UnixNano(), rand.Intn(1000000))
+
+	raw, err := common.EncodePayload(payload)
+	if err != nil {
+		return common.LinkMessage{}, err
+	}
+
+	ch := make(chan common.LinkMessage, 32)
+	c.pendingMu.Lock()
+	c.pending[id] = ch
+	c.pendingMu.Unlock()
+
+	if err := c.send(common.LinkMessage{
+		Type:        common.LinkTypeRequest,
+		ID:          id,
+		Source:      "agent",
+		RequestType: requestType,
+		Payload:     raw,
+	}); err != nil {
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
+		return common.LinkMessage{}, err
+	}
+
+	select {
+	case resp := <-ch:
+		if resp.Error != "" {
+			return resp, fmt.Errorf("%s", resp.Error)
+		}
+		return resp, nil
+	case <-time.After(timeout):
+		c.pendingMu.Lock()
+		delete(c.pending, id)
+		c.pendingMu.Unlock()
+		return common.LinkMessage{}, fmt.Errorf("request timeout")
+	}
+}
+
+// Health checks if the manager link is connected.
+func (c *Client) Health() error {
+	if c.IsConnected() {
+		return nil
+	}
+	return fmt.Errorf("manager link unavailable")
+}
+
+// IsConnected returns whether the TCP link is active.
+func (c *Client) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.connected && c.conn != nil
+}
+
+// Heartbeat sends a heartbeat to the manager with app reports.
+func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
+	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Reports: reports, Metrics: metrics}, 10*time.Second)
+	return err
+}
+
+// ListAgents is not used by the agent runtime.
 func (c *Client) ListAgents() ([]AgentInfo, error) {
-	resp, err := c.httpClient.Get(c.baseURL + "/agents")
-	if err != nil {
-		return nil, fmt.Errorf("list agents request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list agents failed: %s", string(body))
-	}
-
-	var agents []AgentInfo
-	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-	return agents, nil
+	return nil, fmt.Errorf("not supported over tcp")
 }
 
-// FetchDesiredApps fetches the desired apps for an agent from the manager
+// TriggerSync triggers a git sync on the manager.
+func (c *Client) TriggerSync() error {
+	_, err := c.request(common.LinkReqAgentManagerSync, nil, 10*time.Second)
+	return err
+}
+
+// FetchDesiredApps fetches desired apps for this agent.
 func (c *Client) FetchDesiredApps(agentID string) (common.DesiredAppsResponse, error) {
-	url := fmt.Sprintf("%s/agents/%s/desired", c.baseURL, agentID)
-	resp, err := c.httpClient.Get(url)
+	_ = agentID
+	resp, err := c.request(common.LinkReqAgentDesired, nil, 10*time.Second)
 	if err != nil {
-		return common.DesiredAppsResponse{}, fmt.Errorf("fetch desired apps request failed: %w", err)
+		return common.DesiredAppsResponse{}, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return common.DesiredAppsResponse{}, fmt.Errorf("fetch desired apps failed: %s", string(body))
+	if resp.Status != 200 {
+		return common.DesiredAppsResponse{}, fmt.Errorf("status %d", resp.Status)
 	}
-
-	var response common.DesiredAppsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return common.DesiredAppsResponse{}, fmt.Errorf("failed to decode response: %w", err)
+	var out common.DesiredAppsResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return common.DesiredAppsResponse{}, err
 	}
-	return response, nil
+	return out, nil
 }
 
-// FetchTraefikConfig fetches the traefik config for an agent from the manager
+// FetchTraefikConfig fetches traefik config for this agent.
 func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
-	url := fmt.Sprintf("%s/agents/%s/traefik-config", c.baseURL, agentID)
-	resp, err := c.httpClient.Get(url)
+	_ = agentID
+	resp, err := c.request(common.LinkReqAgentTraefik, nil, 10*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("fetch traefik config request failed: %w", err)
+		return "", err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("fetch traefik config failed: %s", string(body))
+	if resp.Status != 200 {
+		return "", fmt.Errorf("status %d", resp.Status)
 	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	return string(data), nil
+	return string(resp.Body), nil
 }
 
-// SyncDockerConfigs fetches docker configs from manager and extracts to local directory
+// SyncDockerConfigs fetches docker configs from manager and extracts to local directory.
 func (c *Client) SyncDockerConfigs(destDir string) error {
-	// Fetch the tar.gz archive
-	resp, err := c.httpClient.Get(c.baseURL + "/docker/sync")
+	resp, err := c.request(common.LinkReqAgentDockerSync, nil, 60*time.Second)
 	if err != nil {
-		return fmt.Errorf("docker sync request failed: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("docker sync failed: %s", string(body))
+	if resp.Status != 200 {
+		return fmt.Errorf("docker sync failed: status %d", resp.Status)
 	}
 
-	// Create destination directory if it doesn't exist
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	// Decompress gzip
-	gr, err := gzip.NewReader(resp.Body)
+	gr, err := gzip.NewReader(bytes.NewReader(resp.Body))
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gr.Close()
 
-	// Extract tar
 	tr := tar.NewReader(gr)
 	for {
 		header, err := tr.Next()
@@ -249,10 +337,7 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
-		// Construct target path
 		targetPath := filepath.Join(destDir, header.Name)
-
-		// Prevent directory traversal
 		if !strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(destDir)) {
 			return fmt.Errorf("invalid file path in archive: %s", header.Name)
 		}
@@ -263,17 +348,13 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 				return fmt.Errorf("failed to create directory %s: %w", targetPath, err)
 			}
 		case tar.TypeReg:
-			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 				return fmt.Errorf("failed to create parent directory: %w", err)
 			}
-
-			// Create file
 			outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
 			if err != nil {
 				return fmt.Errorf("failed to create file %s: %w", targetPath, err)
 			}
-
 			if _, err := io.Copy(outFile, tr); err != nil {
 				outFile.Close()
 				return fmt.Errorf("failed to write file %s: %w", targetPath, err)
