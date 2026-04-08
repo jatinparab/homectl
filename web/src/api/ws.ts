@@ -4,7 +4,9 @@ export function buildWebSocketUrl(path: string): string {
 }
 
 export function openStreamSocket(path: string): WebSocket {
-  const streamPath = `/api/v1/ws/stream?path=${encodeURIComponent(path)}`;
+  // path is like /api/v1/apps/foo/logs?node=bar
+  // → rewrite to   /api/v1/ws/apps/foo/logs?node=bar  (insert /ws after /api/v1)
+  const streamPath = path.replace(/^\/api\/v1\//, '/api/v1/ws/');
   return new WebSocket(buildWebSocketUrl(streamPath));
 }
 

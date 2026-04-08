@@ -101,14 +101,19 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 }
 
 // handleAPIWebSocketStream proxies existing SSE streams over websocket.
-// GET /api/v1/ws/stream?path=/api/v1/...
+// GET /api/v1/ws/<path> — proxies to /api/v1/<path> internally.
 func (m *Manager) handleAPIWebSocketStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	streamPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	// Reconstruct the internal SSE path: /api/v1/ws/apps/foo → /api/v1/apps/foo
+	tail := strings.TrimPrefix(r.URL.Path, "/api/v1/ws/")
+	streamPath := "/api/v1/" + tail
+	if r.URL.RawQuery != "" {
+		streamPath += "?" + r.URL.RawQuery
+	}
 	if !isAllowedWSStreamPath(streamPath) {
 		http.Error(w, "invalid stream path", http.StatusBadRequest)
 		return
