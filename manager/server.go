@@ -36,8 +36,6 @@ func (m *Manager) NewServer() *http.Server {
 
 	// UI APIs
 	mux.HandleFunc("/api/v1/ws/state", m.handleAPIWebSocketState)
-	mux.HandleFunc("/api/v1/ws/logs", m.handleAPIWebSocketLogs)
-	mux.HandleFunc("/api/v1/ws/", m.handleAPIWebSocketStream) // catch-all: proxies /api/v1/ws/<path> → /api/v1/<path>
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
