@@ -1,13 +1,13 @@
 package manager
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
-	agentpkg "github.com/jatinparab/homectl/agent"
+	"github.com/jatinparab/homectl/common"
 )
 
 var repoMgrLog = slog.With("area", "repo")
@@ -51,7 +51,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		return
 	}
 
-	check, unlock, ok := m.fetchRepoStatusesFromAgent(agentCfg.IP)
+	check, unlock, ok := m.fetchRepoStatusesFromAgent(gateway)
 	if ok {
 		m.repoMu.Lock()
 		prevCheckBusy := m.repoCheckBusy
@@ -148,7 +148,7 @@ func (m *Manager) reconcileRepoOps(now time.Time) {
 		return
 	}
 
-	if err := m.triggerRepoCheckOnAgent(agentCfg.IP); err != nil {
+	if err := m.triggerRepoCheckOnAgent(gateway); err != nil {
 		repoMgrLog.Info("Repo check trigger failed", "err", err)
 		return
 	}
@@ -173,49 +173,39 @@ func (m *Manager) isAgentOnline(agentName string) bool {
 	return time.Since(agent.LastSeen) < 30*time.Second
 }
 
-func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {
-	checkURL := fmt.Sprintf("http://%s:%d/check-status", ip, agentpkg.ReadyServerPort)
-	resp, err := m.httpClient.Get(checkURL)
+func (m *Manager) fetchRepoStatusesFromAgent(agentID string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {
+	status, body, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoCheckStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if status != 200 {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&check); err != nil {
+	if err := json.Unmarshal(body, &check); err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
 
-	unlockURL := fmt.Sprintf("http://%s:%d/unlock-status", ip, agentpkg.ReadyServerPort)
-	resp2, err := m.httpClient.Get(unlockURL)
+	status2, body2, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoUnlockStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
+	if status2 != 200 {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
-	if err := json.NewDecoder(resp2.Body).Decode(&unlock); err != nil {
+	if err := json.Unmarshal(body2, &unlock); err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
 
 	return check, unlock, true
 }
 
-func (m *Manager) triggerRepoCheckOnAgent(ip string) error {
-	url := fmt.Sprintf("http://%s:%d/check", ip, agentpkg.ReadyServerPort)
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+func (m *Manager) triggerRepoCheckOnAgent(agentID string) error {
+	status, _, err := m.requestAgentUnary(context.Background(), agentID, common.LinkReqRepoCheck, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("agent returned %s", resp.Status)
+	if status != 200 {
+		return fmt.Errorf("agent returned HTTP %d", status)
 	}
 	return nil
 }
