@@ -1119,25 +1119,17 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 512*1024), 512*1024)
+	for scanner.Scan() {
 		select {
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := stream.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
+		}
+		if line := scanner.Text(); line != "" {
+			fmt.Fprintf(w, "data: %s\n\n", line)
+			flusher.Flush()
 		}
 	}
 }

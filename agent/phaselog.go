@@ -80,14 +80,21 @@ func (b *PhaseLogBuffer) Follow() chan string {
 // Unfollow removes a subscriber and closes its channel.
 func (b *PhaseLogBuffer) Unfollow(ch chan string) {
 	b.mu.Lock()
-	delete(b.followers, ch)
+	if _, ok := b.followers[ch]; ok {
+		delete(b.followers, ch)
+		close(ch)
+	}
 	b.mu.Unlock()
 }
 
-// Clear resets the buffer.
+// Clear resets the buffer and closes all follower channels to signal phase completion.
 func (b *PhaseLogBuffer) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	for ch := range b.followers {
+		close(ch)
+	}
+	b.followers = make(map[chan string]struct{})
 	b.pos = 0
 	b.count = 0
 	for i := range b.ring {

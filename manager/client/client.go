@@ -48,7 +48,7 @@ type Client struct {
 	agentIP   string
 
 	handlerMu sync.RWMutex
-	handler   func(common.LinkMessage) []common.LinkMessage
+	handler   func(common.LinkMessage) <-chan common.LinkMessage
 }
 
 // NewClient creates a new manager client.
@@ -93,7 +93,7 @@ func (c *Client) SetIdentity(name, ip string) {
 }
 
 // SetRequestHandler sets the callback used for manager-initiated requests.
-func (c *Client) SetRequestHandler(fn func(common.LinkMessage) []common.LinkMessage) {
+func (c *Client) SetRequestHandler(fn func(common.LinkMessage) <-chan common.LinkMessage) {
 	c.handlerMu.Lock()
 	defer c.handlerMu.Unlock()
 	c.handler = fn
@@ -179,11 +179,14 @@ func (c *Client) readLoop(conn net.Conn, dec *json.Decoder) {
 				})
 				continue
 			}
-			for _, resp := range h(msg) {
-				resp.Type = common.LinkTypeResponse
-				resp.ID = msg.ID
-				_ = c.send(resp)
-			}
+			msgID := msg.ID
+			go func() {
+				for resp := range h(msg) {
+					resp.Type = common.LinkTypeResponse
+					resp.ID = msgID
+					_ = c.send(resp)
+				}
+			}()
 		}
 	}
 }
