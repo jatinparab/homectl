@@ -20,7 +20,7 @@ import (
 	"github.com/jatinparab/homectl/common"
 )
 
-const defaultManagerTCPPort = "1338"
+const managerTCPPort = "1339"
 
 // AgentInfo represents a registered agent.
 type AgentInfo struct {
@@ -33,7 +33,6 @@ type AgentInfo struct {
 // Client is a TCP client for manager-agent messaging.
 type Client struct {
 	managerHost string
-	managerPort string
 
 	mu        sync.RWMutex
 	conn      net.Conn
@@ -54,10 +53,9 @@ type Client struct {
 
 // NewClient creates a new manager client.
 func NewClient(baseURL string) *Client {
-	managerHost, managerPort := parseManagerAddress(baseURL)
+	managerHost, _ := parseManagerAddress(baseURL)
 	return &Client{
 		managerHost: managerHost,
-		managerPort: managerPort,
 		pending:     make(map[string]chan common.LinkMessage),
 	}
 }
@@ -68,7 +66,7 @@ func parseManagerAddress(baseURL string) (string, string) {
 		host := u.Hostname()
 		port := u.Port()
 		if port == "" {
-			port = defaultManagerTCPPort
+			port = managerTCPPort
 		}
 		if host != "" {
 			return host, port
@@ -78,14 +76,14 @@ func parseManagerAddress(baseURL string) (string, string) {
 	host, port, found := strings.Cut(trimmed, ":")
 	if found {
 		if port == "" {
-			port = defaultManagerTCPPort
+			port = managerTCPPort
 		}
 		return host, port
 	}
 	if trimmed != "" {
-		return trimmed, defaultManagerTCPPort
+		return trimmed, managerTCPPort
 	}
-	return "127.0.0.1", defaultManagerTCPPort
+	return "127.0.0.1", managerTCPPort
 }
 
 // SetIdentity sets the local agent identity used in the hello frame.
@@ -103,7 +101,7 @@ func (c *Client) SetRequestHandler(fn func(common.LinkMessage) []common.LinkMess
 
 // Connect establishes a TCP session to manager.
 func (c *Client) Connect(timeout time.Duration) error {
-	addr := net.JoinHostPort(c.managerHost, c.managerPort)
+	addr := net.JoinHostPort(c.managerHost, managerTCPPort)
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return err
