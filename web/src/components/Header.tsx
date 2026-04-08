@@ -15,6 +15,7 @@ const PATH_TABS: Record<string, Tab> = {
 }
 
 export function tabFromPath(path: string): Tab {
+  if (path.startsWith("/apps/")) return "dashboard"
   return PATH_TABS[path] ?? "dashboard"
 }
 

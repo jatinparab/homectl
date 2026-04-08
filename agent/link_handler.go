@@ -154,11 +154,14 @@ func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) []common.LinkMe
 		}
 		appID := payload.AppID
 		composePath := filepath.Join(a.dockerRootDir, appID, "docker-compose.yml")
-		cmd := exec.Command("docker", "compose", "-f", composePath, "logs", "--tail=100")
+		// --no-log-prefix omitted so we keep service names; --no-color keeps output clean.
+		// We do NOT treat a non-zero exit as an error when output is present — docker compose
+		// logs exits non-zero for stopped/exited containers but still returns the log data.
+		cmd := exec.Command("docker", "compose", "-f", composePath, "logs", "--tail=500", "--no-log-prefix=false")
 		cmd.Env = a.docker.ComposeEnv()
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return []common.LinkMessage{{Status: http.StatusInternalServerError, Error: fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))), Done: true}}
+		out, cmdErr := cmd.CombinedOutput()
+		if cmdErr != nil && len(strings.TrimSpace(string(out))) == 0 {
+			return []common.LinkMessage{{Status: http.StatusInternalServerError, Error: fmt.Sprintf("%s: %s", cmdErr, strings.TrimSpace(string(out))), Done: true}}
 		}
 		return []common.LinkMessage{{Status: http.StatusOK, Body: out, Done: true}}
 

@@ -7,10 +7,11 @@ interface AppsTableProps {
   upcomingBackup?: UpcomingBackup | null
   upcomingPrune?: UpcomingPrune | null
   onShowLogs?: (node: string, appId: string) => void
+  onNavigate?: (path: string) => void
   agents?: Agent[]
 }
 
-export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onShowLogs, agents }: AppsTableProps) {
+export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onShowLogs, onNavigate, agents }: AppsTableProps) {
   if (isLoading) {
     return (
       <div className="bg-white border border-[#e2ddd7] rounded-lg p-8 text-center text-stone-400 text-sm">
@@ -64,6 +65,7 @@ export function AppsTable({ apps, isLoading, upcomingBackup, upcomingPrune, onSh
               isUpcomingPrune={upcomingPrune?.app_id === app.app_id}
               upcomingPrune={upcomingPrune?.app_id === app.app_id ? upcomingPrune : undefined}
               onShowLogs={onShowLogs}
+              onNavigate={onNavigate}
               agents={agents}
             />
           ))}
