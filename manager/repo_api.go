@@ -1,14 +1,11 @@
 package manager
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	agentpkg "github.com/jatinparab/homectl/agent"
 )
 
 type RepoOpStatusResponse struct {
@@ -191,21 +188,13 @@ func (m *Manager) handleAPIRepoUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/unlock", agentCfg.IP, agentpkg.ReadyServerPort)
-	req, err := http.NewRequest(http.MethodPost, url, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-	resp, err := m.httpClient.Do(req)
+	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, "/unlock", nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		http.Error(w, string(body), resp.StatusCode)
+	if status != http.StatusOK {
+		http.Error(w, string(body), status)
 		return
 	}
 
@@ -242,21 +231,13 @@ func (m *Manager) handleAPIRepoForceUnlock(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/force-unlock", agentCfg.IP, agentpkg.ReadyServerPort)
-	req, err := http.NewRequest(http.MethodPost, url, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-	resp, err := m.httpClient.Do(req)
+	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, "/force-unlock", nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		http.Error(w, string(body), resp.StatusCode)
+	if status != http.StatusOK {
+		http.Error(w, string(body), status)
 		return
 	}
 
@@ -316,17 +297,16 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/%s", agentCfg.IP, agentpkg.ReadyServerPort, path)
-	resp, err := m.streamHTTPClient.Get(agentURL)
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, "/"+path, nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+	if status != http.StatusOK {
+		w.Write([]byte("data: Agent returned error\n\n"))
 		flusher.Flush()
 		return
 	}
@@ -337,7 +317,7 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := resp.Body.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {

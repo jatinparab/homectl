@@ -2,11 +2,12 @@ package manager
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -209,22 +210,22 @@ type UpcomingPruneInfo struct {
 
 // AppStatus combines desired state with observed state for UI display
 type AppStatus struct {
-	AppID           string       `json:"app_id"`
-	DesiredState    string       `json:"desired_state"`
+	AppID            string       `json:"app_id"`
+	DesiredState     string       `json:"desired_state"`
 	AssignedAgent    *string      `json:"assigned_agent"`
 	ManuallyAssigned bool         `json:"manually_assigned"` // True if placement was set manually via reassign
 	IsGlobal         bool         `json:"is_global"`         // Runs on all connected nodes
-	ObservedState   string       `json:"observed_state"`   // Consolidated (worst case)
-	Health          string       `json:"health"`           // Consolidated (worst case)
-	Phase           string       `json:"phase"`            // Consolidated
-	BackupStatus    string       `json:"backup_status"`    // Consolidated worst backup status
-	PruneStatus     string       `json:"prune_status"`     // Consolidated worst prune status
-	BackupEnabled   bool         `json:"backup_enabled"`   // Whether backup is enabled for this app
-	BackupSensitive bool         `json:"backup_sensitive"` // App is sensitive to backup interruptions
-	BackupInterval  string       `json:"backup_interval"`  // Human-readable backup interval
-	PruneInterval   string       `json:"prune_interval"`   // Human-readable prune interval
-	RestoreEnabled  bool         `json:"restore_enabled"`  // Whether restore-on-start is enabled
-	NodeReports     []NodeReport `json:"node_reports"`     // All node reports
+	ObservedState    string       `json:"observed_state"`    // Consolidated (worst case)
+	Health           string       `json:"health"`            // Consolidated (worst case)
+	Phase            string       `json:"phase"`             // Consolidated
+	BackupStatus     string       `json:"backup_status"`     // Consolidated worst backup status
+	PruneStatus      string       `json:"prune_status"`      // Consolidated worst prune status
+	BackupEnabled    bool         `json:"backup_enabled"`    // Whether backup is enabled for this app
+	BackupSensitive  bool         `json:"backup_sensitive"`  // App is sensitive to backup interruptions
+	BackupInterval   string       `json:"backup_interval"`   // Human-readable backup interval
+	PruneInterval    string       `json:"prune_interval"`    // Human-readable prune interval
+	RestoreEnabled   bool         `json:"restore_enabled"`   // Whether restore-on-start is enabled
+	NodeReports      []NodeReport `json:"node_reports"`      // All node reports
 }
 
 // consolidateObservedState returns the worst observed state (error > restarting > stopped > unknown > running)
@@ -485,17 +486,17 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			AssignedAgent:    app.AssignedAgent,
 			ManuallyAssigned: app.ManuallyAssigned,
 			IsGlobal:         app.IsGlobal,
-			ObservedState:   consolidateObservedState(states),
-			Health:          consolidateHealth(healths),
-			Phase:           consolidatePhase(phases),
-			BackupStatus:    consolidateBackupStatus(backupStatuses),
-			PruneStatus:     consolidatePruneStatus(pruneStatuses),
-			BackupEnabled:   backupEnabled,
-			BackupSensitive: backupSensitive,
-			BackupInterval:  backupInterval,
-			PruneInterval:   pruneInterval,
-			RestoreEnabled:  app.RestoreEnabled,
-			NodeReports:     nodeReports,
+			ObservedState:    consolidateObservedState(states),
+			Health:           consolidateHealth(healths),
+			Phase:            consolidatePhase(phases),
+			BackupStatus:     consolidateBackupStatus(backupStatuses),
+			PruneStatus:      consolidatePruneStatus(pruneStatuses),
+			BackupEnabled:    backupEnabled,
+			BackupSensitive:  backupSensitive,
+			BackupInterval:   backupInterval,
+			PruneInterval:    pruneInterval,
+			RestoreEnabled:   app.RestoreEnabled,
+			NodeReports:      nodeReports,
 		}
 
 		result = append(result, status)
@@ -638,25 +639,16 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(name, ip string) {
 			defer wg.Done()
-			url := fmt.Sprintf("http://%s:%d/sync", ip, agentpkg.ReadyServerPort)
-			req, err := http.NewRequest(http.MethodPost, url, nil)
+			status, _, err := m.requestAgentUnaryByIP(context.Background(), ip, "/sync", nil)
 			if err != nil {
 				mu.Lock()
 				syncErrors = append(syncErrors, fmt.Sprintf("%s: %s", name, err))
 				mu.Unlock()
 				return
 			}
-			resp, err := m.httpClient.Do(req)
-			if err != nil {
+			if status != http.StatusOK {
 				mu.Lock()
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: %s", name, err))
-				mu.Unlock()
-				return
-			}
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				mu.Lock()
-				syncErrors = append(syncErrors, fmt.Sprintf("%s: HTTP %d", name, resp.StatusCode))
+				syncErrors = append(syncErrors, fmt.Sprintf("%s: HTTP %d", name, status))
 				mu.Unlock()
 				return
 			}
@@ -977,23 +969,15 @@ func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/restart/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-
-	resp, err := m.httpClient.Do(req)
+	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, fmt.Sprintf("/restart/%s", appID), nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // handleAPIAppLogs streams logs from an agent for a specific app via SSE
@@ -1046,19 +1030,18 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy logs from agent using config IP
-	agentLogsURL := fmt.Sprintf("http://%s:%d/logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.streamHTTPClient.Get(agentLogsURL)
+	// Proxy logs from agent using TCP link
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, fmt.Sprintf("/logs/%s", appID), nil)
 	if err != nil {
 		// Send error as SSE event
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+	if status != http.StatusOK {
+		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
@@ -1070,7 +1053,7 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := resp.Body.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
 				// Parse lines and send as SSE events
 				lines := strings.Split(string(buf[:n]), "\n")
@@ -1133,17 +1116,16 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/phase-logs/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.streamHTTPClient.Get(agentURL)
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, fmt.Sprintf("/phase-logs/%s", appID), nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+	if status != http.StatusOK {
+		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
@@ -1154,7 +1136,7 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := resp.Body.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {
@@ -1264,17 +1246,16 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/system-logs", agentCfg.IP, agentpkg.ReadyServerPort)
-	resp, err := m.streamHTTPClient.Get(agentURL)
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, "/system-logs", nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+	if status != http.StatusOK {
+		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
@@ -1285,7 +1266,7 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := resp.Body.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {
@@ -1379,22 +1360,19 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(idx int, ip string) {
 			defer wg.Done()
-			url := fmt.Sprintf("http://%s:%d/storage/status", ip, agentpkg.ReadyServerPort)
-			resp, err := m.httpClient.Get(url)
+			status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, "/storage/status", nil)
 			if err != nil {
 				results[idx].Error = err.Error()
 				return
 			}
-			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				results[idx].Error = fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+			if status != http.StatusOK {
+				results[idx].Error = fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body)))
 				return
 			}
 
 			var st agentpkg.StorageStatusResponse
-			if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+			if err := json.Unmarshal(body, &st); err != nil {
 				results[idx].Error = err.Error()
 				return
 			}
@@ -1475,25 +1453,15 @@ func (m *Manager) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		url := fmt.Sprintf("http://%s:%d/storage/prune", agentCfg.IP, agentpkg.ReadyServerPort)
-		req, err := http.NewRequest(http.MethodPost, url, nil)
+		status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, "/storage/prune", nil)
 		if err != nil {
 			result.Error = err.Error()
 			results = append(results, result)
 			continue
 		}
 
-		resp, err := m.httpClient.Do(req)
-		if err != nil {
-			result.Error = err.Error()
-			results = append(results, result)
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			result.Error = fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+		if status != http.StatusOK {
+			result.Error = fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body)))
 			results = append(results, result)
 			continue
 		}
@@ -1541,19 +1509,13 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(idx int, ip string) {
 			defer wg.Done()
-
-			url := fmt.Sprintf("http://%s:%d/containers", ip, agentpkg.ReadyServerPort)
-			client := &http.Client{Timeout: 5 * time.Second}
-			resp, err := client.Get(url)
+			status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, "/containers", nil)
 			if err != nil {
 				results[idx].Error = err.Error()
 				return
 			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				results[idx].Error = err.Error()
+			if status != http.StatusOK {
+				results[idx].Error = fmt.Sprintf("HTTP %d: %s", status, strings.TrimSpace(string(body)))
 				return
 			}
 
@@ -1606,17 +1568,15 @@ func (m *Manager) handleAPIAppSnapshots(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/snapshots/%s", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	resp, err := m.httpClient.Get(agentURL)
+	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, fmt.Sprintf("/snapshots/%s", appID), nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // handleAPIAppSnapshotRefresh proxies a snapshot refresh request to an agent
@@ -1653,23 +1613,15 @@ func (m *Manager) handleAPIAppSnapshotRefresh(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/snapshots/%s/refresh", agentCfg.IP, agentpkg.ReadyServerPort, appID)
-	req, err := http.NewRequest(http.MethodPost, agentURL, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-
-	resp, err := m.httpClient.Do(req)
+	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, fmt.Sprintf("/snapshots/%s/refresh", appID), nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // handleAPISnapshotLs proxies a snapshot file listing request to an agent
@@ -1712,17 +1664,15 @@ func (m *Manager) handleAPISnapshotLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/snapshot-ls/%s?path=%s", agentCfg.IP, agentpkg.ReadyServerPort, snapshotID, browsePath)
-	resp, err := m.httpClient.Get(agentURL)
+	status, body, err := m.requestAgentUnaryByIP(r.Context(), agentCfg.IP, fmt.Sprintf("/snapshot-ls/%s?path=%s", snapshotID, url.QueryEscape(browsePath)), nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // handleAPIContainerLogs streams container logs from a specific agent as SSE
@@ -1768,17 +1718,16 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	agentURL := fmt.Sprintf("http://%s:%d/container-logs/%s?all=%s", agentCfg.IP, agentpkg.ReadyServerPort, containerID, showAll)
-	resp, err := m.streamHTTPClient.Get(agentURL)
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, fmt.Sprintf("/container-logs/%s?all=%s", containerID, showAll), nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		w.Write([]byte("data: Agent returned error: " + resp.Status + "\n\n"))
+	if status != http.StatusOK {
+		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
@@ -1789,7 +1738,7 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 		case <-r.Context().Done():
 			return
 		default:
-			n, err := resp.Body.Read(buf)
+			n, err := stream.Read(buf)
 			if n > 0 {
 				lines := strings.Split(string(buf[:n]), "\n")
 				for _, line := range lines {
