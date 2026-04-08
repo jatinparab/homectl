@@ -18,8 +18,6 @@ import (
 	"github.com/jatinparab/homectl/common"
 )
 
-const agentLinkPort = 1339
-
 type agentLinkPeer struct {
 	name string
 	ip   string
@@ -33,10 +31,9 @@ type agentLinkPeer struct {
 	pending   map[string]chan common.LinkMessage
 }
 
-func (m *Manager) StartAgentTCPServer() error {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", agentLinkPort))
-	if err != nil {
-		return err
+func (m *Manager) StartAgentTCPServer(ln net.Listener) error {
+	if ln == nil {
+		return fmt.Errorf("nil listener")
 	}
 	m.tcpListener = ln
 
@@ -54,7 +51,7 @@ func (m *Manager) StartAgentTCPServer() error {
 		}
 	}()
 
-	managerLog.Info("Agent TCP server listening", "port", agentLinkPort)
+	managerLog.Info("Agent TCP server listening", "addr", ln.Addr().String())
 	return nil
 }
 

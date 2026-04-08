@@ -20,7 +20,7 @@ import (
 	"github.com/jatinparab/homectl/common"
 )
 
-const managerTCPPort = 1339
+const defaultManagerTCPPort = "1338"
 
 // AgentInfo represents a registered agent.
 type AgentInfo struct {
@@ -33,6 +33,7 @@ type AgentInfo struct {
 // Client is a TCP client for manager-agent messaging.
 type Client struct {
 	managerHost string
+	managerPort string
 
 	mu        sync.RWMutex
 	conn      net.Conn
@@ -53,30 +54,38 @@ type Client struct {
 
 // NewClient creates a new manager client.
 func NewClient(baseURL string) *Client {
-	managerHost := parseManagerHost(baseURL)
+	managerHost, managerPort := parseManagerAddress(baseURL)
 	return &Client{
 		managerHost: managerHost,
+		managerPort: managerPort,
 		pending:     make(map[string]chan common.LinkMessage),
 	}
 }
 
-func parseManagerHost(baseURL string) string {
+func parseManagerAddress(baseURL string) (string, string) {
 	u, err := url.Parse(baseURL)
 	if err == nil && u.Host != "" {
 		host := u.Hostname()
+		port := u.Port()
+		if port == "" {
+			port = defaultManagerTCPPort
+		}
 		if host != "" {
-			return host
+			return host, port
 		}
 	}
 	trimmed := strings.TrimPrefix(strings.TrimPrefix(baseURL, "http://"), "https://")
-	host, _, found := strings.Cut(trimmed, ":")
+	host, port, found := strings.Cut(trimmed, ":")
 	if found {
-		return host
+		if port == "" {
+			port = defaultManagerTCPPort
+		}
+		return host, port
 	}
 	if trimmed != "" {
-		return trimmed
+		return trimmed, defaultManagerTCPPort
 	}
-	return "127.0.0.1"
+	return "127.0.0.1", defaultManagerTCPPort
 }
 
 // SetIdentity sets the local agent identity used in the hello frame.
@@ -94,7 +103,7 @@ func (c *Client) SetRequestHandler(fn func(common.LinkMessage) []common.LinkMess
 
 // Connect establishes a TCP session to manager.
 func (c *Client) Connect(timeout time.Duration) error {
-	addr := fmt.Sprintf("%s:%d", c.managerHost, managerTCPPort)
+	addr := net.JoinHostPort(c.managerHost, c.managerPort)
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return err
