@@ -18,11 +18,11 @@ function pct(n?: number): string {
   return `${n.toFixed(1)}%`
 }
 
-function usageBarClass(value?: number): string {
-  if (value === undefined || Number.isNaN(value)) return 'bg-gray-600'
-  if (value >= 90) return 'bg-red-500'
-  if (value >= 60) return 'bg-yellow-500'
-  return 'bg-green-500'
+function barColor(value?: number): string {
+  if (value === undefined || Number.isNaN(value)) return 'bg-stone-200'
+  if (value >= 90) return 'bg-red-400'
+  if (value >= 60) return 'bg-amber-400'
+  return 'bg-teal-500'
 }
 
 interface NodeCardsProps {
@@ -31,9 +31,7 @@ interface NodeCardsProps {
 }
 
 export function NodeCards({ agents, gatewayInfo }: NodeCardsProps) {
-  if (!agents || agents.length === 0) {
-    return null
-  }
+  if (!agents || agents.length === 0) return null
 
   const sorted = [...agents].sort((a, b) => {
     if (a.is_gateway !== b.is_gateway) return a.is_gateway ? -1 : 1
@@ -41,7 +39,7 @@ export function NodeCards({ agents, gatewayInfo }: NodeCardsProps) {
   })
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
       {sorted.map((agent) => (
         <NodeCard key={agent.name} agent={agent} gatewayInfo={gatewayInfo} />
       ))}
@@ -49,111 +47,100 @@ export function NodeCards({ agents, gatewayInfo }: NodeCardsProps) {
   )
 }
 
-interface NodeCardProps {
-  agent: Agent
-  gatewayInfo: GatewayInfo | undefined
-}
-
-function NodeCard({ agent, gatewayInfo }: NodeCardProps) {
+function NodeCard({ agent, gatewayInfo }: { agent: Agent; gatewayInfo: GatewayInfo | undefined }) {
   const setManualGateway = useSetManualGateway()
   const clearManualGateway = useClearManualGateway()
 
   const isManual = gatewayInfo?.is_manual ?? false
   const isThisManual = isManual && gatewayInfo?.manual_node === agent.name
 
-  function handleSetGateway() {
-    setManualGateway.mutate(agent.name)
-  }
-
-  function handleClearGateway() {
-    clearManualGateway.mutate()
-  }
-
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-      <div className="flex items-center justify-between mb-2">
+    <div className="bg-white border border-[#e2ddd7] rounded-lg p-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <h3 className="text-white font-medium">{agent.name}</h3>
+          <span
+            className={`w-2 h-2 rounded-full ${agent.online ? 'bg-emerald-500 health-glow' : 'bg-stone-300'}`}
+          />
+          <span className="text-sm font-semibold text-[#1c1917]">{agent.name}</span>
           {agent.is_gateway && (
-            <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-green-900 text-green-300 border border-green-700">
-              Gateway
+            <span className="text-[10px] font-medium text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded tracking-wide uppercase">
+              gateway
             </span>
           )}
           {isThisManual && (
-            <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-blue-900 text-blue-300 border border-blue-700">
-              Manual
+            <span className="text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded tracking-wide uppercase">
+              manual
             </span>
           )}
         </div>
-        <span
-          className={`w-3 h-3 rounded-full ${agent.online ? 'bg-green-500' : 'bg-red-500'}`}
-        />
+        <span className={`text-[11px] font-medium ${agent.online ? 'text-emerald-600' : 'text-stone-400'}`}>
+          {agent.online ? 'online' : 'offline'}
+        </span>
       </div>
-      <div className="text-sm text-gray-400 space-y-1">
-        <div className="flex justify-between">
-          <span>IP:</span>
-          <span className="text-gray-300">{agent.ip}</span>
+
+      {/* IP */}
+      <div className="text-[11px] text-stone-400 mb-3 font-mono">{agent.ip}</div>
+
+      {/* Metrics */}
+      {agent.online && agent.metrics ? (
+        <div className="space-y-2">
+          <MetricRow
+            label="CPU"
+            text={pct(agent.metrics.cpu_percent)}
+            value={agent.metrics.cpu_percent}
+          />
+          <MetricRow
+            label="RAM"
+            text={`${pct(agent.metrics.memory_percent)} · ${formatBytes(agent.metrics.memory_used)}/${formatBytes(agent.metrics.memory_total)}`}
+            value={agent.metrics.memory_percent}
+          />
+          <MetricRow
+            label="Disk"
+            text={`${pct(agent.metrics.disk_percent)} · ${formatBytes(agent.metrics.disk_used)}/${formatBytes(agent.metrics.disk_total)}`}
+            value={agent.metrics.disk_percent}
+          />
         </div>
-        <div className="flex justify-between">
-          <span>Status:</span>
-          <span className={agent.online ? 'text-green-400' : 'text-red-400'}>
-            {agent.online ? 'Online' : 'Offline'}
-          </span>
-        </div>
-        <div className="pt-1 border-t border-gray-700 mt-2 space-y-1">
-          <div className="flex justify-between">
-            <span>CPU:</span>
-            <span className="text-gray-300">{agent.online ? pct(agent.metrics?.cpu_percent) : '--'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>RAM:</span>
-            <span className="text-gray-300">
-              {agent.online ? `${pct(agent.metrics?.memory_percent)} (${formatBytes(agent.metrics?.memory_used)} / ${formatBytes(agent.metrics?.memory_total)})` : '--'}
-            </span>
-          </div>
-          {agent.online && (
-            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
-              <div
-                className={`h-full ${usageBarClass(agent.metrics?.memory_percent)}`}
-                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.memory_percent ?? 0))}%` }}
-              />
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span>Disk:</span>
-            <span className="text-gray-300">
-              {agent.online ? `${pct(agent.metrics?.disk_percent)} (${formatBytes(agent.metrics?.disk_used)} / ${formatBytes(agent.metrics?.disk_total)})` : '--'}
-            </span>
-          </div>
-          {agent.online && (
-            <div className="h-1.5 w-full rounded bg-gray-700 overflow-hidden">
-              <div
-                className={`h-full ${usageBarClass(agent.metrics?.disk_percent)}`}
-                style={{ width: `${Math.min(100, Math.max(0, agent.metrics?.disk_percent ?? 0))}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="mt-3 flex gap-2">
-        {!isThisManual && (
+      ) : (
+        <div className="text-[11px] text-stone-400">no metrics available</div>
+      )}
+
+      {/* Actions */}
+      <div className="mt-3 pt-3 border-t border-[#e2ddd7] flex gap-2">
+        {!isThisManual ? (
           <button
-            onClick={handleSetGateway}
+            onClick={() => setManualGateway.mutate(agent.name)}
             disabled={!agent.online || setManualGateway.isPending}
-            className="flex-1 text-xs px-2 py-1 rounded bg-blue-800 hover:bg-blue-700 text-blue-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 text-[11px] px-2 py-1 rounded border border-[#e2ddd7] text-stone-500 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            Set as Gateway
+            Set gateway
           </button>
-        )}
-        {isThisManual && (
+        ) : (
           <button
-            onClick={handleClearGateway}
+            onClick={() => clearManualGateway.mutate()}
             disabled={clearManualGateway.isPending}
-            className="flex-1 text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 text-[11px] px-2 py-1 rounded border border-[#e2ddd7] text-stone-500 hover:border-stone-400 hover:text-stone-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            Revert to Auto
+            Revert to auto
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+function MetricRow({ label, text, value }: { label: string; text: string; value?: number }) {
+  return (
+    <div>
+      <div className="flex justify-between items-baseline mb-1">
+        <span className="text-[10px] text-stone-400 uppercase tracking-wider">{label}</span>
+        <span className="text-[11px] text-stone-600">{text}</span>
+      </div>
+      <div className="h-1 w-full bg-stone-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barColor(value)}`}
+          style={{ width: `${Math.min(100, Math.max(0, value ?? 0))}%` }}
+        />
       </div>
     </div>
   )
