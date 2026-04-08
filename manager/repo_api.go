@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 type RepoOpStatusResponse struct {
@@ -188,7 +190,7 @@ func (m *Manager) handleAPIRepoUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, "/unlock", nil)
+	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, common.LinkReqRepoUnlock, nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -231,7 +233,7 @@ func (m *Manager) handleAPIRepoForceUnlock(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, "/force-unlock", nil)
+	status, body, err := m.requestAgentUnaryByIP(context.Background(), agentCfg.IP, common.LinkReqRepoForceUnlock, nil)
 	if err != nil {
 		http.Error(w, "Failed to reach agent: "+err.Error(), http.StatusBadGateway)
 		return
@@ -297,7 +299,11 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	stream, status, err := m.streamAgentByIP(agentCfg.IP, "/"+path, nil)
+	requestType := common.LinkReqRepoCheckLogs
+	if path == "unlock-logs" {
+		requestType = common.LinkReqRepoUnlockLogs
+	}
+	stream, status, err := m.streamAgentByIP(agentCfg.IP, requestType, nil)
 	if err != nil {
 		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
 		flusher.Flush()

@@ -22,14 +22,6 @@ import (
 
 const managerTCPPort = 1339
 
-// HeartbeatRequest is the request body for agent heartbeat.
-type HeartbeatRequest struct {
-	Name    string             `json:"name"`
-	IP      string             `json:"ip"`
-	Reports []common.AppReport `json:"reports,omitempty"`
-	Metrics common.NodeMetrics `json:"metrics,omitempty"`
-}
-
 // AgentInfo represents a registered agent.
 type AgentInfo struct {
 	Name         string    `json:"name"`
@@ -203,19 +195,15 @@ func (c *Client) send(msg common.LinkMessage) error {
 	return enc.Encode(msg)
 }
 
-func (c *Client) request(path string, payload any, timeout time.Duration) (common.LinkMessage, error) {
+func (c *Client) request(requestType common.LinkRequestType, payload any, timeout time.Duration) (common.LinkMessage, error) {
 	if !c.IsConnected() {
 		return common.LinkMessage{}, fmt.Errorf("not connected")
 	}
 	id := fmt.Sprintf("%d-%06d", time.Now().UnixNano(), rand.Intn(1000000))
 
-	var raw json.RawMessage
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return common.LinkMessage{}, err
-		}
-		raw = b
+	raw, err := common.EncodePayload(payload)
+	if err != nil {
+		return common.LinkMessage{}, err
 	}
 
 	ch := make(chan common.LinkMessage, 32)
@@ -224,11 +212,11 @@ func (c *Client) request(path string, payload any, timeout time.Duration) (commo
 	c.pendingMu.Unlock()
 
 	if err := c.send(common.LinkMessage{
-		Type:    common.LinkTypeRequest,
-		ID:      id,
-		Source:  "agent",
-		Path:    path,
-		Payload: raw,
+		Type:        common.LinkTypeRequest,
+		ID:          id,
+		Source:      "agent",
+		RequestType: requestType,
+		Payload:     raw,
 	}); err != nil {
 		c.pendingMu.Lock()
 		delete(c.pending, id)
@@ -267,7 +255,7 @@ func (c *Client) IsConnected() bool {
 
 // Heartbeat sends a heartbeat to the manager with app reports.
 func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
-	_, err := c.request("/agents/heartbeat", HeartbeatRequest{Name: name, IP: ip, Reports: reports, Metrics: metrics}, 10*time.Second)
+	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Reports: reports, Metrics: metrics}, 10*time.Second)
 	return err
 }
 
@@ -278,13 +266,14 @@ func (c *Client) ListAgents() ([]AgentInfo, error) {
 
 // TriggerSync triggers a git sync on the manager.
 func (c *Client) TriggerSync() error {
-	_, err := c.request("/sync", nil, 10*time.Second)
+	_, err := c.request(common.LinkReqAgentManagerSync, nil, 10*time.Second)
 	return err
 }
 
 // FetchDesiredApps fetches desired apps for this agent.
 func (c *Client) FetchDesiredApps(agentID string) (common.DesiredAppsResponse, error) {
-	resp, err := c.request("/agents/desired", map[string]string{"agent_id": agentID}, 10*time.Second)
+	_ = agentID
+	resp, err := c.request(common.LinkReqAgentDesired, nil, 10*time.Second)
 	if err != nil {
 		return common.DesiredAppsResponse{}, err
 	}
@@ -300,7 +289,8 @@ func (c *Client) FetchDesiredApps(agentID string) (common.DesiredAppsResponse, e
 
 // FetchTraefikConfig fetches traefik config for this agent.
 func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
-	resp, err := c.request("/agents/traefik-config", map[string]string{"agent_id": agentID}, 10*time.Second)
+	_ = agentID
+	resp, err := c.request(common.LinkReqAgentTraefik, nil, 10*time.Second)
 	if err != nil {
 		return "", err
 	}
@@ -312,7 +302,7 @@ func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
 
 // SyncDockerConfigs fetches docker configs from manager and extracts to local directory.
 func (c *Client) SyncDockerConfigs(destDir string) error {
-	resp, err := c.request("/docker/sync", nil, 60*time.Second)
+	resp, err := c.request(common.LinkReqAgentDockerSync, nil, 60*time.Second)
 	if err != nil {
 		return err
 	}

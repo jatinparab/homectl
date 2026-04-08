@@ -131,10 +131,10 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage) {
 	resp := common.LinkMessage{Type: common.LinkTypeResponse, ID: req.ID, Done: true}
 
-	switch req.Path {
-	case "/agents/heartbeat":
-		var hb HeartbeatRequest
-		if err := json.Unmarshal(req.Payload, &hb); err != nil {
+	switch req.RequestType {
+	case common.LinkReqAgentHeartbeat:
+		hb, err := common.DecodePayload[common.AgentHeartbeatPayload](req)
+		if err != nil {
 			resp.Status = http.StatusBadRequest
 			resp.Error = err.Error()
 			_ = peer.send(resp)
@@ -146,10 +146,15 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 		if hb.IP == "" {
 			hb.IP = peer.ip
 		}
-		m.applyHeartbeat(hb)
+		m.applyHeartbeat(HeartbeatRequest{
+			Name:    hb.Name,
+			IP:      hb.IP,
+			Reports: hb.Reports,
+			Metrics: hb.Metrics,
+		})
 		resp.Status = http.StatusOK
 		resp.Body = []byte(`{"status":"ok"}`)
-	case "/agents/desired":
+	case common.LinkReqAgentDesired:
 		res, err := m.invokeRawEndpoint(http.MethodGet, fmt.Sprintf("/agents/%s/desired", peer.name), nil)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -158,7 +163,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 			resp.Status = res.status
 			resp.Body = res.body
 		}
-	case "/agents/traefik-config":
+	case common.LinkReqAgentTraefik:
 		res, err := m.invokeRawEndpoint(http.MethodGet, fmt.Sprintf("/agents/%s/traefik-config", peer.name), nil)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -167,7 +172,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 			resp.Status = res.status
 			resp.Body = res.body
 		}
-	case "/docker/sync":
+	case common.LinkReqAgentDockerSync:
 		res, err := m.invokeRawEndpoint(http.MethodGet, "/docker/sync", nil)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -176,7 +181,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 			resp.Status = res.status
 			resp.Body = res.body
 		}
-	case "/sync":
+	case common.LinkReqAgentManagerSync:
 		res, err := m.invokeRawEndpoint(http.MethodPost, "/sync", nil)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -303,16 +308,12 @@ func (m *Manager) requestAgentByIP(ip string, req common.LinkMessage, waitFirst 
 	return m.requestAgent(name, req, waitFirst)
 }
 
-func (m *Manager) requestAgentUnaryByIP(ctx context.Context, ip, path string, payload any) (int, []byte, error) {
-	var raw json.RawMessage
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return 0, nil, err
-		}
-		raw = b
+func (m *Manager) requestAgentUnaryByIP(ctx context.Context, ip string, requestType common.LinkRequestType, payload any) (int, []byte, error) {
+	raw, err := common.EncodePayload(payload)
+	if err != nil {
+		return 0, nil, err
 	}
-	ch, err := m.requestAgentByIP(ip, common.LinkMessage{Path: path, Payload: raw}, 10*time.Second)
+	ch, err := m.requestAgentByIP(ip, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -328,16 +329,12 @@ func (m *Manager) requestAgentUnaryByIP(ctx context.Context, ip, path string, pa
 	}
 }
 
-func (m *Manager) streamAgentByIP(ip, path string, payload any) (io.ReadCloser, int, error) {
-	var raw json.RawMessage
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, 0, err
-		}
-		raw = b
+func (m *Manager) streamAgentByIP(ip string, requestType common.LinkRequestType, payload any) (io.ReadCloser, int, error) {
+	raw, err := common.EncodePayload(payload)
+	if err != nil {
+		return nil, 0, err
 	}
-	ch, err := m.requestAgentByIP(ip, common.LinkMessage{Path: path, Payload: raw, Stream: true}, 10*time.Second)
+	ch, err := m.requestAgentByIP(ip, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
 	if err != nil {
 		return nil, 0, err
 	}

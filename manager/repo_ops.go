@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 var repoMgrLog = slog.With("area", "repo")
@@ -172,7 +174,7 @@ func (m *Manager) isAgentOnline(agentName string) bool {
 }
 
 func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus, unlock agentRepoOpStatus, ok bool) {
-	status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, "/check-status", nil)
+	status, body, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoCheckStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
@@ -183,7 +185,7 @@ func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
 
-	status2, body2, err := m.requestAgentUnaryByIP(context.Background(), ip, "/unlock-status", nil)
+	status2, body2, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoUnlockStatus, nil)
 	if err != nil {
 		return agentRepoOpStatus{}, agentRepoOpStatus{}, false
 	}
@@ -198,7 +200,7 @@ func (m *Manager) fetchRepoStatusesFromAgent(ip string) (check agentRepoOpStatus
 }
 
 func (m *Manager) triggerRepoCheckOnAgent(ip string) error {
-	status, _, err := m.requestAgentUnaryByIP(context.Background(), ip, "/check", nil)
+	status, _, err := m.requestAgentUnaryByIP(context.Background(), ip, common.LinkReqRepoCheck, nil)
 	if err != nil {
 		return err
 	}
