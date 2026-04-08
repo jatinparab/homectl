@@ -28,7 +28,7 @@ func (m *Manager) GitSync() error {
 		return fmt.Errorf("git pull failed: %s, output: %s", err, string(output))
 	}
 
-	gitLog.Info("Git sync completed", "output", strings.TrimSpace(string(output)))
+	gitLog.Debug("Git sync completed", "output", strings.TrimSpace(string(output)))
 
 	// Decrypt secrets after sync (.env.enc → .env files)
 	decryptScript := filepath.Join(m.repoDir, "scripts", "decrypt-secrets")
@@ -39,7 +39,7 @@ func (m *Manager) GitSync() error {
 		if err != nil {
 			gitLog.Info("Warning: decrypt-secrets failed", "err", err, "output", string(decryptOutput))
 		} else {
-			gitLog.Info("Secrets decrypted", "output", strings.TrimSpace(string(decryptOutput)))
+			gitLog.Debug("Secrets decrypted", "output", strings.TrimSpace(string(decryptOutput)))
 		}
 	}
 

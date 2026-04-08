@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/logger"
 )
 
 type liveStatePayload struct {
@@ -176,6 +179,102 @@ func (m *Manager) handleAPIWebSocketStream(w http.ResponseWriter, r *http.Reques
 
 	if err := flush(); err != nil {
 		return
+	}
+}
+
+type logLineMessage struct {
+	Type   string `json:"type"`
+	Source string `json:"source"`
+	Line   string `json:"line"`
+}
+
+// handleAPIWebSocketLogs streams log lines from all sources over a single WebSocket.
+// GET /api/v1/ws/logs
+//
+// On connect: sends snapshot from manager + current online agents.
+// Stays open to stream live manager log lines.
+func (m *Manager) handleAPIWebSocketLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Read loop to detect client disconnect
+	go func() {
+		defer cancel()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	var writeMu sync.Mutex
+	send := func(source, line string) bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteJSON(logLineMessage{Type: "log", Source: source, Line: line}) == nil
+	}
+
+	// Send manager snapshot first
+	for _, line := range logger.Buffer.Snapshot() {
+		if !send("manager", line) {
+			return
+		}
+	}
+
+	// Fetch snapshots from all online agents in parallel
+	agents := m.leaseManager.ListAgents()
+	now := time.Now()
+	var wg sync.WaitGroup
+	for _, a := range agents {
+		if now.Sub(a.LastSeen) >= 30*time.Second {
+			continue
+		}
+		agentName := a.Name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			status, body, err := m.requestAgentUnary(fetchCtx, agentName, common.LinkReqSystemLogs, nil)
+			if err != nil || status != 200 || len(body) == 0 {
+				return
+			}
+			for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+				if line != "" {
+					send(agentName, line)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Live-stream manager logs
+	ch := logger.Buffer.Follow()
+	defer logger.Buffer.Unfollow(ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			if !send("manager", line) {
+				return
+			}
+		}
 	}
 }
 

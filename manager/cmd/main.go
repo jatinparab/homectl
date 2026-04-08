@@ -23,6 +23,7 @@ func main() {
 
 	hostname := utils.GetHostname()
 	logger.Init("manager", hostname)
+	manager.InitLoggers()
 	repoDir := config.GetGitRepoDir(hostname)
 	port := 1338
 

@@ -82,6 +82,6 @@ func (t *TraefikSync) Sync() error {
 	}
 
 	t.currentConfig = config
-	traefikLog.Info("Config updated", "path", t.configPath)
+	traefikLog.Debug("Config updated", "path", t.configPath)
 	return nil
 }

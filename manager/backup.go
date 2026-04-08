@@ -249,7 +249,7 @@ func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 				return
 			}
 			if report.ObservedState != common.ObservedRunning {
-				backupMgrLog.Info("Clearing assignment (app not running)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID, "state", report.ObservedState)
+				backupMgrLog.Debug("Clearing assignment (app not running)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID, "state", report.ObservedState)
 				*a = nil
 				return
 			}

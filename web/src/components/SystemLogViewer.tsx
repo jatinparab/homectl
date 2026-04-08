@@ -1,12 +1,15 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useSystemLogSources } from '../api/hooks'
-import { decodeStreamMessage, openStreamSocket } from '../api/ws'
+
+// ── Types ──────────────────────────────────────────────────────────
 
 interface ParsedLog {
-  time?: string
-  level?: string
+  time?: string       // RFC3339 string from slog JSON
+  level?: string      // DBG | INF | WRN | ERR
   msg?: string
-  props: Record<string, string>
+  component?: string
+  area?: string
+  [key: string]: string | undefined
 }
 
 interface LogEntry {
@@ -19,71 +22,85 @@ interface LogEntry {
 
 let entryIdCounter = 0
 
+// ── Parsing ────────────────────────────────────────────────────────
+
+/**
+ * Logs are emitted as pure JSON by slog.NewJSONHandler and captured in-process.
+ * We still scan for '{' as a safety net against any non-JSON noise.
+ */
+function extractJSON(raw: string): string {
+  const idx = raw.indexOf('{')
+  return idx >= 0 ? raw.slice(idx) : raw
+}
+
 function parseLogLine(line: string): ParsedLog {
+  const jsonStr = extractJSON(line)
   try {
-    const obj = JSON.parse(line) as Record<string, unknown>
-    const { time, ts, level, lvl, msg, message, ...rest } = obj
-    const cleanProps: Record<string, string> = {}
-    for (const [k, v] of Object.entries(rest)) {
-      if (v !== null && v !== undefined && k !== 'caller' && k !== 'stacktrace') {
-        cleanProps[k] = String(v)
+    const obj = JSON.parse(jsonStr) as Record<string, unknown>
+    const result: ParsedLog = {}
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== null && v !== undefined) {
+        result[k] = String(v)
       }
     }
-    return {
-      time: String(time ?? ts ?? ''),
-      level: String(level ?? lvl ?? '').toUpperCase(),
-      msg: String(msg ?? message ?? line),
-      props: cleanProps,
+    // Normalise common field aliases
+    if (!result.msg && result.message) {
+      result.msg = result.message
+      delete result.message
     }
+    return result
   } catch {
-    return { msg: line, props: {} }
+    return { msg: line }
   }
+}
+
+/**
+ * Fingerprint for dedup — derived from parsed content so journalctl's
+ * own timestamp prefix doesn't create false uniqueness on reconnect.
+ */
+function fingerprint(source: string, parsed: ParsedLog, raw: string): string {
+  if (parsed.time && parsed.msg) {
+    return `${source}|${parsed.time}|${parsed.msg}|${parsed.area ?? ''}|${parsed.component ?? ''}`
+  }
+  // Fallback for non-JSON lines: use raw content (strips journalctl timestamp via extractJSON)
+  return `${source}|${extractJSON(raw)}`
 }
 
 function formatLogTime(timeStr?: string): string {
   if (!timeStr) return ''
   try {
     const d = new Date(timeStr)
-    if (Number.isNaN(d.getTime())) return timeStr.slice(0, 19)
+    if (Number.isNaN(d.getTime())) return timeStr.slice(11, 23)
     const h = d.getHours().toString().padStart(2, '0')
     const m = d.getMinutes().toString().padStart(2, '0')
     const s = d.getSeconds().toString().padStart(2, '0')
     const ms = d.getMilliseconds().toString().padStart(3, '0')
     return `${h}:${m}:${s}.${ms}`
   } catch {
-    return timeStr.slice(0, 19)
+    return timeStr.slice(11, 23)
   }
 }
 
-const levelColors: Record<string, string> = {
-  DEBUG: 'text-stone-400',
-  INFO: 'text-blue-600',
-  WARN: 'text-amber-600',
-  WARNING: 'text-amber-600',
-  ERROR: 'text-red-600',
-  FATAL: 'text-red-700',
+// ── Colours ────────────────────────────────────────────────────────
+
+const levelTextColor: Record<string, string> = {
+  DBG: 'text-stone-400',
+  INF: 'text-blue-600',
+  WRN: 'text-amber-600',
+  ERR: 'text-red-600',
 }
 
-const levelBg: Record<string, string> = {
-  DEBUG: '',
-  INFO: '',
-  WARN: 'bg-amber-50',
-  WARNING: 'bg-amber-50',
-  ERROR: 'bg-red-50',
-  FATAL: 'bg-red-100',
+const levelRowBg: Record<string, string> = {
+  WRN: 'bg-amber-50',
+  ERR: 'bg-red-50',
 }
 
-function getLevelColor(level?: string): string {
-  if (!level) return 'text-stone-500'
-  return levelColors[level] ?? 'text-stone-500'
-}
+const LEVELS = ['DBG', 'INF', 'WRN', 'ERR']
 
-function getLevelBg(level?: string): string {
-  if (!level) return ''
-  return levelBg[level] ?? ''
-}
+// Known prop keys to exclude from the "properties" column (shown elsewhere or noise)
+const HIDDEN_PROPS = new Set(['time', 'level', 'msg', 'message', 'component', 'node'])
 
-const LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR']
+// ── Component ──────────────────────────────────────────────────────
 
 interface StickyLogPanelProps {
   expanded: boolean
@@ -94,92 +111,78 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [selectedLevels, setSelectedLevels] = useState<Set<string>>(new Set())
-  const [propFilters, setPropFilters] = useState<Record<string, Set<string>>>({})
+  const [selectedAreas, setSelectedAreas] = useState<Set<string>>(new Set())
   const [textFilter, setTextFilter] = useState('')
-  const [isAtBottom, setIsAtBottom] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
+  const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const socketsRef = useRef<Map<string, WebSocket>>(new Map())
-  const seenFingerprints = useRef<Map<string, number>>(new Map())
+  // Fingerprint set persists across reconnects — only cleared on explicit "Clear"
+  const seenFingerprints = useRef<Set<string>>(new Set())
   const { data: sources } = useSystemLogSources()
 
   const addLog = useCallback((source: string, line: string) => {
     const parsed = parseLogLine(line)
-    const fingerprint = `${source}|${line}`
+    const fp = fingerprint(source, parsed, line)
 
     setLogs((prev) => {
-      // Check if last entry from this source is identical → increment count
-      const lastIdx = prev.length - 1
-      if (lastIdx >= 0 && prev[lastIdx].source === source && prev[lastIdx].raw === line) {
-        const updated = [...prev]
-        updated[lastIdx] = { ...updated[lastIdx], count: updated[lastIdx].count + 1 }
-        return updated
-      }
-
-      // Global dedup: skip if we've seen this fingerprint in the last 200 entries
-      const lastSeen = seenFingerprints.current.get(fingerprint)
-      if (lastSeen !== undefined && entryIdCounter - lastSeen < 200) {
-        // Find existing entry and bump count
-        const existingIdx = prev.findIndex((e) => e.raw === line && e.source === source)
-        if (existingIdx >= 0) {
+      // 1. Consecutive identical from same source → increment count
+      if (prev.length > 0) {
+        const last = prev[prev.length - 1]
+        if (last.source === source && fingerprint(source, last.parsed, last.raw) === fp) {
           const updated = [...prev]
-          updated[existingIdx] = { ...updated[existingIdx], count: updated[existingIdx].count + 1 }
+          updated[prev.length - 1] = { ...last, count: last.count + 1 }
           return updated
         }
       }
 
-      const id = ++entryIdCounter
-      seenFingerprints.current.set(fingerprint, id)
-
-      // Keep fingerprint map from growing too large
-      if (seenFingerprints.current.size > 500) {
-        const toDelete = Array.from(seenFingerprints.current.entries())
-          .sort((a, b) => a[1] - b[1])
-          .slice(0, 200)
-          .map((e) => e[0])
-        toDelete.forEach((k) => seenFingerprints.current.delete(k))
+      // 2. Global dedup — skip if we've seen this fingerprint before
+      if (seenFingerprints.current.has(fp)) {
+        return prev
       }
 
-      return [...prev.slice(-999), { id, source, raw: line, parsed, count: 1 }]
+      seenFingerprints.current.add(fp)
+      // Keep the fingerprint set from growing unbounded
+      if (seenFingerprints.current.size > 2000) {
+        const iter = seenFingerprints.current.values()
+        for (let i = 0; i < 500; i++) seenFingerprints.current.delete(iter.next().value as string)
+      }
+
+      const id = ++entryIdCounter
+      return [...prev.slice(-1499), { id, source, raw: line, parsed, count: 1 }]
     })
   }, [])
 
-  // Manage websocket connections
+  // Single WebSocket for all log sources
+  const logSocketRef = useRef<WebSocket | null>(null)
+
   useEffect(() => {
-    if (!expanded || !sources) {
-      socketsRef.current.forEach((ws) => ws.close())
-      socketsRef.current.clear()
+    if (!expanded) {
+      logSocketRef.current?.close()
+      logSocketRef.current = null
       return
     }
+    if (logSocketRef.current) return // already open
 
-    const activeSources = sources
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws/logs`)
+    logSocketRef.current = ws
 
-    // Close stale connections
-    socketsRef.current.forEach((ws, src) => {
-      if (!activeSources.includes(src)) {
-        ws.close()
-        socketsRef.current.delete(src)
-      }
-    })
-
-    // Open new connections
-    for (const src of activeSources) {
-      if (socketsRef.current.has(src)) continue
-      const ws = openStreamSocket(`/api/v1/system-logs/${encodeURIComponent(src)}`)
-      ws.onmessage = (e) => {
-        const line = decodeStreamMessage(e.data)
-        if (line == null) return
-        addLog(src, line)
-      }
-      ws.onerror = () => ws.close()
-      socketsRef.current.set(src, ws)
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data as string) as { type?: string; source?: string; line?: string }
+        if (msg.type === 'log' && msg.source && msg.line) {
+          addLog(msg.source, msg.line)
+        }
+      } catch { /* ignore */ }
     }
+    ws.onerror = () => { ws.close(); logSocketRef.current = null }
+    ws.onclose = () => { logSocketRef.current = null }
 
     return () => {
-      socketsRef.current.forEach((ws) => ws.close())
-      socketsRef.current.clear()
+      ws.close()
+      logSocketRef.current = null
     }
-  }, [expanded, sources, addLog])
+  }, [expanded, addLog])
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
@@ -193,98 +196,62 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
     }
   }, [logs, isAtBottom, expanded])
 
-  // Collect all unique prop keys and values from logs
-  const propOptions = useMemo(() => {
-    const map: Record<string, Set<string>> = {}
+  // Collect unique areas across all logs
+  const allAreas = useMemo(() => {
+    const areas = new Set<string>()
     for (const entry of logs) {
-      for (const [k, v] of Object.entries(entry.parsed.props)) {
-        if (!map[k]) map[k] = new Set()
-        map[k].add(v)
-      }
+      if (entry.parsed.area) areas.add(entry.parsed.area)
     }
-    return map
+    return Array.from(areas).sort()
   }, [logs])
 
   const filteredLogs = useMemo(() => {
     return logs.filter((entry) => {
       if (selectedSources.size > 0 && !selectedSources.has(entry.source)) return false
-      if (selectedLevels.size > 0) {
-        const level = entry.parsed.level
-        const normalized = level === 'WARNING' ? 'WARN' : level ?? ''
-        if (!selectedLevels.has(normalized)) return false
-      }
-      for (const [k, vals] of Object.entries(propFilters)) {
-        if (vals.size === 0) continue
-        const propVal = entry.parsed.props[k]
-        if (propVal === undefined || !vals.has(propVal)) return false
-      }
+      if (selectedLevels.size > 0 && !selectedLevels.has(entry.parsed.level ?? '')) return false
+      if (selectedAreas.size > 0 && !selectedAreas.has(entry.parsed.area ?? '')) return false
       if (textFilter) {
         const q = textFilter.toLowerCase()
         if (!entry.raw.toLowerCase().includes(q)) return false
       }
       return true
     })
-  }, [logs, selectedSources, selectedLevels, propFilters, textFilter])
+  }, [logs, selectedSources, selectedLevels, selectedAreas, textFilter])
 
-  const errorCount = logs.filter((e) => e.parsed.level === 'ERROR' || e.parsed.level === 'FATAL').length
-  const warnCount = logs.filter((e) => e.parsed.level === 'WARN' || e.parsed.level === 'WARNING').length
-
-  const activeFilterCount =
-    selectedSources.size + selectedLevels.size + Object.values(propFilters).filter((s) => s.size > 0).length + (textFilter ? 1 : 0)
+  const errorCount = logs.filter((e) => e.parsed.level === 'ERR').length
+  const warnCount = logs.filter((e) => e.parsed.level === 'WRN').length
+  const activeFilterCount = selectedSources.size + selectedLevels.size + selectedAreas.size + (textFilter ? 1 : 0)
 
   function toggleSource(src: string) {
-    setSelectedSources((prev) => {
-      const next = new Set(prev)
-      next.has(src) ? next.delete(src) : next.add(src)
-      return next
-    })
+    setSelectedSources((prev) => { const s = new Set(prev); s.has(src) ? s.delete(src) : s.add(src); return s })
   }
-
-  function toggleLevel(level: string) {
-    setSelectedLevels((prev) => {
-      const next = new Set(prev)
-      next.has(level) ? next.delete(level) : next.add(level)
-      return next
-    })
+  function toggleLevel(lvl: string) {
+    setSelectedLevels((prev) => { const s = new Set(prev); s.has(lvl) ? s.delete(lvl) : s.add(lvl); return s })
   }
-
-  function togglePropFilter(key: string, value: string) {
-    setPropFilters((prev) => {
-      const set = new Set(prev[key] ?? [])
-      set.has(value) ? set.delete(value) : set.add(value)
-      return { ...prev, [key]: set }
-    })
+  function toggleArea(area: string) {
+    setSelectedAreas((prev) => { const s = new Set(prev); s.has(area) ? s.delete(area) : s.add(area); return s })
   }
-
   function clearAllFilters() {
-    setSelectedSources(new Set())
-    setSelectedLevels(new Set())
-    setPropFilters({})
-    setTextFilter('')
+    setSelectedSources(new Set()); setSelectedLevels(new Set()); setSelectedAreas(new Set()); setTextFilter('')
   }
-
   function clearLogs() {
-    setLogs([])
-    seenFingerprints.current.clear()
+    setLogs([]); seenFingerprints.current.clear()
   }
 
-  const PANEL_HEIGHT = expanded ? 320 : 0
+  const PANEL_HEIGHT = 320
 
   return (
     <div
       className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-[#e2ddd7]"
       style={{ height: expanded ? `${PANEL_HEIGHT + 40}px` : '40px', transition: 'height 200ms ease' }}
     >
-      {/* Title bar */}
-      <div className="h-10 flex items-center px-4 gap-3 border-b border-[#f0ede8] select-none">
+      {/* ── Title bar ── */}
+      <div className="h-10 flex items-center px-4 gap-3 select-none" style={{ borderBottom: expanded ? '1px solid #f0ede8' : 'none' }}>
         <button
           onClick={onToggle}
           className="flex items-center gap-2 text-[11px] font-semibold text-stone-500 hover:text-stone-800 tracking-widest uppercase transition-colors"
         >
-          <span
-            className="text-stone-400"
-            style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block', transition: 'transform 200ms ease' }}
-          >
+          <span style={{ display: 'inline-block', transition: 'transform 200ms ease', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }} className="text-stone-400">
             ▶
           </span>
           System Logs
@@ -295,7 +262,6 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
             {filteredLogs.length}/{logs.length}
           </span>
         )}
-
         {errorCount > 0 && (
           <span className="text-[10px] font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
             {errorCount} error{errorCount !== 1 ? 's' : ''}
@@ -311,7 +277,6 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
 
         {expanded && (
           <>
-            {/* Text search */}
             <input
               type="text"
               placeholder="search..."
@@ -319,20 +284,15 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
               onChange={(e) => setTextFilter(e.target.value)}
               className="px-2 py-0.5 text-[11px] bg-[#f7f5f0] border border-[#e2ddd7] rounded text-stone-600 placeholder-stone-400 w-36 focus:outline-none focus:border-teal-400"
             />
-
-            {/* Filter toggle */}
             <button
               onClick={() => setShowFilters((v) => !v)}
               className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${showFilters || activeFilterCount > 0 ? 'border-teal-300 text-teal-700 bg-teal-50' : 'border-[#e2ddd7] text-stone-500 hover:border-stone-400'}`}
             >
               Filters{activeFilterCount > 0 ? ` ·${activeFilterCount}` : ''}
             </button>
-
-            {/* Clear logs */}
             <button
               onClick={clearLogs}
               className="text-[11px] text-stone-400 hover:text-stone-600 px-2 py-0.5 rounded border border-transparent hover:border-[#e2ddd7] transition-colors"
-              title="Clear log history"
             >
               Clear
             </button>
@@ -340,64 +300,39 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
         )}
       </div>
 
-      {/* Expanded content */}
+      {/* ── Expanded content ── */}
       {expanded && (
         <div className="flex flex-col" style={{ height: `${PANEL_HEIGHT}px` }}>
-          {/* Filter panel */}
+          {/* Filter strip */}
           {showFilters && (
-            <div className="border-b border-[#f0ede8] px-4 py-2 flex flex-wrap gap-3 bg-[#faf9f7]">
+            <div className="border-b border-[#f0ede8] px-4 py-2 flex flex-wrap gap-x-4 gap-y-1.5 bg-[#faf9f7] flex-shrink-0">
               {/* Sources */}
               {sources && sources.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-stone-400 uppercase tracking-wider mr-1">Source</span>
+                <FilterGroup label="Source">
                   {sources.map((src) => (
-                    <FilterChip
-                      key={src}
-                      label={src}
-                      active={selectedSources.has(src)}
-                      onClick={() => toggleSource(src)}
-                    />
+                    <FilterChip key={src} label={src} active={selectedSources.has(src)} onClick={() => toggleSource(src)} />
                   ))}
-                </div>
+                </FilterGroup>
               )}
-
               {/* Levels */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-stone-400 uppercase tracking-wider mr-1">Level</span>
+              <FilterGroup label="Level">
                 {LEVELS.map((lvl) => (
                   <FilterChip
-                    key={lvl}
-                    label={lvl}
-                    active={selectedLevels.has(lvl)}
-                    onClick={() => toggleLevel(lvl)}
-                    color={lvl === 'ERROR' ? 'red' : lvl === 'WARN' ? 'amber' : undefined}
+                    key={lvl} label={lvl} active={selectedLevels.has(lvl)} onClick={() => toggleLevel(lvl)}
+                    color={lvl === 'ERR' ? 'red' : lvl === 'WRN' ? 'amber' : undefined}
                   />
                 ))}
-              </div>
-
-              {/* Dynamic prop filters */}
-              {Object.entries(propOptions).slice(0, 4).map(([key, vals]) => {
-                if (vals.size < 2 || vals.size > 12) return null
-                return (
-                  <div key={key} className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-stone-400 uppercase tracking-wider mr-1">{key}</span>
-                    {Array.from(vals).slice(0, 8).map((val) => (
-                      <FilterChip
-                        key={val}
-                        label={val}
-                        active={!!(propFilters[key]?.has(val))}
-                        onClick={() => togglePropFilter(key, val)}
-                      />
-                    ))}
-                  </div>
-                )
-              })}
-
+              </FilterGroup>
+              {/* Areas */}
+              {allAreas.length > 0 && (
+                <FilterGroup label="Area">
+                  {allAreas.map((area) => (
+                    <FilterChip key={area} label={area} active={selectedAreas.has(area)} onClick={() => toggleArea(area)} />
+                  ))}
+                </FilterGroup>
+              )}
               {activeFilterCount > 0 && (
-                <button
-                  onClick={clearAllFilters}
-                  className="text-[10px] text-stone-400 hover:text-stone-600 ml-auto"
-                >
+                <button onClick={clearAllFilters} className="text-[10px] text-stone-400 hover:text-stone-600 self-center ml-auto">
                   Clear filters
                 </button>
               )}
@@ -405,22 +340,27 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
           )}
 
           {/* Log table */}
-          <div
-            className="flex-1 overflow-auto log-scroll"
-            ref={scrollRef}
-            onScroll={handleScroll}
-          >
+          <div className="flex-1 overflow-auto log-scroll relative" ref={scrollRef} onScroll={handleScroll}>
             {filteredLogs.length === 0 ? (
               <div className="flex items-center justify-center h-full text-[11px] text-stone-400">
                 {logs.length === 0 ? 'Waiting for logs...' : 'No logs match current filters'}
               </div>
             ) : (
-              <table className="w-full text-[11px]">
+              <table className="w-full text-[11px]" style={{ tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: '88px' }} />   {/* Time */}
+                  <col style={{ width: '72px' }} />   {/* Source */}
+                  <col style={{ width: '36px' }} />   {/* Level */}
+                  <col style={{ width: '56px' }} />   {/* Area */}
+                  <col />                              {/* Message */}
+                  <col style={{ width: '35%' }} />    {/* Props */}
+                </colgroup>
                 <thead className="sticky top-0 bg-[#f7f5f0] border-b border-[#e2ddd7] z-10">
                   <tr>
-                    <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest w-28">Time</th>
-                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest w-20">Source</th>
-                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest w-14">Level</th>
+                    <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Time</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Source</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Lvl</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Area</th>
                     <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Message</th>
                     <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Properties</th>
                   </tr>
@@ -434,17 +374,10 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
             )}
           </div>
 
-          {/* Scroll to bottom */}
           {!isAtBottom && (
             <button
-              onClick={() => {
-                if (scrollRef.current) {
-                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-                  setIsAtBottom(true)
-                }
-              }}
+              onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true) } }}
               className="absolute right-4 bottom-3 bg-white border border-[#e2ddd7] text-stone-500 hover:text-stone-800 rounded-full w-7 h-7 flex items-center justify-center shadow-sm text-xs"
-              title="Scroll to bottom"
             >
               ↓
             </button>
@@ -455,64 +388,79 @@ export function SystemLogViewer({ expanded, onToggle }: StickyLogPanelProps) {
   )
 }
 
+// ── Row ────────────────────────────────────────────────────────────
+
 function LogRow({ entry }: { entry: LogEntry }) {
   const { parsed, source, count } = entry
-  const level = parsed.level
-  const bg = getLevelBg(level)
+  const level = parsed.level ?? ''
+  const bg = levelRowBg[level] ?? ''
+
+  // Collect extra props (exclude well-known columns)
+  const extraProps: [string, string][] = []
+  for (const [k, v] of Object.entries(parsed)) {
+    if (!HIDDEN_PROPS.has(k) && k !== 'area' && v !== undefined) {
+      extraProps.push([k, v])
+    }
+  }
 
   return (
     <tr className={`border-b border-[#f7f5f0] hover:bg-[#faf9f7] font-mono ${bg}`}>
-      <td className="px-3 py-1 text-stone-400 whitespace-nowrap">
+      <td className="px-3 py-1 text-stone-400 whitespace-nowrap tabular-nums">
         {formatLogTime(parsed.time)}
       </td>
-      <td className="px-2 py-1 text-stone-500 truncate max-w-0">
-        <span className="text-teal-600">{source}</span>
+      <td className="px-2 py-1 text-teal-600 truncate">
+        {source}
       </td>
       <td className="px-2 py-1 whitespace-nowrap">
-        <span className={`font-semibold ${getLevelColor(level)}`}>
-          {level ? level.slice(0, 4) : ''}
+        <span className={`font-semibold ${levelTextColor[level] ?? 'text-stone-500'}`}>
+          {level}
         </span>
       </td>
-      <td className="px-2 py-1 text-stone-700 max-w-xs">
-        <span className="truncate block">{parsed.msg}</span>
-        {count > 1 && (
-          <span className="ml-1.5 text-[10px] text-stone-400 bg-stone-100 px-1 py-0.5 rounded">×{count}</span>
-        )}
+      <td className="px-2 py-1 text-stone-400 truncate">
+        {parsed.area ?? ''}
+      </td>
+      <td className="px-2 py-1 text-stone-700">
+        <div className="flex items-baseline gap-1.5 min-w-0">
+          <span className="truncate">{parsed.msg ?? entry.raw}</span>
+          {count > 1 && (
+            <span className="flex-shrink-0 text-[10px] text-stone-400 bg-stone-100 px-1 py-0.5 rounded">×{count}</span>
+          )}
+        </div>
       </td>
       <td className="px-2 py-1">
-        <PropsList props={parsed.props} />
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+          {extraProps.map(([k, v]) => (
+            <span key={k} className="inline-flex items-center gap-0.5 text-[10px]">
+              <span className="text-stone-400">{k}=</span>
+              <span className="text-stone-600 font-medium">{v.length > 32 ? v.slice(0, 32) + '…' : v}</span>
+            </span>
+          ))}
+        </div>
       </td>
     </tr>
   )
 }
 
-function PropsList({ props }: { props: Record<string, string> }) {
-  const entries = Object.entries(props)
-  if (entries.length === 0) return null
+// ── Filter helpers ─────────────────────────────────────────────────
 
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap gap-1">
-      {entries.map(([k, v]) => (
-        <span key={k} className="inline-flex items-center gap-0.5 text-[10px]">
-          <span className="text-stone-400">{k}=</span>
-          <span className="text-stone-600 font-medium">{String(v).length > 30 ? String(v).slice(0, 30) + '…' : String(v)}</span>
-        </span>
-      ))}
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] text-stone-400 uppercase tracking-wider">{label}</span>
+      {children}
     </div>
   )
 }
 
 function FilterChip({ label, active, onClick, color }: { label: string; active: boolean; onClick: () => void; color?: 'red' | 'amber' }) {
-  let activeClass = 'bg-teal-100 text-teal-700 border-teal-300'
-  if (color === 'red') activeClass = 'bg-red-100 text-red-700 border-red-300'
-  if (color === 'amber') activeClass = 'bg-amber-100 text-amber-700 border-amber-300'
+  const activeClass = color === 'red' ? 'bg-red-100 text-red-700 border-red-300'
+    : color === 'amber' ? 'bg-amber-100 text-amber-700 border-amber-300'
+    : 'bg-teal-100 text-teal-700 border-teal-300'
 
   return (
     <button
       onClick={onClick}
-      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-        active ? activeClass : 'bg-white text-stone-500 border-[#e2ddd7] hover:border-stone-400'
-      }`}
+      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${active ? activeClass : 'bg-white text-stone-500 border-[#e2ddd7] hover:border-stone-400'}`}
     >
       {label}
     </button>

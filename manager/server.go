@@ -37,6 +37,7 @@ func (m *Manager) NewServer() *http.Server {
 	// UI APIs
 	mux.HandleFunc("/api/v1/ws/state", m.handleAPIWebSocketState)
 	mux.HandleFunc("/api/v1/ws/stream", m.handleAPIWebSocketStream)
+	mux.HandleFunc("/api/v1/ws/logs", m.handleAPIWebSocketLogs)
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
@@ -310,7 +311,7 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		http.Error(w, "Wating", http.StatusOK)
 	}
 
-	serverLog.Info("Returning desired apps", "agent", agentID, "count", len(response.Apps))
+	serverLog.Debug("Returning desired apps", "agent", agentID, "count", len(response.Apps))
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {

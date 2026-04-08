@@ -2,12 +2,14 @@ package agent
 
 import (
 	"bufio"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/logger"
 )
 
 // LogsHandler provides log streaming handlers for docker compose apps
@@ -176,7 +178,7 @@ func (lh *LogsHandler) handlePhaseLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSystemLogs streams journalctl logs for the homectl-agent service
+// handleSystemLogs streams in-process log lines (from the ring buffer) as SSE.
 // GET /system-logs
 func (lh *LogsHandler) handleSystemLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -184,20 +186,7 @@ func (lh *LogsHandler) handleSystemLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "journalctl", "-u", "homectl-agent", "-f", "--output=short-iso", "-n", "100")
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, "Failed to create stdout pipe: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, "Failed to start journalctl: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
@@ -207,22 +196,26 @@ func (lh *LogsHandler) handleSystemLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	done := make(chan struct{})
+	// Send buffered history first
+	for _, line := range logger.Buffer.Snapshot() {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+	}
+	flusher.Flush()
 
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			w.Write([]byte(scanner.Text() + "\n"))
+	// Follow live
+	ch := logger.Buffer.Follow()
+	defer logger.Buffer.Unfollow(ch)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", line)
 			flusher.Flush()
 		}
-		close(done)
-	}()
-
-	select {
-	case <-r.Context().Done():
-		cmd.Process.Kill()
-	case <-done:
 	}
-
-	cmd.Wait()
 }

@@ -17,6 +17,24 @@ import (
 
 var managerLog = slog.With("area", "manager")
 
+// InitLoggers reinitializes all package-level loggers after logger.Init() has been called.
+// Package-level vars capture slog.Default() at declaration time (before Init), so they must be
+// refreshed to pick up the JSON handler.
+func InitLoggers() {
+	managerLog = slog.Default().With("area", "manager")
+	apiLog = slog.Default().With("area", "api")
+	appLog = slog.Default().With("area", "app")
+	backupMgrLog = slog.Default().With("area", "backup")
+	gitLog = slog.Default().With("area", "git")
+	leaseLog = slog.Default().With("area", "lease")
+	pruneStateLog = slog.Default().With("area", "backup")
+	reconcileLog = slog.Default().With("area", "reconcile")
+	repoMgrLog = slog.Default().With("area", "repo")
+	repoStateLog = slog.Default().With("area", "repo")
+	serverLog = slog.Default().With("area", "server")
+	traefikMgrLog = slog.Default().With("area", "traefik")
+}
+
 // Config holds manager configuration
 type Config struct {
 	RepoDir string
