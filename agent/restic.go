@@ -130,7 +130,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 		for scanner.Scan() {
 			line := scanner.Text()
 			stderrLines = append(stderrLines, line)
-			backupLog.Info("restic stderr", "op", prefix, "line", line)
+			backupLog.Debug(line, "op", prefix)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -145,7 +145,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 		var status resticStatusLine
 		if err := json.Unmarshal([]byte(line), &status); err != nil {
 			// Not valid JSON, just log it
-			backupLog.Info("restic output", "op", prefix, "line", line)
+			backupLog.Debug(line, "op", prefix)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -183,7 +183,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 				onLog("Completed")
 			}
 		} else {
-			backupLog.Info("restic output", "op", prefix, "line", line)
+			backupLog.Debug(line, "op", prefix)
 			if onLog != nil {
 				onLog(line)
 			}
@@ -275,7 +275,7 @@ func (r *RepoRestic) runLines(prefix string, cmd *exec.Cmd, onLog LogCallback) e
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
-			backupLog.Info("restic output", "op", prefix, "line", line)
+			backupLog.Debug(line, "op", prefix)
 			if onLog != nil {
 				onLog(line)
 			}

@@ -106,7 +106,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 		existing.IP = ip
 		existing.AppReports = reports
 		existing.Metrics = metrics
-		leaseLog.Info("Agent renewed lease", "agent", name, "reports", len(reports))
+		leaseLog.Debug("Agent renewed lease", "agent", name, "reports", len(reports))
 	} else {
 		lm.agents[name] = &AgentInfo{
 			Name:         name,

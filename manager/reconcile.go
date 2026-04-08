@@ -83,7 +83,7 @@ func (m *Manager) resolveGateway() {
 	if m.manualGatewayNode != "" {
 		if m.isTraefikHealthy(m.manualGatewayNode) {
 			if m.gatewayNode != m.manualGatewayNode {
-				reconcileLog.Info("Gateway: using manual selection", "node", m.manualGatewayNode)
+				reconcileLog.Debug("Gateway: using manual selection", "node", m.manualGatewayNode)
 			}
 			m.gatewayNode = m.manualGatewayNode
 			return
@@ -256,7 +256,7 @@ func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool, lastSee
 		}
 		agent := *app.AssignedAgent
 		if lastSeen, ok := lastSeenMap[agent]; ok && now.Sub(lastSeen) < deadAgentGracePeriod {
-			reconcileLog.Info("Agent offline within grace period", "agent", agent, "app", app.ID, "offline_for", now.Sub(lastSeen).Round(time.Second))
+			reconcileLog.Debug("Agent offline within grace period", "agent", agent, "app", app.ID, "offline_for", now.Sub(lastSeen).Round(time.Second))
 			continue
 		}
 		reconcileLog.Info("Agent dead past grace period, unassigning app", "agent", agent, "app", app.ID)

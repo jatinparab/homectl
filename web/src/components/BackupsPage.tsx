@@ -70,25 +70,36 @@ export function BackupsPage({ apps }: BackupsPageProps) {
   )
 
   return (
-    <div>
-      <h2 className="text-xs font-semibold text-stone-400 uppercase tracking-widest mb-4">Backups</h2>
-
-      <RepoMaintenancePanel />
-
-      {backupApps.length === 0 ? (
-        <p className="text-stone-400 text-sm">No backup-enabled apps found.</p>
-      ) : (
-        <div className="space-y-2">
-          {backupApps.map((app) => (
-            <AppBackupRow
-              key={app.app_id}
-              app={app}
-              expanded={expandedApps.has(app.app_id)}
-              onToggle={() => toggleApp(app.app_id)}
-            />
-          ))}
+    <div className="min-h-screen bg-[#faf9f7]">
+      <div className="border-b border-[#e2ddd7] bg-white px-4 py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div>
+            <h1 className="text-sm font-semibold text-[#1c1917]">Backups</h1>
+            <p className="text-[11px] text-stone-400 mt-0.5">
+              {backupApps.length} backup-enabled app{backupApps.length !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
-      )}
+      </div>
+
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-4">
+        <RepoMaintenancePanel />
+
+        {backupApps.length === 0 ? (
+          <p className="text-stone-400 text-sm">No backup-enabled apps found.</p>
+        ) : (
+          <div className="space-y-2">
+            {backupApps.map((app) => (
+              <AppBackupRow
+                key={app.app_id}
+                app={app}
+                expanded={expandedApps.has(app.app_id)}
+                onToggle={() => toggleApp(app.app_id)}
+              />
+            ))}
+          </div>
+        )}
+      </main>
     </div>
   )
 }

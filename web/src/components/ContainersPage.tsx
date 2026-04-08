@@ -15,32 +15,36 @@ export function ContainersPage({ onShowLogs }: ContainersPageProps) {
     return [...nodeContainers].sort((a, b) => a.node.localeCompare(b.node))
   }, [nodeContainers])
 
-  if (isLoading) {
-    return (
-      <div className="text-sm text-stone-400 py-8 text-center">Loading containers...</div>
-    )
-  }
+  const totalContainers = sortedNodes.reduce((n, nd) => n + nd.containers.length, 0)
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xs font-semibold text-stone-400 uppercase tracking-widest">Docker Containers</h2>
-        <span className="text-[11px] text-stone-400">
-          {sortedNodes.reduce((n, nd) => n + nd.containers.length, 0)} containers across {sortedNodes.length} nodes
-        </span>
+    <div className="min-h-screen bg-[#faf9f7]">
+      <div className="border-b border-[#e2ddd7] bg-white px-4 py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div>
+            <h1 className="text-sm font-semibold text-[#1c1917]">Containers</h1>
+            <p className="text-[11px] text-stone-400 mt-0.5">
+              {isLoading ? 'Loading...' : `${totalContainers} container${totalContainers !== 1 ? 's' : ''} across ${sortedNodes.length} node${sortedNodes.length !== 1 ? 's' : ''}`}
+            </p>
+          </div>
+        </div>
       </div>
 
-      {sortedNodes.length === 0 ? (
-        <div className="bg-white border border-[#e2ddd7] rounded-lg p-8 text-center text-stone-400 text-sm">
-          No nodes found
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {sortedNodes.map((nc) => (
-            <NodeContainersCard key={nc.node} nodeData={nc} onShowLogs={onShowLogs} />
-          ))}
-        </div>
-      )}
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        {isLoading ? (
+          <div className="text-sm text-stone-400 py-8 text-center">Loading containers...</div>
+        ) : sortedNodes.length === 0 ? (
+          <div className="bg-white border border-[#e2ddd7] rounded-lg p-8 text-center text-stone-400 text-sm">
+            No nodes found
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {sortedNodes.map((nc) => (
+              <NodeContainersCard key={nc.node} nodeData={nc} onShowLogs={onShowLogs} />
+            ))}
+          </div>
+        )}
+      </main>
     </div>
   )
 }
