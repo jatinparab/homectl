@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune, Agent } from "../api/types";
 import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment } from "../api/hooks";
+import { decodeStreamMessage, openStreamSocket } from "../api/ws";
 import {
   StatusBadge,
   HealthBadge,
@@ -172,10 +173,11 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       return;
     }
     streamProgressRef.current = newProgressAccumulator();
-    const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(streamableNode.node)}`;
-    const es = new EventSource(url);
-    es.onmessage = (e) => {
-      const line: string = e.data;
+    const path = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(streamableNode.node)}`;
+    const ws = openStreamSocket(path);
+    ws.onmessage = (e) => {
+      const line = decodeStreamMessage(e.data);
+      if (line == null) return;
       if (!line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
@@ -184,11 +186,11 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
         // ignore parse errors
       }
     };
-    es.onerror = () => {
-      es.close();
+    ws.onerror = () => {
+      ws.close();
     };
     return () => {
-      es.close();
+      ws.close();
     };
   }, [app.app_id, streamableNode?.node, streamableNode?.phase]);
 
@@ -212,10 +214,11 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
       return;
     }
     postBackupProgressRef.current = newProgressAccumulator();
-    const url = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(postBackupStreamableNode.node)}`;
-    const es = new EventSource(url);
-    es.onmessage = (e) => {
-      const line: string = e.data;
+    const path = `/api/v1/apps/${encodeURIComponent(app.app_id)}/phase-logs?node=${encodeURIComponent(postBackupStreamableNode.node)}`;
+    const ws = openStreamSocket(path);
+    ws.onmessage = (e) => {
+      const line = decodeStreamMessage(e.data);
+      if (line == null) return;
       if (!line.startsWith("__PROGRESS__:")) return;
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
@@ -224,11 +227,11 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
         // ignore parse errors
       }
     };
-    es.onerror = () => {
-      es.close();
+    ws.onerror = () => {
+      ws.close();
     };
     return () => {
-      es.close();
+      ws.close();
     };
   }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase]);
 
