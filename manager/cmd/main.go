@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,7 +13,6 @@ import (
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager"
 	"github.com/jatinparab/homectl/utils"
-	"github.com/soheilhy/cmux"
 )
 
 func main() {
@@ -30,18 +27,7 @@ func main() {
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
-
-	baseListener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		slog.Error("Failed to listen on manager port", "port", port, "err", err)
-		os.Exit(1)
-	}
-
-	m := cmux.New(baseListener)
-	httpListener := m.Match(cmux.HTTP1Fast())
-	agentListener := m.Match(cmux.Any())
-
-	if err := mgr.StartAgentTCPServer(agentListener); err != nil {
+	if err := mgr.StartAgentTCPServer(); err != nil {
 		slog.Error("Failed to start agent TCP server", "err", err)
 		os.Exit(1)
 	}
@@ -64,15 +50,8 @@ func main() {
 	go func() {
 		slog.Info("Manager server starting", "port", port)
 		slog.Info("Serving files from", "dir", repoDir)
-		if err := server.Serve(httpListener); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Server failed", "err", err)
-			os.Exit(1)
-		}
-	}()
-
-	go func() {
-		if err := m.Serve(); err != nil {
-			slog.Error("Port multiplexer failed", "err", err)
 			os.Exit(1)
 		}
 	}()
@@ -92,7 +71,6 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		slog.Info("Server shutdown error", "err", err)
 	}
-	_ = baseListener.Close()
 
 	mgr.Stop()
 	slog.Info("Manager stopped")
