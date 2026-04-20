@@ -319,9 +319,8 @@ func ping(url string) error {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return fmt.Errorf("service returned status code %d", response.StatusCode)
-	}
+	// Any HTTP response means the service is accepting connections.
+	// Actual health is monitored separately by the sensor loop.
 	return nil
 }
 
@@ -466,8 +465,7 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	ctx, cancel := context.WithTimeout(d.ctx, pullTimeout)
-	defer cancel()
+	ctx := context.Background()
 	cmd := exec.CommandContext(ctx, "docker", "compose", "--progress=plain", "-f", path, "pull")
 	cmd.Env = d.ComposeEnv()
 	if err := d.streamCommand(cmd, onLog); err != nil {

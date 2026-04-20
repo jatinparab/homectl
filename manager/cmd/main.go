@@ -24,7 +24,10 @@ func main() {
 	hostname := utils.GetHostname()
 	logger.Init("manager", hostname)
 	manager.InitLoggers()
-	repoDir := config.GetGitRepoDir(hostname)
+	repoDir := os.Getenv("HOMECTL_REPO_DIR")
+	if repoDir == "" {
+		repoDir = config.GetGitRepoDir(hostname)
+	}
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)

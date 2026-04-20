@@ -1,6 +1,10 @@
 package config
 
-import "github.com/jatinparab/homectl/utils"
+import (
+	"os"
+
+	"github.com/jatinparab/homectl/utils"
+)
 
 type Config struct {
 	managerURL string
@@ -15,7 +19,18 @@ type AgentConfig struct {
 	DockerRootDir string
 }
 
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func (c *Config) GetManagerURL() string {
+	// Env var override (for containerised / e2e deployments)
+	if url := os.Getenv("HOMECTL_MANAGER_URL"); url != "" {
+		return url
+	}
 	hostname := utils.GetHostname()
 	if hostname == "Jatins-MacBook-Pro.local" {
 		return "http://localhost:1338"
@@ -24,6 +39,17 @@ func (c *Config) GetManagerURL() string {
 }
 
 func (c *Config) GetAgentConfig(hostname string) *AgentConfig {
+	// Env var override (for containerised / e2e deployments)
+	if name := os.Getenv("HOMECTL_AGENT_NAME"); name != "" {
+		return &AgentConfig{
+			Name:          name,
+			IP:            utils.GetLocalIP(),
+			User:          envOrDefault("HOMECTL_USER", "root"),
+			AppdataDir:    envOrDefault("HOMECTL_APPDATA_DIR", "/appdata"),
+			DockerRootDir: envOrDefault("HOMECTL_DOCKER_ROOT_DIR", "/docker"),
+		}
+	}
+
 	// Special case for Local development
 	if hostname == "Jatins-MacBook-Pro.local" {
 		return &AgentConfig{

@@ -1,0 +1,127 @@
+networks:
+  dev:
+    driver: bridge
+
+volumes:
+  go-modules:      # shared go module download cache (read-only once populated)
+  manager-cache:   # manager go build cache
+  agent-1-cache:
+  agent-2-cache:
+  agent-3-cache:
+  agent-1-docker:  # dockerd data per agent
+  agent-2-docker:
+  agent-3-docker:
+  agent-1-appdata:
+  agent-2-appdata:
+  agent-3-appdata:
+  node-modules:    # npm packages (built in container, not synced from host)
+
+services:
+  # ── manager (hot-reload via Air) ─────────────────────────────────────────────
+  manager:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.manager
+    ports:
+      - "1338:1338"   # exposed so the browser can connect WebSocket directly
+    volumes:
+      - ../:/src                          # full source for Air to watch + rebuild
+      - ../e2e/apps:/src/docker/v2       # manager looks for {REPO_DIR}/docker/v2
+      - go-modules:/go/pkg/mod           # shared module cache
+      - manager-cache:/root/.cache/go-build
+    environment:
+      - HOMECTL_REPO_DIR=/src             # → apps at /src/docker/v2
+    networks: [dev]
+    restart: unless-stopped
+
+  # ── Vite dev server (hot-reload via HMR) ────────────────────────────────────
+  web:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.web
+    ports:
+      - "80:5173"                       # homectl.local:80 → Vite
+    volumes:
+      - ../web:/app                     # source mount for HMR
+      - node-modules:/app/node_modules  # container-built node_modules
+    environment:
+      # HMR client in the browser must connect back on port 80 (the exposed
+      # port), not 5173 (the internal Vite port).
+      - VITE_HMR_HOST=homectl.local
+      - VITE_HMR_PORT=80
+      - VITE_API_URL=http://manager:1338
+      - VITE_WS_TARGET=localhost:1338
+    networks: [dev]
+    depends_on:
+      - manager
+    restart: unless-stopped
+
+  # ── agent nodes (DinD + hot-reload via Air) ─────────────────────────────────
+  agent-1:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.agent
+    hostname: dev-node-1
+    privileged: true
+    volumes:
+      - ../:/src
+      - go-modules:/go/pkg/mod
+      - agent-1-cache:/root/.cache/go-build
+      - agent-1-docker:/var/lib/docker
+      - agent-1-appdata:/appdata
+    environment:
+      - HOMECTL_AGENT_NAME=dev-node-1
+      - HOMECTL_MANAGER_URL=http://manager:1338
+      - HOMECTL_DOCKER_ROOT_DIR=/docker
+      - HOMECTL_APPDATA_DIR=/appdata
+      - HOMECTL_USER=root
+    networks: [dev]
+    depends_on:
+      - manager
+    restart: unless-stopped
+
+  agent-2:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.agent
+    hostname: dev-node-2
+    privileged: true
+    volumes:
+      - ../:/src
+      - go-modules:/go/pkg/mod
+      - agent-2-cache:/root/.cache/go-build
+      - agent-2-docker:/var/lib/docker
+      - agent-2-appdata:/appdata
+    environment:
+      - HOMECTL_AGENT_NAME=dev-node-2
+      - HOMECTL_MANAGER_URL=http://manager:1338
+      - HOMECTL_DOCKER_ROOT_DIR=/docker
+      - HOMECTL_APPDATA_DIR=/appdata
+      - HOMECTL_USER=root
+    networks: [dev]
+    depends_on:
+      - manager
+    restart: unless-stopped
+
+  agent-3:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.agent
+    hostname: dev-node-3
+    privileged: true
+    volumes:
+      - ../:/src
+      - go-modules:/go/pkg/mod
+      - agent-3-cache:/root/.cache/go-build
+      - agent-3-docker:/var/lib/docker
+      - agent-3-appdata:/appdata
+    environment:
+      - HOMECTL_AGENT_NAME=dev-node-3
+      - HOMECTL_MANAGER_URL=http://manager:1338
+      - HOMECTL_DOCKER_ROOT_DIR=/docker
+      - HOMECTL_APPDATA_DIR=/appdata
+      - HOMECTL_USER=root
+    networks: [dev]
+    depends_on:
+      - manager
+    restart: unless-stopped

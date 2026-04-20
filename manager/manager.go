@@ -52,15 +52,14 @@ func DefaultConfig() Config {
 
 // Manager handles git sync and file serving for agents
 type Manager struct {
-	repoDir          string
-	stateDir         string
-	port             int
-	leaseManager     *LeaseManager
-	httpClient       *http.Client
-	streamHTTPClient *http.Client
-	config           *config.Config
-	appRegistry      *AppRegistry
-	reconcileCancel  context.CancelFunc
+	repoDir         string
+	stateDir        string
+	port            int
+	leaseManager    *LeaseManager
+	httpClient      *http.Client
+	config          *config.Config
+	appRegistry     *AppRegistry
+	reconcileCancel context.CancelFunc
 
 	backupMu              sync.Mutex
 	backupAssignments     map[common.AppID]*BackupAssignment
@@ -109,7 +108,6 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		streamHTTPClient:      &http.Client{},
 		config:                config.NewConfig(),
 		appRegistry:           NewAppRegistry(),
 		backupAssignments:     make(map[common.AppID]*BackupAssignment),
@@ -125,6 +123,17 @@ func NewManagerWithConfig(cfg Config) *Manager {
 // RepoDir returns the repository directory
 func (m *Manager) RepoDir() string {
 	return m.repoDir
+}
+
+// isAgentKnown returns true if the agent is statically configured OR has
+// dynamically registered via heartbeat. This allows e2e / containerised
+// agents whose names are not in the static config to use all manager APIs.
+func (m *Manager) isAgentKnown(nodeName string) bool {
+	if m.config.GetAgentConfig(nodeName) != nil {
+		return true
+	}
+	_, ok := m.leaseManager.GetAgent(nodeName)
+	return ok
 }
 
 // Port returns the server port

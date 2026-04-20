@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -223,105 +221,123 @@ func (m *Manager) handleSubscription(ctx context.Context, id, stream string, par
 	switch stream {
 	case "system-logs":
 		m.streamSystemLogs(ctx, id, sendStream)
-	default:
-		path := buildStreamPath(stream, params)
-		if path == "" {
-			sendStream(wsStreamMsg{Type: "stream", ID: id, Line: "unknown stream: " + stream, Done: true})
-			return
-		}
-		m.proxySSEStream(ctx, id, path, sendStream)
-	}
-}
-
-// buildStreamPath converts a stream type + params to an internal SSE path.
-func buildStreamPath(stream string, params map[string]string) string {
-	switch stream {
 	case "app-logs":
-		appID, node := params["appId"], params["node"]
-		if appID == "" || node == "" {
-			return ""
-		}
-		return fmt.Sprintf("/api/v1/apps/%s/logs?node=%s",
-			url.PathEscape(appID), url.QueryEscape(node))
+		m.streamAppLogsWS(ctx, id, params, sendStream)
 	case "phase-logs":
-		appID, node := params["appId"], params["node"]
-		if appID == "" || node == "" {
-			return ""
-		}
-		return fmt.Sprintf("/api/v1/apps/%s/phase-logs?node=%s",
-			url.PathEscape(appID), url.QueryEscape(node))
+		m.streamPhaseLogsWS(ctx, id, params, sendStream)
 	case "container-logs":
-		containerID, node := params["containerId"], params["node"]
-		if containerID == "" || node == "" {
-			return ""
-		}
-		all := params["all"]
-		return fmt.Sprintf("/api/v1/containers/%s/logs?node=%s&all=%s",
-			url.PathEscape(containerID), url.QueryEscape(node), url.QueryEscape(all))
-	case "system-log-source":
-		source := params["source"]
-		if source == "" {
-			return ""
-		}
-		return fmt.Sprintf("/api/v1/system-logs/%s", url.PathEscape(source))
+		m.streamContainerLogsWS(ctx, id, params, sendStream)
 	case "repo-check-logs":
-		return "/api/v1/repo/check-logs"
+		m.streamRepoLogsWS(ctx, id, false, sendStream)
 	case "repo-unlock-logs":
-		return "/api/v1/repo/unlock-logs"
+		m.streamRepoLogsWS(ctx, id, true, sendStream)
+	default:
+		sendStream(wsStreamMsg{Type: "stream", ID: id, Line: "unknown stream: " + stream, Done: true})
 	}
-	return ""
 }
 
-// proxySSEStream fetches an internal SSE endpoint and forwards lines as wsStreamMsgs.
-func (m *Manager) proxySSEStream(ctx context.Context, id, sseRelPath string, send func(wsStreamMsg) bool) {
-	proxyURL := fmt.Sprintf("http://127.0.0.1:%d%s", m.port, sseRelPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
+func (m *Manager) streamAppLogsWS(ctx context.Context, id string, params map[string]string, send func(wsStreamMsg) bool) {
+	appID := params["appId"]
+	node := params["node"]
+	if appID == "" {
+		m.sendStreamError(send, id, "appId parameter is required")
+		return
+	}
+	if err := m.ensureAgentOnline(node); err != nil {
+		m.sendStreamError(send, id, err.Error())
+		return
+	}
+	payload := common.AppLogsPayload{AppID: appID}
+	m.forwardAgentStream(ctx, id, node, common.LinkReqAppLogs, payload, send)
+}
+
+func (m *Manager) streamPhaseLogsWS(ctx context.Context, id string, params map[string]string, send func(wsStreamMsg) bool) {
+	appID := params["appId"]
+	node := params["node"]
+	if appID == "" {
+		m.sendStreamError(send, id, "appId parameter is required")
+		return
+	}
+	if err := m.ensureAgentOnline(node); err != nil {
+		m.sendStreamError(send, id, err.Error())
+		return
+	}
+	payload := common.AppPhaseLogsPayload{AppID: appID}
+	m.forwardAgentStream(ctx, id, node, common.LinkReqAppPhaseLogs, payload, send)
+}
+
+func (m *Manager) streamContainerLogsWS(ctx context.Context, id string, params map[string]string, send func(wsStreamMsg) bool) {
+	containerID := params["containerId"]
+	node := params["node"]
+	if containerID == "" {
+		m.sendStreamError(send, id, "containerId parameter is required")
+		return
+	}
+	if err := m.ensureAgentOnline(node); err != nil {
+		m.sendStreamError(send, id, err.Error())
+		return
+	}
+	showAll := strings.EqualFold(params["all"], "true") || params["all"] == "1"
+	payload := common.ContainerLogsPayload{ContainerID: containerID, ShowAll: showAll}
+	m.forwardAgentStream(ctx, id, node, common.LinkReqContainerLogs, payload, send)
+}
+
+func (m *Manager) streamRepoLogsWS(ctx context.Context, id string, unlock bool, send func(wsStreamMsg) bool) {
+	gateway := m.getGatewayNode()
+	if gateway == "" {
+		m.sendStreamError(send, id, "no gateway selected")
+		return
+	}
+	if err := m.ensureAgentOnline(gateway); err != nil {
+		m.sendStreamError(send, id, err.Error())
+		return
+	}
+	reqType := common.LinkReqRepoCheckLogs
+	if unlock {
+		reqType = common.LinkReqRepoUnlockLogs
+	}
+	m.forwardAgentStream(ctx, id, gateway, reqType, nil, send)
+}
+
+func (m *Manager) ensureAgentOnline(node string) error {
+	if node == "" {
+		return fmt.Errorf("node parameter is required")
+	}
+	if !m.isAgentKnown(node) {
+		return fmt.Errorf("node %s not found", node)
+	}
+	agent, ok := m.leaseManager.GetAgent(node)
+	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+		return fmt.Errorf("node %s is offline", node)
+	}
+	return nil
+}
+
+func (m *Manager) forwardAgentStream(ctx context.Context, id, agent string, requestType common.LinkRequestType, payload any, send func(wsStreamMsg) bool) {
+	stream, status, err := m.streamAgent(agent, requestType, payload)
 	if err != nil {
-		send(wsStreamMsg{Type: "stream", ID: id, Line: "stream error: " + err.Error(), Done: true})
+		m.sendStreamError(send, id, "stream error: "+err.Error())
 		return
 	}
-	resp, err := m.streamHTTPClient.Do(req)
-	if err != nil {
-		if ctx.Err() == nil {
-			send(wsStreamMsg{Type: "stream", ID: id, Line: "stream error: " + err.Error(), Done: true})
-		}
+	if status != http.StatusOK {
+		_ = stream.Close()
+		m.sendStreamError(send, id, fmt.Sprintf("stream unavailable: HTTP %d", status))
 		return
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		send(wsStreamMsg{Type: "stream", ID: id, Line: "stream unavailable: " + resp.Status, Done: true})
+	if err := m.pipeLineStream(ctx, stream, func(line string) bool {
+		return send(wsStreamMsg{Type: "stream", ID: id, Line: line})
+	}); err != nil && ctx.Err() == nil {
+		m.sendStreamError(send, id, "stream error: "+err.Error())
 		return
 	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	pending := make([]string, 0, 4)
-
-	flush := func() bool {
-		if len(pending) == 0 {
-			return true
-		}
-		joined := strings.Join(pending, "\n")
-		pending = pending[:0]
-		return send(wsStreamMsg{Type: "stream", ID: id, Line: joined})
+	if ctx.Err() != nil {
+		return
 	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if !flush() {
-				return
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			pending = append(pending, data)
-		}
-	}
-	flush()
 	send(wsStreamMsg{Type: "stream", ID: id, Done: true})
+}
+
+func (m *Manager) sendStreamError(send func(wsStreamMsg) bool, id, msg string) {
+	send(wsStreamMsg{Type: "stream", ID: id, Line: msg, Done: true})
 }
 
 // streamSystemLogs sends a snapshot of manager + agent logs then live-follows the manager log.
