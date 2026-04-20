@@ -1,4 +1,4 @@
-.PHONY: help build test agent manager clean deploy deploy-manager deploy-1 deploy-2 deploy-3 logs logs-1 logs-2 logs-3 status stop stop-1 stop-2 stop-3 stop-manager stop-all restart-1 restart-2 restart-3 restart-manager sync sync-1 sync-2 sync-3 setup-secrets setup-secrets-1 setup-secrets-2 setup-secrets-3 build-web web-dev
+.PHONY: help build test agent manager clean deploy deploy-manager deploy-1 deploy-2 deploy-3 logs logs-1 logs-2 logs-3 status stop stop-1 stop-2 stop-3 stop-manager stop-all restart-1 restart-2 restart-3 restart-manager sync sync-1 sync-2 sync-3 setup-secrets setup-secrets-1 setup-secrets-2 setup-secrets-3 build-web web-dev e2e e2e-up e2e-down e2e-test e2e-logs dev-up dev-down dev-logs dev-hosts dev-restart-manager dev-rebuild
 
 # Node configuration
 NODE_1_HOST ?= 192.168.50.101
@@ -57,6 +57,12 @@ help:
 	@echo "  sync           Sync binaries and scripts to all nodes"
 	@echo "  status         Show status of all agents"
 	@echo "  clean          Clean build artifacts"
+	@echo ""
+	@echo "$(YELLOW)Dev cluster (hot-reload):$(NC)"
+	@echo "  dev-up         Start dev cluster at http://homectl.local"
+	@echo "  dev-down       Tear down dev cluster"
+	@echo "  dev-logs       Tail all dev cluster logs"
+	@echo "  dev-rebuild    Rebuild images and restart cluster"
 
 # Development
 build: build-agent build-manager
@@ -271,6 +277,63 @@ build-web:
 web-dev:
 	@echo "$(GREEN)Starting web dev server...$(NC)"
 	cd web && npm run dev
+
+# E2E testing (Docker-in-Docker cluster)
+# `make e2e` — start cluster if needed, run tests, always tear down.
+e2e:
+	@./e2e/run.sh ci
+
+e2e-up:
+	@echo "$(GREEN)Starting e2e cluster (manager + 3 DinD agent nodes)...$(NC)"
+	./e2e/run.sh up
+
+e2e-down:
+	@echo "$(YELLOW)Tearing down e2e cluster...$(NC)"
+	./e2e/run.sh down
+
+e2e-test:
+	@echo "$(GREEN)Running e2e Go tests against running cluster...$(NC)"
+	go test -v -timeout 15m ./e2e/
+
+e2e-logs:
+	./e2e/run.sh logs
+
+# Dev cluster (hot-reload: Air for Go binaries, Vite HMR for UI)
+# ─── one-time setup ──────────────────────────────────────────────────────────
+dev-hosts:
+	@if grep -q "homectl.local" /etc/hosts 2>/dev/null; then \
+		echo "$(GREEN)homectl.local already in /etc/hosts$(NC)"; \
+	else \
+		echo "$(YELLOW)Adding 127.0.0.1 homectl.local to /etc/hosts (requires sudo)...$(NC)"; \
+		echo "127.0.0.1 homectl.local" | sudo tee -a /etc/hosts > /dev/null; \
+		echo "$(GREEN)Done. homectl.local → 127.0.0.1$(NC)"; \
+	fi
+
+# ─── lifecycle ───────────────────────────────────────────────────────────────
+dev-up: dev-hosts
+	@echo "$(GREEN)Starting dev cluster (this builds images on first run)...$(NC)"
+	cd dev && docker compose up --build -d
+	@echo ""
+	@echo "$(GREEN)Dev cluster is up!$(NC)"
+	@echo "  UI + API:  http://homectl.local"
+	@echo "  Logs:      make dev-logs"
+	@echo "  Teardown:  make dev-down"
+
+dev-down:
+	@echo "$(YELLOW)Tearing down dev cluster...$(NC)"
+	cd dev && docker compose down -v
+	@echo "$(GREEN)Dev cluster removed.$(NC)"
+
+dev-logs:
+	cd dev && docker compose logs -f
+
+# ─── convenience ─────────────────────────────────────────────────────────────
+dev-restart-manager:
+	cd dev && docker compose restart manager
+
+dev-rebuild:
+	@echo "$(GREEN)Rebuilding and restarting dev cluster images...$(NC)"
+	cd dev && docker compose up --build -d
 
 # Clean
 clean:

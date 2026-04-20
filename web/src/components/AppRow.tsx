@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { AppStatus, ResticProgress, UpcomingBackup, UpcomingPrune, Agent } from "../api/types";
 import { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment } from "../api/hooks";
-import { useLiveState } from "../api/live";
+import { useStreamSubscription } from "../api/live";
 import {
   StatusBadge,
   HealthBadge,
@@ -95,7 +95,6 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
   const restoreMutation = useUpdateAppRestoreEnabled();
   const reassignMutation = useReassignApp();
   const clearReassignMutation = useClearReassignment();
-  const { subscribe, unsubscribe } = useLiveState();
 
   const onlineAgents = agents?.filter((a) => a.online) ?? [];
   const [openKebab, setOpenKebab] = useState<string | null>(null);
@@ -133,23 +132,36 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     prevStreamable.current = isStreamable;
   }, [isStreamable]);
 
+  const shouldStreamPhaseLogs = !!(streamableNode && (streamableNode.phase === "backing_up" || streamableNode.phase === "restoring"));
+
   useEffect(() => {
-    if (!streamableNode) return;
-    if (!(streamableNode.phase === "backing_up" || streamableNode.phase === "restoring")) {
+    if (!shouldStreamPhaseLogs) {
       setRealtimeProgress(null);
       streamProgressRef.current = newProgressAccumulator();
       return;
     }
     streamProgressRef.current = newProgressAccumulator();
-    const id = subscribe('phase-logs', { appId: app.app_id, node: streamableNode.node }, (line, _source, done) => {
-      if (done || !line || !line.startsWith("__PROGRESS__:")) return;
+  }, [shouldStreamPhaseLogs, streamableNode?.node]);
+
+  const handlePhaseStream = useCallback((line: string, _source?: string, done?: boolean) => {
+    if (line?.startsWith("__PROGRESS__:")) {
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
         setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));
-      } catch { /* ignore */ }
-    });
-    return () => unsubscribe(id);
-  }, [app.app_id, streamableNode?.node, streamableNode?.phase, subscribe, unsubscribe]);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (done) {
+      return;
+    }
+  }, []);
+
+  useStreamSubscription(
+    shouldStreamPhaseLogs ? 'phase-logs' : null,
+    shouldStreamPhaseLogs && streamableNode ? { appId: app.app_id, node: streamableNode.node } : null,
+    shouldStreamPhaseLogs ? handlePhaseStream : null,
+  );
 
   useEffect(() => {
     if (!isPostBackupStreamable && prevPostBackupStreamable.current) {
@@ -160,24 +172,37 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
     prevPostBackupStreamable.current = isPostBackupStreamable;
   }, [isPostBackupStreamable]);
 
+  const postBackupPhase = postBackupStreamableNode?.post_backup_phase;
+  const shouldStreamPostBackup = !!(postBackupStreamableNode && postBackupPhase);
+
   useEffect(() => {
-    if (!postBackupStreamableNode) return;
-    const phase = postBackupStreamableNode.post_backup_phase;
-    if (!phase) {
+    if (!shouldStreamPostBackup) {
       setRealtimePostBackupProgress(null);
       postBackupProgressRef.current = newProgressAccumulator();
       return;
     }
     postBackupProgressRef.current = newProgressAccumulator();
-    const id = subscribe('phase-logs', { appId: app.app_id, node: postBackupStreamableNode.node }, (line, _source, done) => {
-      if (done || !line || !line.startsWith("__PROGRESS__:")) return;
+  }, [shouldStreamPostBackup, postBackupStreamableNode?.node]);
+
+  const handlePostBackupStream = useCallback((line: string, _source?: string, done?: boolean) => {
+    if (line?.startsWith("__PROGRESS__:")) {
       try {
         const p = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
         setRealtimePostBackupProgress(accumulateResticProgress(postBackupProgressRef.current, p));
-      } catch { /* ignore */ }
-    });
-    return () => unsubscribe(id);
-  }, [app.app_id, postBackupStreamableNode?.node, postBackupStreamableNode?.post_backup_phase, subscribe, unsubscribe]);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (done) {
+      return;
+    }
+  }, []);
+
+  useStreamSubscription(
+    shouldStreamPostBackup ? 'phase-logs' : null,
+    shouldStreamPostBackup && postBackupStreamableNode ? { appId: app.app_id, node: postBackupStreamableNode.node } : null,
+    shouldStreamPostBackup ? handlePostBackupStream : null,
+  );
 
   const handleProgress = useCallback((p: ResticProgress) => {
     setRealtimeProgress(accumulateResticProgress(streamProgressRef.current, p));

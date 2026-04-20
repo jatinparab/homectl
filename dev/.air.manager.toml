@@ -1,0 +1,15 @@
+root = "/src"
+tmp_dir = "/tmp/air-manager"
+
+[build]
+  cmd       = "sh -c 'cd /src && go build -o /tmp/air-manager/manager ./manager/cmd'"
+  bin       = "/tmp/air-manager/manager"
+  include_ext = ["go"]
+  exclude_dir = ["e2e", "dev", "web", "bin"]
+  delay     = 500   # ms — debounce rapid saves
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

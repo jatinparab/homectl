@@ -305,10 +305,6 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	response.IsGateway = m.gatewayNode == agentID
 	m.gatewayMu.Unlock()
 
-	if len(response.Apps) == 0 {
-		http.Error(w, "Wating", http.StatusOK)
-	}
-
 	serverLog.Debug("Returning desired apps", "agent", agentID, "count", len(response.Apps))
 
 	w.Header().Set("Content-Type", "application/json")

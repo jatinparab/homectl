@@ -1,0 +1,10 @@
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    environment:
+      - WEBSOCKET_ENABLED=true
+    ports:
+      - "8200:80"
+    volumes:
+      - ${APPDATA}/vaultwarden/data:/data
+    restart: unless-stopped

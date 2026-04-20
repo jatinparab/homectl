@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ResticProgress } from "../api/types";
-import { useLiveState } from "../api/live";
+import { useStreamSubscription } from "../api/live";
 
 interface PhaseLogOverlayProps {
   appId: string;
@@ -22,32 +22,31 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
   const [lines, setLines] = useState<string[]>([]);
   const preRef = useRef<HTMLPreElement>(null);
   const maxLines = 200;
-  const { subscribe, unsubscribe } = useLiveState();
 
-  useEffect(() => {
-    const id = subscribe('phase-logs', { appId, node }, (line, _source, done) => {
-      if (done || !line) return;
-
-      if (line.startsWith("__PROGRESS__:") && onProgress) {
-        try {
-          const progress = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
-          onProgress(progress);
-        } catch {
-          // ignore parse errors
-        }
-        return;
+  const streamCallback = useCallback((line: string, _source?: string, done?: boolean) => {
+    if (line?.startsWith("__PROGRESS__:") && onProgress) {
+      try {
+        const progress = JSON.parse(line.slice("__PROGRESS__:".length)) as ResticProgress;
+        onProgress(progress);
+      } catch {
+        // ignore parse errors
       }
+      return;
+    }
 
+    if (line) {
       setLines((prev) => {
         const next = [...prev, line];
         return next.length > maxLines ? next.slice(-maxLines) : next;
       });
-    });
+    }
 
-    return () => {
-      unsubscribe(id);
-    };
-  }, [appId, node, onProgress, subscribe, unsubscribe]);
+    if (done) {
+      return;
+    }
+  }, [maxLines, onProgress]);
+
+  useStreamSubscription('phase-logs', { appId, node }, streamCallback);
 
   useEffect(() => {
     if (preRef.current) {

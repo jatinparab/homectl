@@ -3,8 +3,8 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
@@ -309,33 +309,20 @@ func (m *Manager) proxyRepoLogs(w http.ResponseWriter, r *http.Request, path str
 		flusher.Flush()
 		return
 	}
-	defer stream.Close()
 
 	if status != http.StatusOK {
+		_ = stream.Close()
 		w.Write([]byte("data: Agent returned error\n\n"))
 		flusher.Flush()
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := stream.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
+	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+		return true
+	}); err != nil && r.Context().Err() == nil {
+		fmt.Fprintf(w, "data: stream error: %s\n\n", err.Error())
+		flusher.Flush()
 	}
 }

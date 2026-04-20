@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   Agent,
   AppStatus,
@@ -9,7 +18,7 @@ import type {
   UpcomingBackup,
   UpcomingPrune,
 } from "./types";
-import { buildWebSocketUrl } from "./ws";
+import { buildWebSocketUrlCandidates } from "./ws";
 
 interface LiveStatePayload {
   apps: AppStatus[];
@@ -24,7 +33,11 @@ interface LiveStatePayload {
 }
 
 // Stream subscription callback — line is "" when done is true.
-export type StreamCallback = (line: string, source?: string, done?: boolean) => void;
+export type StreamCallback = (
+  line: string,
+  source?: string,
+  done?: boolean,
+) => void;
 
 interface SubEntry {
   stream: string;
@@ -38,7 +51,11 @@ interface LiveStateContextValue {
   initialized: boolean;
   error: Error | null;
   /** Subscribe to a named stream. Returns a subscription ID. */
-  subscribe: (stream: string, params: Record<string, string>, cb: StreamCallback) => string;
+  subscribe: (
+    stream: string,
+    params: Record<string, string>,
+    cb: StreamCallback,
+  ) => string;
   /** Unsubscribe from a stream by ID returned from subscribe(). */
   unsubscribe: (id: string) => void;
 }
@@ -55,6 +72,11 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
   const retryTimerRef = useRef<number | null>(null);
   const subIdRef = useRef(0);
   const subsRef = useRef<Map<string, SubEntry>>(new Map());
+  const wsTargets = useMemo(
+    () => buildWebSocketUrlCandidates("/api/v1/ws/state"),
+    [],
+  );
+  const preferredTargetRef = useRef(0);
 
   const sendRaw = useCallback((data: unknown) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -63,9 +85,21 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const subscribe = useCallback(
-    (stream: string, params: Record<string, string>, cb: StreamCallback): string => {
+    (
+      stream: string,
+      params: Record<string, string>,
+      cb: StreamCallback,
+    ): string => {
       const id = `s${++subIdRef.current}`;
       subsRef.current.set(id, { stream, params, cb });
+      console.log(
+        "[ws] subscribing",
+        id,
+        stream,
+        params,
+        "wsState:",
+        socketRef.current?.readyState,
+      );
       sendRaw({ type: "subscribe", id, stream, params });
       return id;
     },
@@ -79,31 +113,67 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     },
     [sendRaw],
   );
-
   useEffect(() => {
     let closed = false;
 
-    const connect = () => {
-      const socket = new WebSocket(buildWebSocketUrl("/api/v1/ws/state"));
+    const connect = (targetIndex: number) => {
+      const url = wsTargets[targetIndex] ?? wsTargets[0];
+      console.log("[ws] connecting", url);
+      const socket = new WebSocket(url);
       socketRef.current = socket;
+      let opened = false;
 
       socket.onopen = () => {
+        opened = true;
+        preferredTargetRef.current = targetIndex;
+        socketRef.current = socket;
         setConnected(true);
         setError(null);
+        console.log(
+          "[ws] opened, re-subscribing",
+          subsRef.current.size,
+          "subs:",
+          [...subsRef.current.keys()],
+        );
         // Re-subscribe all active subscriptions after reconnect.
         for (const [id, entry] of subsRef.current.entries()) {
-          socket.send(JSON.stringify({ type: "subscribe", id, stream: entry.stream, params: entry.params }));
+          console.log("[ws] re-subscribing", id, entry.stream);
+          socket.send(
+            JSON.stringify({
+              type: "subscribe",
+              id,
+              stream: entry.stream,
+              params: entry.params,
+            }),
+          );
         }
       };
 
       socket.onmessage = (event) => {
         if (typeof event.data !== "string") return;
         try {
-          const msg = JSON.parse(event.data) as { type?: string; payload?: LiveStatePayload; id?: string; line?: string; source?: string; done?: boolean };
+          const msg = JSON.parse(event.data) as {
+            type?: string;
+            payload?: LiveStatePayload;
+            id?: string;
+            line?: string;
+            source?: string;
+            done?: boolean;
+          };
           if (msg.type === "state" && msg.payload) {
             setPayload(msg.payload);
             setInitialized(true);
           } else if (msg.type === "stream" && msg.id) {
+            console.log(
+              "[ws] stream msg",
+              msg.id,
+              "subs:",
+              [...subsRef.current.keys()],
+              "line:",
+              (msg.line ?? "").slice(0, 50),
+              "done:",
+              msg.done,
+            );
             const entry = subsRef.current.get(msg.id);
             if (entry) {
               entry.cb(msg.line ?? "", msg.source, msg.done === true);
@@ -122,14 +192,28 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
       };
 
       socket.onclose = () => {
+        console.log("[ws] closed, subs:", [...subsRef.current.keys()]);
         socketRef.current = null;
         setConnected(false);
         if (closed) return;
-        retryTimerRef.current = window.setTimeout(connect, 1000);
+
+        if (!opened) {
+          const nextIndex = targetIndex + 1;
+          if (nextIndex < wsTargets.length) {
+            console.warn("[ws] falling back to", wsTargets[nextIndex]);
+            connect(nextIndex);
+            return;
+          }
+        }
+
+        retryTimerRef.current = window.setTimeout(
+          () => connect(preferredTargetRef.current),
+          1000,
+        );
       };
     };
 
-    connect();
+    connect(preferredTargetRef.current);
 
     return () => {
       closed = true;
@@ -139,14 +223,18 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, []);
+  }, [wsTargets]);
 
   const value = useMemo<LiveStateContextValue>(
     () => ({ payload, connected, initialized, error, subscribe, unsubscribe }),
     [payload, connected, initialized, error, subscribe, unsubscribe],
   );
 
-  return <LiveStateContext.Provider value={value}>{children}</LiveStateContext.Provider>;
+  return (
+    <LiveStateContext.Provider value={value}>
+      {children}
+    </LiveStateContext.Provider>
+  );
 }
 
 export function useLiveState() {
@@ -155,4 +243,25 @@ export function useLiveState() {
     throw new Error("useLiveState must be used within LiveStateProvider");
   }
   return context;
+}
+
+interface StreamOptions {
+  enabled?: boolean;
+}
+
+export function useStreamSubscription(
+  stream: string | null,
+  params: Record<string, string> | null,
+  cb: StreamCallback | null,
+  options?: StreamOptions,
+) {
+  const { subscribe, unsubscribe } = useLiveState();
+  const enabled = options?.enabled ?? true;
+  const paramKey = useMemo(() => JSON.stringify(params ?? {}), [params]);
+
+  useEffect(() => {
+    if (!stream || !cb || !enabled) return;
+    const id = subscribe(stream, params ?? {}, cb);
+    return () => unsubscribe(id);
+  }, [stream, cb, enabled, paramKey, subscribe, unsubscribe]);
 }

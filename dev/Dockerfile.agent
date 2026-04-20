@@ -1,0 +1,20 @@
+# Copy Go toolchain from the official image into the dind base so we get a
+# known version without downloading it at runtime.
+FROM golang:1.25-alpine AS gobase
+
+FROM docker:27-dind
+RUN apk add --no-cache docker-compose git
+
+# Bring in Go from the golang image (both are alpine so libs are compatible)
+COPY --from=gobase /usr/local/go /usr/local/go
+ENV PATH=$PATH:/usr/local/go/bin
+ENV GOPATH=/go
+ENV GOMODCACHE=/go/pkg/mod
+ENV GOCACHE=/root/.cache/go-build
+ENV PATH=$PATH:/go/bin
+
+RUN go install github.com/air-verse/air@latest
+
+COPY dev/entrypoint-agent.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

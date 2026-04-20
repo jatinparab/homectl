@@ -1,0 +1,16 @@
+root = "/src"
+tmp_dir = "/tmp/air-agent"
+
+[build]
+  cmd       = "sh -c 'cd /src && go build -o /tmp/air-agent/agent ./agent/cmd'"
+  bin       = "/tmp/air-agent/agent"
+  include_ext = ["go"]
+  # Only watch agent + shared packages; ignore manager, web, e2e, dev
+  exclude_dir = ["e2e", "dev", "web", "bin", "manager"]
+  delay     = 500
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -630,8 +629,7 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		if now.Sub(agent.LastSeen) > 30*time.Second {
 			continue
 		}
-		agentCfg := m.config.GetAgentConfig(agent.Name)
-		if agentCfg == nil {
+		if !m.isAgentKnown(agent.Name) {
 			continue
 		}
 
@@ -846,8 +844,8 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if m.config.GetAgentConfig(nodeName) == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -904,8 +902,8 @@ func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if m.config.GetAgentConfig(nodeName) == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	agent, ok := m.leaseManager.GetAgent(nodeName)
@@ -956,9 +954,8 @@ func (m *Manager) handleAPIRestartApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1003,10 +1000,8 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up agent IP from config
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1037,26 +1032,21 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return
 	}
-	defer stream.Close()
 
 	if status != http.StatusOK {
+		_ = stream.Close()
 		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
 
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 512*1024), 512*1024)
-	for scanner.Scan() {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-		}
-		if line := scanner.Text(); line != "" {
-			fmt.Fprintf(w, "data: %s\n\n", line)
-			flusher.Flush()
-		}
+	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+		return true
+	}); err != nil && r.Context().Err() == nil {
+		fmt.Fprintf(w, "data: stream error: %s\n\n", err.Error())
+		flusher.Flush()
 	}
 }
 
@@ -1082,9 +1072,8 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1111,26 +1100,21 @@ func (m *Manager) handleAPIAppPhaseLogs(w http.ResponseWriter, r *http.Request) 
 		flusher.Flush()
 		return
 	}
-	defer stream.Close()
 
 	if status != http.StatusOK {
+		_ = stream.Close()
 		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
 
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 512*1024), 512*1024)
-	for scanner.Scan() {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-		}
-		if line := scanner.Text(); line != "" {
-			fmt.Fprintf(w, "data: %s\n\n", line)
-			flusher.Flush()
-		}
+	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+		return true
+	}); err != nil && r.Context().Err() == nil {
+		fmt.Fprintf(w, "data: stream error: %s\n\n", err.Error())
+		flusher.Flush()
 	}
 }
 
@@ -1209,9 +1193,8 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Proxy to agent
-	agentCfg := m.config.GetAgentConfig(source)
-	if agentCfg == nil {
-		w.Write([]byte("data: Error: source not found in config\n\n"))
+	if !m.isAgentKnown(source) {
+		w.Write([]byte("data: Error: source not found\n\n"))
 		flusher.Flush()
 		return
 	}
@@ -1222,28 +1205,21 @@ func (m *Manager) handleAPISystemLogStream(w http.ResponseWriter, r *http.Reques
 		flusher.Flush()
 		return
 	}
-	defer stream.Close()
 
 	if status != http.StatusOK {
+		_ = stream.Close()
 		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
 
-	// Use a scanner to read complete lines — a raw Read with a small buffer
-	// splits long JSON objects mid-line, corrupting the SSE stream.
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 512*1024), 512*1024) // 512 KB — handles any realistic log line
-	for scanner.Scan() {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-		}
-		if line := scanner.Text(); line != "" {
-			fmt.Fprintf(w, "data: %s\n\n", line)
-			flusher.Flush()
-		}
+	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+		return true
+	}); err != nil && r.Context().Err() == nil {
+		fmt.Fprintf(w, "data: stream error: %s\n\n", err.Error())
+		flusher.Flush()
 	}
 }
 
@@ -1315,8 +1291,7 @@ func (m *Manager) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		agentCfg := m.config.GetAgentConfig(a.Name)
-		if agentCfg == nil {
+		if !m.isAgentKnown(a.Name) {
 			results[i].Error = "not in config"
 			continue
 		}
@@ -1410,8 +1385,7 @@ func (m *Manager) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) 
 	results := make([]APIStoragePruneResult, 0, len(targetAgents))
 	for _, a := range targetAgents {
 		result := APIStoragePruneResult{Node: a.Name}
-		agentCfg := m.config.GetAgentConfig(a.Name)
-		if agentCfg == nil {
+		if !m.isAgentKnown(a.Name) {
 			result.Error = "not in config"
 			results = append(results, result)
 			continue
@@ -1464,8 +1438,7 @@ func (m *Manager) handleAPIContainers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		agentCfg := m.config.GetAgentConfig(a.Name)
-		if agentCfg == nil {
+		if !m.isAgentKnown(a.Name) {
 			results[i].Error = "not in config"
 			continue
 		}
@@ -1520,9 +1493,8 @@ func (m *Manager) handleAPIAppSnapshots(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1565,9 +1537,8 @@ func (m *Manager) handleAPIAppSnapshotRefresh(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1616,9 +1587,8 @@ func (m *Manager) handleAPISnapshotLs(w http.ResponseWriter, r *http.Request) {
 		browsePath = "/"
 	}
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1664,9 +1634,8 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 
 	showAll := r.URL.Query().Get("all")
 
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		http.Error(w, "Node not found in config", http.StatusNotFound)
+	if !m.isAgentKnown(nodeName) {
+		http.Error(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1688,34 +1657,21 @@ func (m *Manager) handleAPIContainerLogs(w http.ResponseWriter, r *http.Request)
 		flusher.Flush()
 		return
 	}
-	defer stream.Close()
 
 	if status != http.StatusOK {
+		_ = stream.Close()
 		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
 		flusher.Flush()
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-			n, err := stream.Read(buf)
-			if n > 0 {
-				lines := strings.Split(string(buf[:n]), "\n")
-				for _, line := range lines {
-					if line != "" {
-						w.Write([]byte("data: " + line + "\n\n"))
-					}
-				}
-				flusher.Flush()
-			}
-			if err != nil {
-				return
-			}
-		}
+	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+		return true
+	}); err != nil && r.Context().Err() == nil {
+		fmt.Fprintf(w, "data: stream error: %s\n\n", err.Error())
+		flusher.Flush()
 	}
 }
 
