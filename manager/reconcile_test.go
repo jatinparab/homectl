@@ -236,6 +236,29 @@ func TestHandleMigrations_WithinCooldown(t *testing.T) {
 	}
 }
 
+func TestHandleMigrations_DoesNotDuplicateQuarantinedOn(t *testing.T) {
+	now := time.Now()
+	oldTime := now.Add(-11 * time.Minute)
+
+	apps := map[common.AppID]*App{
+		"app1": {
+			ID:             "app1",
+			DesiredState:   common.DesiredRunning,
+			AssignedAgent:  strPtr("node1"),
+			Quarantined:    true,
+			LastMigratedAt: oldTime,
+			QuarantinedOn:  []string{"node1"},
+		},
+	}
+	alive := map[string]bool{"node1": true, "node2": true}
+
+	handleMigrations(apps, alive, now, nil)
+
+	if got := apps["app1"].QuarantinedOn; len(got) != 1 || got[0] != "node1" {
+		t.Fatalf("expected quarantined list to remain deduped, got %#v", got)
+	}
+}
+
 func TestHandleMigrations_MaxOnePerCycle(t *testing.T) {
 	now := time.Now()
 	oldTime := now.Add(-11 * time.Minute)
