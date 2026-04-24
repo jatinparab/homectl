@@ -13,6 +13,8 @@ import (
 	"github.com/jatinparab/homectl/logger"
 )
 
+const defaultAppLogsTailLines = "200"
+
 func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) <-chan common.LinkMessage {
 	sendJSON := func(status int, v any) <-chan common.LinkMessage {
 		b, _ := json.Marshal(v)
@@ -152,7 +154,7 @@ func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) <-chan common.L
 			return errMsg(http.StatusBadRequest, "invalid app logs payload")
 		}
 		composePath := filepath.Join(a.dockerRootDir, payload.AppID, "docker-compose.yml")
-		cmd := exec.Command("docker", "compose", "-f", composePath, "logs", "--tail=500", "--no-log-prefix=false")
+		cmd := exec.Command("docker", "compose", "-f", composePath, "logs", "--tail="+defaultAppLogsTailLines, "--no-log-prefix=false")
 		cmd.Env = a.docker.ComposeEnv()
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil && len(strings.TrimSpace(string(out))) == 0 {
