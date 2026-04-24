@@ -340,12 +340,10 @@ func (a *Agent) reconcileOnce() {
 
 	agentLog.Debug("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
 
-	// Track which apps the manager wants running on this node
+	// Track which apps are expected on this node (running or explicitly stopped).
 	assigned := make(map[common.AppID]bool, len(desiredApps))
 	for _, da := range desiredApps {
-		if da.DesiredState == common.DesiredRunning {
-			assigned[da.AppID] = true
-		}
+		assigned[da.AppID] = true
 	}
 	a.runtimeMu.Lock()
 	a.assignedApps = assigned
@@ -398,6 +396,12 @@ func (a *Agent) reconcileOnce() {
 	}
 }
 
+func (a *Agent) isAppExpected(appID common.AppID) bool {
+	a.runtimeMu.RLock()
+	defer a.runtimeMu.RUnlock()
+	return a.assignedApps[appID]
+}
+
 // reconcileApp determines what action to take for an app
 func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 	// === BACKUP PHASE HANDLING (takes priority) ===
@@ -430,6 +434,13 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 
 	// Desired stopped
 	if app.DesiredState == common.DesiredStopped {
+		if !a.isAppExpected(app.AppID) {
+			if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
+				agentLog.Info("Reconcile: app no longer expected on this node, removing compose resources", "app", app.AppID)
+				return ActionDown(app.AppID)
+			}
+			return ActionNone()
+		}
 		if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
 			agentLog.Info("Reconcile: should be stopped but is running", "app", app.AppID)
 			return ActionStop(app.AppID)

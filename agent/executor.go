@@ -60,6 +60,7 @@ const (
 	ActionTypeStart
 	ActionTypeRestart
 	ActionTypeStop
+	ActionTypeDown
 	ActionTypeQuarantine
 	ActionTypeBackup
 	ActionTypePrune
@@ -75,6 +76,8 @@ func (t ActionType) String() string {
 		return "restart"
 	case ActionTypeStop:
 		return "stop"
+	case ActionTypeDown:
+		return "down"
 	case ActionTypeQuarantine:
 		return "quarantine"
 	case ActionTypeBackup:
@@ -110,6 +113,11 @@ func ActionRestart(appID common.AppID) Action {
 // ActionStop returns a stop action for the app
 func ActionStop(appID common.AppID) Action {
 	return Action{Type: ActionTypeStop, AppID: appID}
+}
+
+// ActionDown returns a down action for the app.
+func ActionDown(appID common.AppID) Action {
+	return Action{Type: ActionTypeDown, AppID: appID}
 }
 
 // ActionQuarantine returns a quarantine action for the app
@@ -249,6 +257,8 @@ func (e *Executor) execute(action Action) {
 		err = e.executeRestart(appID, rt)
 	case ActionTypeStop:
 		err = e.executeStop(appID, rt)
+	case ActionTypeDown:
+		err = e.executeDown(appID, rt)
 	case ActionTypeQuarantine:
 		e.executeQuarantine(appID, rt)
 	case ActionTypeBackup:
@@ -397,6 +407,15 @@ func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
 	}
 
 	executorLog.Info("Stopped", "app", appID)
+	return nil
+}
+
+// executeDown stops and removes compose resources for apps that are no longer expected on this node.
+func (e *Executor) executeDown(appID common.AppID, rt *AppRuntime) error {
+	if err := e.docker.Down(string(appID)); err != nil {
+		return err
+	}
+	executorLog.Info("Removed compose resources (down)", "app", appID)
 	return nil
 }
 
