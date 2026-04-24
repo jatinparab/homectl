@@ -15,7 +15,7 @@ var sensorLog = slog.With("area", "sensor")
 
 const (
 	// SensorInterval is how often the sensor samples docker state
-	SensorInterval = 5 * time.Second
+	SensorInterval = 2 * time.Second
 	// HealthCheckTimeout is the timeout for health check HTTP requests
 	HealthCheckTimeout = 3 * time.Second
 )
