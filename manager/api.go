@@ -444,7 +444,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			m.pruneState[appID] = st
 		}
 		m.backupMu.Unlock()
-		go m.savePruneState()
+		m.requestPruneStateSave()
 	}
 
 	// Build AppStatus list by merging registry apps with observed state
