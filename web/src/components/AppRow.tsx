@@ -298,7 +298,7 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                       ⇄
                     </button>
                     {openNodeMenu === nr.node && (
-                      <div className="absolute left-0 top-5 z-50 min-w-[120px] bg-white border border-[#e2ddd7] rounded shadow-lg py-1">
+                      <div className="absolute left-0 bottom-5 z-[120] min-w-[140px] bg-white border border-[#e2ddd7] rounded shadow-lg py-1">
                         {otherAgents.map((a) => (
                           <button
                             key={a.name}
