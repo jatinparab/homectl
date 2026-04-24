@@ -96,10 +96,17 @@ func resticRuntimeEnv() []string {
 func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd {
 	runtimeEnv := resticRuntimeEnv()
 	if r.useSudo {
-		cmdArgs := append([]string{"env"}, runtimeEnv...)
-		cmdArgs = append(cmdArgs, "restic")
+		cmdArgs := []string{
+			"--preserve-env=B2_ACCOUNT_ID,B2_ACCOUNT_KEY,RESTIC_PASSWORD,RESTIC_PROGRESS_FPS",
+			"env",
+			"RESTIC_PROGRESS_FPS=2",
+			"restic",
+		}
 		cmdArgs = append(cmdArgs, args...)
-		return exec.CommandContext(ctx, "sudo", cmdArgs...)
+		cmd := exec.CommandContext(ctx, "sudo", cmdArgs...)
+		// Provide vars for sudo to preserve from the caller env.
+		cmd.Env = append(os.Environ(), runtimeEnv...)
+		return cmd
 	}
 	cmd := exec.CommandContext(ctx, "restic", args...)
 	cmd.Env = append(os.Environ(), runtimeEnv...)
