@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -80,15 +81,28 @@ func NewRepoRestic(appDataDir string, useSudo bool) *RepoRestic {
 	}
 }
 
+func resticRuntimeEnv() []string {
+	env := []string{"RESTIC_PROGRESS_FPS=2"}
+	for _, key := range []string{"B2_ACCOUNT_ID", "B2_ACCOUNT_KEY", "RESTIC_PASSWORD"} {
+		if val := os.Getenv(key); val != "" {
+			env = append(env, fmt.Sprintf("%s=%s", key, val))
+		}
+	}
+	return env
+}
+
 // resticCmdCtx builds a context-aware restic command (killed when ctx is cancelled).
-// RESTIC_PROGRESS_FPS is set explicitly via env(1) so it survives sudo's env_reset.
+// Required env vars are passed explicitly via env(1) so sudo env_reset cannot strip them.
 func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd {
+	runtimeEnv := resticRuntimeEnv()
 	if r.useSudo {
-		cmdArgs := append([]string{"-E", "env", "RESTIC_PROGRESS_FPS=2", "restic"}, args...)
+		cmdArgs := append([]string{"env"}, runtimeEnv...)
+		cmdArgs = append(cmdArgs, "restic")
+		cmdArgs = append(cmdArgs, args...)
 		return exec.CommandContext(ctx, "sudo", cmdArgs...)
 	}
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(cmd.Environ(), "RESTIC_PROGRESS_FPS=2")
+	cmd.Env = append(os.Environ(), runtimeEnv...)
 	return cmd
 }
 
