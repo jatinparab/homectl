@@ -20,6 +20,12 @@ import (
 
 const agentLinkPort = 1339
 
+const (
+	agentRequestTimeout     = 10 * time.Second
+	agentStreamFirstTimeout = 10 * time.Second
+	agentHeavyStreamTimeout = 2 * time.Minute
+)
+
 type agentLinkPeer struct {
 	name string
 	ip   string
@@ -298,7 +304,7 @@ func (m *Manager) requestAgentUnary(ctx context.Context, agentID string, request
 	select {
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
-	case <-time.After(10 * time.Second):
+	case <-time.After(agentRequestTimeout):
 		return 0, nil, fmt.Errorf("agent request timeout")
 	case msg, ok := <-ch:
 		if !ok {
@@ -308,6 +314,18 @@ func (m *Manager) requestAgentUnary(ctx context.Context, agentID string, request
 			return msg.Status, nil, fmt.Errorf("%s", msg.Error)
 		}
 		return msg.Status, msg.Body, nil
+	}
+}
+
+func firstMessageTimeoutForRequest(requestType common.LinkRequestType) time.Duration {
+	switch requestType {
+	case common.LinkReqAppLogs,
+		common.LinkReqContainerLogs,
+		common.LinkReqRepoCheckLogs,
+		common.LinkReqRepoUnlockLogs:
+		return agentHeavyStreamTimeout
+	default:
+		return agentStreamFirstTimeout
 	}
 }
 
@@ -322,13 +340,14 @@ func (m *Manager) streamAgent(agentID string, requestType common.LinkRequestType
 	}
 
 	var first common.LinkMessage
+	firstTimeout := firstMessageTimeoutForRequest(requestType)
 	select {
 	case msg, ok := <-ch:
 		if !ok {
 			return nil, 0, fmt.Errorf("agent link closed")
 		}
 		first = msg
-	case <-time.After(10 * time.Second):
+	case <-time.After(firstTimeout):
 		peer.removePending(reqID, ch)
 		return nil, 0, fmt.Errorf("agent request timeout")
 	}
