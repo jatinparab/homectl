@@ -293,8 +293,15 @@ func (m *Manager) streamAppLogsWS(ctx context.Context, id string, params map[str
 		m.sendStreamError(send, id, err.Error())
 		return
 	}
-	payload := common.AppLogsPayload{AppID: appID}
-	m.forwardAgentStream(ctx, id, node, common.LinkReqAppLogs, payload, send)
+	if err := m.streamAgentAppLogsPolling(ctx, node, appID, func(line string) bool {
+		return send(wsStreamMsg{Type: "stream", ID: id, Line: line})
+	}); err != nil && ctx.Err() == nil {
+		m.sendStreamError(send, id, "stream error: "+err.Error())
+		return
+	}
+	if ctx.Err() == nil {
+		send(wsStreamMsg{Type: "stream", ID: id, Done: true})
+	}
 }
 
 func (m *Manager) streamPhaseLogsWS(ctx context.Context, id string, params map[string]string, send func(wsStreamMsg) bool) {
