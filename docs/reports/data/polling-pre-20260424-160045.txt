@@ -1,0 +1,54 @@
+timestamp=20260424-160045
+=== host:192.168.1.101 ===
+service=active
+proc=agent pid=261486
+sample_time=16:00:47 rss_kb=3320 cpu_pct=0.0 etime=00:00
+sample_time=16:00:57 rss_kb=3324 cpu_pct=0.0 etime=00:10
+sample_time=16:01:07 rss_kb=3324 cpu_pct=0.0 etime=00:20
+sample_time=16:01:17 rss_kb=3324 cpu_pct=0.0 etime=00:30
+sample_time=16:01:27 rss_kb=3328 cpu_pct=0.0 etime=00:40
+sample_time=16:01:37 rss_kb=3328 cpu_pct=0.0 etime=00:50
+VmRSS:	    3328 kB
+VmData:	     304 kB
+VmSwap:	       0 kB
+Threads:	1
+=== host:192.168.1.102 ===
+service=active
+proc=agent pid=3633860
+sample_time=16:01:48 rss_kb=13868 cpu_pct=5.2 etime=41:33
+sample_time=16:01:59 rss_kb=13740 cpu_pct=5.2 etime=41:43
+sample_time=16:02:09 rss_kb=13844 cpu_pct=5.2 etime=41:53
+sample_time=16:02:19 rss_kb=13540 cpu_pct=5.2 etime=42:03
+sample_time=16:02:29 rss_kb=13432 cpu_pct=5.2 etime=42:13
+sample_time=16:02:39 rss_kb=13116 cpu_pct=5.2 etime=42:23
+VmRSS:	   13660 kB
+VmData:	   45680 kB
+VmSwap:	       0 kB
+Threads:	30
+=== host:192.168.1.103 ===
+service=active
+proc=agent pid=163175
+sample_time=16:02:38 rss_kb=19084  2.6       20:45 cpu_pct= etime=
+sample_time=16:02:48 rss_kb=18972  2.6       20:55 cpu_pct= etime=
+sample_time=16:02:58 rss_kb=19316  2.6       21:05 cpu_pct= etime=
+sample_time=16:03:08 rss_kb=19096  2.6       21:15 cpu_pct= etime=
+sample_time=16:03:18 rss_kb=19192  2.6       21:25 cpu_pct= etime=
+sample_time=16:03:28 rss_kb=18956  2.6       21:35 cpu_pct= etime=
+VmRSS:	   19244 kB
+VmData:	   51860 kB
+VmSwap:	       0 kB
+Threads:	32
+egrep: warning: egrep is obsolescent; using grep -E
+=== host:65.20.72.36 ===
+service=active
+proc=manager pid=16239
+sample_time=10:33:51 rss_kb=12104 cpu_pct=0.6 etime=14:06
+sample_time=10:34:01 rss_kb=12072 cpu_pct=0.6 etime=14:16
+sample_time=10:34:11 rss_kb=12036 cpu_pct=0.6 etime=14:26
+sample_time=10:34:21 rss_kb=12296 cpu_pct=0.6 etime=14:36
+sample_time=10:34:32 rss_kb=12108 cpu_pct=0.6 etime=14:46
+sample_time=10:34:42 rss_kb=12360 cpu_pct=0.6 etime=14:56
+VmRSS:	   12080 kB
+VmData:	   45144 kB
+VmSwap:	       0 kB
+Threads:	7
