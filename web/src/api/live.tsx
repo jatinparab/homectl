@@ -92,14 +92,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
     ): string => {
       const id = `s${++subIdRef.current}`;
       subsRef.current.set(id, { stream, params, cb });
-      console.log(
-        "[ws] subscribing",
-        id,
-        stream,
-        params,
-        "wsState:",
-        socketRef.current?.readyState,
-      );
       sendRaw({ type: "subscribe", id, stream, params });
       return id;
     },
@@ -118,7 +110,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
 
     const connect = (targetIndex: number) => {
       const url = wsTargets[targetIndex] ?? wsTargets[0];
-      console.log("[ws] connecting", url);
       const socket = new WebSocket(url);
       socketRef.current = socket;
       let opened = false;
@@ -129,15 +120,8 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
         socketRef.current = socket;
         setConnected(true);
         setError(null);
-        console.log(
-          "[ws] opened, re-subscribing",
-          subsRef.current.size,
-          "subs:",
-          [...subsRef.current.keys()],
-        );
         // Re-subscribe all active subscriptions after reconnect.
         for (const [id, entry] of subsRef.current.entries()) {
-          console.log("[ws] re-subscribing", id, entry.stream);
           socket.send(
             JSON.stringify({
               type: "subscribe",
@@ -164,16 +148,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
             setPayload(msg.payload);
             setInitialized(true);
           } else if (msg.type === "stream" && msg.id) {
-            console.log(
-              "[ws] stream msg",
-              msg.id,
-              "subs:",
-              [...subsRef.current.keys()],
-              "line:",
-              (msg.line ?? "").slice(0, 50),
-              "done:",
-              msg.done,
-            );
             const entry = subsRef.current.get(msg.id);
             if (entry) {
               entry.cb(msg.line ?? "", msg.source, msg.done === true);
@@ -192,7 +166,6 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
       };
 
       socket.onclose = () => {
-        console.log("[ws] closed, subs:", [...subsRef.current.keys()]);
         socketRef.current = null;
         setConnected(false);
         if (closed) return;

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Homectl Manager Memory Leak Report - 2026-04-24</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --card: #ffffff;
+      --text: #1a2130;
+      --muted: #5b6478;
+      --ok: #0f7b42;
+      --warn: #b45309;
+      --line: #e4e7ee;
+      --accent: #0059d6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #f1f5ff 0%, var(--bg) 35%);
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 18px 40px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.05);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 0 0 10px; font-size: 20px; }
+    h3 { margin: 0 0 8px; font-size: 16px; }
+    p { margin: 6px 0; color: var(--muted); }
+    ul { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 4px 0; }
+    code {
+      background: #f2f4f8;
+      border: 1px solid #dce3ef;
+      border-radius: 6px;
+      padding: 1px 5px;
+      color: #12213f;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 9px 8px;
+      vertical-align: top;
+    }
+    th { color: #374151; font-weight: 700; background: #f8fafc; }
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .kpi > div {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fcfdff;
+    }
+    .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .kpi .val { font-size: 20px; font-weight: 700; color: var(--text); margin-top: 4px; }
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .foot { font-size: 12px; color: #697086; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Homectl Manager Memory Leak Analysis & Fix Report</h1>
+      <p><strong>Date:</strong> 2026-04-24 (UTC)</p>
+      <p><strong>Target:</strong> <code>homectl-manager</code> on VPS <code>65.20.72.36</code></p>
+      <p><strong>Branch:</strong> <code>fix/manager-memory-leaks</code></p>
+      <p><strong>Commits:</strong> <code>49e319b</code>, <code>8783489</code></p>
+    </div>
+
+    <div class="card">
+      <h2>Executive Summary</h2>
+      <p>Leak vectors in manager link-channel lifecycle and websocket queueing were fixed and deployed. Post-deploy process memory dropped from sustained high RSS/swap pressure to low steady-state memory under active API polling.</p>
+      <div class="kpi">
+        <div>
+          <div class="label">Pre RSS</div>
+          <div class="val">~419 MB</div>
+        </div>
+        <div>
+          <div class="label">Post RSS</div>
+          <div class="val">~11.5 MB</div>
+        </div>
+        <div>
+          <div class="label">Pre Swap</div>
+          <div class="val">~552 MB</div>
+        </div>
+        <div>
+          <div class="label">Post Swap</div>
+          <div class="val">0 MB</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pre-Analysis Baseline (Before Fix)</h2>
+      <table>
+        <thead>
+          <tr><th>Metric</th><th>Value</th><th>Captured At</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Process</td><td><code>/home/jatin/homectll/bin/manager</code> (PID 790)</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>RSS</td><td>419,612 kB (~409.8 MB)</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>VmSize</td><td>4,793,708 kB (~4.57 GB)</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>VmData</td><td>3,654,956 kB (~3.49 GB)</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>VmSwap</td><td>552,536 kB (~539.6 MB)</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>Threads</td><td>7</td><td>2026-04-24 08:26 UTC</td></tr>
+          <tr><td>FD Count</td><td>12</td><td>2026-04-24 08:26 UTC</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Implemented Fixes</h2>
+      <h3>1) Agent link pending lifecycle hardening</h3>
+      <ul>
+        <li>Added explicit pending-entry cleanup helpers on peer (<code>removePending</code>, <code>closeAllPending</code>).</li>
+        <li>Closed pending channels when <code>Done=true</code> is processed.</li>
+        <li>Closed all pending channels on peer disconnect.</li>
+        <li>Removed buffered-forwarder path from <code>requestAgent</code>; callers now handle first-message timeout directly.</li>
+        <li>Added unary cleanup defer so non-<code>Done</code> responses do not leak map entries/channels.</li>
+      </ul>
+
+      <h3>2) WebSocket memory pressure reduction</h3>
+      <ul>
+        <li>Split outbound websocket queues into:
+          <ul>
+            <li>state channel: 1-slot conflated latest snapshot</li>
+            <li>stream channel: buffered queue preserving log/stream messages</li>
+          </ul>
+        </li>
+        <li>This prevents state backlog growth while avoiding stream line loss.</li>
+      </ul>
+
+      <h3>3) Secondary memory-growth cleanup</h3>
+      <ul>
+        <li>Coalesced prune-state persistence writes via single in-flight background saver (<code>requestPruneStateSave</code>).</li>
+        <li>Pruned stale entries from <code>pruneState</code> and <code>pendingGlobalRestores</code> in assignment resolution.</li>
+        <li>Deduped <code>QuarantinedOn</code> during migration to avoid unbounded duplicate growth.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Validation & Test Evidence</h2>
+      <table>
+        <thead>
+          <tr><th>Validation</th><th>Result</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>go test ./manager/...</code></td><td class="ok">PASS</td><td>Manager package + new regression tests.</td></tr>
+          <tr><td><code>make e2e</code></td><td class="ok">PASS</td><td>Passed after starting Docker and running from clean e2e cluster state.</td></tr>
+          <tr><td><code>go test ./...</code></td><td class="warn">Expected FAIL in this environment</td><td><code>e2e</code> package requires live cluster when invoked directly.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Deployment</h2>
+      <ul>
+        <li>Command run: <code>make deploy-manager</code></li>
+        <li>Manager service: <code>active (running)</code> since 2026-04-24 08:43:51 UTC</li>
+        <li>Deployed binary PID: <code>10444</code></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Post-Analysis (After Fix + Deploy)</h2>
+      <p>90-second active polling workload on VPS (<code>/api/v1/apps</code>, <code>/api/v1/storage</code>, <code>/api/v1/containers</code> at 1Hz) while sampling process memory every 10 seconds.</p>
+      <table>
+        <thead>
+          <tr><th>Sample</th><th>RSS (kB)</th><th>VmSize (kB)</th><th>Swap (kB)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>t=10s</td><td>11,692</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=20s</td><td>11,820</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=30s</td><td>11,996</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=40s</td><td>11,996</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=50s</td><td>11,260</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=60s</td><td>11,784</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=70s</td><td>11,784</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=80s</td><td>11,976</td><td>1,233,064</td><td>0</td></tr>
+          <tr><td>t=90s</td><td>11,532</td><td>1,233,064</td><td>0</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <thead>
+          <tr><th>Metric</th><th>Value</th><th>Captured At</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Process</td><td><code>/home/jatin/homectll/bin/manager</code> (PID 10444)</td><td>2026-04-24 08:48 UTC</td></tr>
+          <tr><td>RSS</td><td>11,532 kB (~11.3 MB)</td><td>2026-04-24 08:48 UTC</td></tr>
+          <tr><td>VmData</td><td>45,144 kB</td><td>2026-04-24 08:48 UTC</td></tr>
+          <tr><td>VmSwap</td><td>0 kB</td><td>2026-04-24 08:48 UTC</td></tr>
+          <tr><td>Threads</td><td>7</td><td>2026-04-24 08:48 UTC</td></tr>
+          <tr><td>FD Count</td><td>12</td><td>2026-04-24 08:48 UTC</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Net Effect</h2>
+      <ul>
+        <li><strong>RSS reduction:</strong> ~419,612 kB → ~11,532 kB (about <strong>97.3%</strong> lower).</li>
+        <li><strong>Swap pressure removed:</strong> ~552,536 kB → 0 kB.</li>
+        <li><strong>Short-run stability:</strong> RSS remained in a tight ~11.2–12.0 MB range under repeated API polling.</li>
+      </ul>
+      <p class="foot">Note: pre/post elapsed runtime differs (pre had >2h uptime). A 24h follow-up capture is still recommended to confirm long-horizon stability in production traffic.</p>
+    </div>
+  </div>
+</body>
+</html>

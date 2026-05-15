@@ -67,3 +67,31 @@ func (m *Manager) savePruneState() {
 		pruneStateLog.Info("Failed to write prune-state file", "err", err)
 	}
 }
+
+// requestPruneStateSave coalesces concurrent save requests into a single
+// background writer to avoid unbounded goroutine creation under heartbeat load.
+func (m *Manager) requestPruneStateSave() {
+	m.backupMu.Lock()
+	if m.pruneStateSaving {
+		m.pruneStateSavePending = true
+		m.backupMu.Unlock()
+		return
+	}
+	m.pruneStateSaving = true
+	m.backupMu.Unlock()
+
+	go func() {
+		for {
+			m.savePruneState()
+			m.backupMu.Lock()
+			if m.pruneStateSavePending {
+				m.pruneStateSavePending = false
+				m.backupMu.Unlock()
+				continue
+			}
+			m.pruneStateSaving = false
+			m.backupMu.Unlock()
+			return
+		}
+	}()
+}

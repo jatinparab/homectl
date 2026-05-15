@@ -24,23 +24,39 @@ let logIdSeq = 0
 function useAppLogs(appId: string, node: string | null) {
   const [lines, setLines] = useState<LogLine[]>([])
   const seenRef = useRef<Set<string>>(new Set())
+  const pendingRef = useRef<string[]>([])
+  const flushTimerRef = useRef<number | null>(null)
 
-  const addLines = useCallback((raw: string) => {
-    const incoming = raw.split('\n').filter(Boolean)
+  const flushPending = useCallback(() => {
+    flushTimerRef.current = null
+    if (pendingRef.current.length === 0) return
+    const chunk = pendingRef.current
+    pendingRef.current = []
     setLines(prev => {
       const next = [...prev]
-      for (const text of incoming) {
+      for (const text of chunk) {
         if (seenRef.current.has(text)) continue
         seenRef.current.add(text)
         next.push({ id: ++logIdSeq, text })
       }
-      // Cap at 2000 lines
       return next.length > 2000 ? next.slice(-2000) : next
     })
   }, [])
 
+  const addLines = useCallback((raw: string) => {
+    const incoming = raw.split('\n').filter(Boolean)
+    pendingRef.current.push(...incoming)
+    if (flushTimerRef.current != null) return
+    flushTimerRef.current = window.setTimeout(flushPending, 80)
+  }, [flushPending])
+
   useEffect(() => {
     if (!node) return
+    if (flushTimerRef.current != null) {
+      window.clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    pendingRef.current = []
     seenRef.current.clear()
     setLines([])
   }, [appId, node])
@@ -50,9 +66,10 @@ function useAppLogs(appId: string, node: string | null) {
       addLines(line)
     }
     if (done) {
+      flushPending()
       return
     }
-  }, [addLines])
+  }, [addLines, flushPending])
 
   useStreamSubscription(
     node ? 'app-logs' : null,

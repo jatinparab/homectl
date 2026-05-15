@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Polling Tuning Report (2026-04-24)</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #182230;
+      --muted: #5f6b7b;
+      --line: #e3e8f0;
+      --ok: #0f7a43;
+      --warn: #a16207;
+      --accent: #0f4fd1;
+    }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #eef4ff 0, var(--bg) 280px);
+      color: var(--text);
+      font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 40px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(17, 24, 39, 0.06);
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 0 0 10px; font-size: 19px; }
+    h3 { margin: 0 0 8px; font-size: 15px; }
+    p { margin: 6px 0; color: var(--muted); }
+    ul { margin: 8px 0 0 18px; padding: 0; }
+    li { margin: 4px 0; }
+    code {
+      background: #f2f5fa;
+      border: 1px solid #dce3ee;
+      border-radius: 6px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f8fafd; font-weight: 700; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .kpi { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #fcfdff; }
+    .kpi .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .kpi .value { margin-top: 4px; font-size: 20px; font-weight: 700; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .foot { font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Agent Polling Tuning: Pre/Post Analysis</h1>
+      <p><strong>Date:</strong> 2026-04-24</p>
+      <p><strong>Change request:</strong> set agent <code>sensor=2s</code> and <code>reconcile=5s</code></p>
+      <p><strong>Branch:</strong> <code>fix/manager-memory-leaks</code></p>
+      <p><strong>Commit:</strong> <code>9673780</code> (<code>perf(agent): set reconcile 5s and sensor poll 2s</code>)</p>
+    </div>
+
+    <div class="card">
+      <h2>Implemented Change</h2>
+      <ul>
+        <li><code>agent/config.go</code>: <code>ReconcileInterval</code> changed from <code>10s</code> to <code>5s</code>.</li>
+        <li><code>agent/sensor.go</code>: <code>SensorInterval</code> changed from <code>5s</code> to <code>2s</code>.</li>
+        <li>Agents redeployed on <code>192.168.1.101</code>, <code>192.168.1.102</code>, <code>192.168.1.103</code> and verified <code>active</code>.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Methodology</h2>
+      <ul>
+        <li>Pre and post windows each sampled for 60 seconds per host, 6 points (10s interval).</li>
+        <li>Measured process-level <code>RSS (kB)</code> and <code>%CPU</code> via <code>ps</code> for agent nodes and manager VPS.</li>
+        <li>Hosts sampled: three agents + manager VPS as control.</li>
+      </ul>
+      <p>Raw captures:</p>
+      <ul>
+        <li>Pre: <a href="/Users/jatin/Personal/homectll/docs/reports/data/polling-pre-clean-20260424-160515.txt">polling-pre-clean-20260424-160515.txt</a></li>
+        <li>Post: <a href="/Users/jatin/Personal/homectll/docs/reports/data/polling-post-clean-20260424-161045.txt">polling-post-clean-20260424-161045.txt</a></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Pre vs Post Summary</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Host</th>
+            <th>Role</th>
+            <th>Pre Avg RSS (kB)</th>
+            <th>Post Avg RSS (kB)</th>
+            <th>RSS Delta</th>
+            <th>Pre Avg CPU %</th>
+            <th>Post Avg CPU %</th>
+            <th>CPU Delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>192.168.1.101</td>
+            <td>Agent</td>
+            <td>3,380.7</td>
+            <td>11,827.3</td>
+            <td class="warn">+8,446.6 (+249.8%)</td>
+            <td>0.00</td>
+            <td>13.50</td>
+            <td class="warn">+13.50</td>
+          </tr>
+          <tr>
+            <td>192.168.1.102</td>
+            <td>Agent</td>
+            <td>13,439.3</td>
+            <td>15,014.0</td>
+            <td class="warn">+1,574.7 (+11.7%)</td>
+            <td>5.20</td>
+            <td>5.60</td>
+            <td>+0.40</td>
+          </tr>
+          <tr>
+            <td>192.168.1.103</td>
+            <td>Agent</td>
+            <td>19,190.7</td>
+            <td>16,824.7</td>
+            <td class="ok">-2,366.0 (-12.3%)</td>
+            <td>2.70</td>
+            <td>3.80</td>
+            <td>+1.10</td>
+          </tr>
+          <tr>
+            <td>65.20.72.36</td>
+            <td>Manager (control)</td>
+            <td>12,199.3</td>
+            <td>12,354.0</td>
+            <td>+154.7 (+1.3%)</td>
+            <td>0.60</td>
+            <td>0.60</td>
+            <td>0.00</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="foot">All averages are arithmetic means across 6 samples in each 60-second window.</p>
+    </div>
+
+    <div class="card">
+      <h2>Interpretation</h2>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="label">Behavior Change</div>
+          <div class="value">Faster loops live</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Observed Impact</div>
+          <div class="value">Higher agent activity</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Manager Control</div>
+          <div class="value">~Flat</div>
+        </div>
+      </div>
+      <ul>
+        <li>As expected, agent-side activity increased after tightening intervals.</li>
+        <li>Manager process did not show material CPU/RSS change in this short window.</li>
+        <li><code>192.168.1.101</code> showed the largest increase due to workload profile and low pre baseline in this sample window.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Caveats</h2>
+      <ul>
+        <li>This is a short pre/post window (~60s each) and not a full-day steady-state profile.</li>
+        <li>Sampling captures current workload; node-level app mix can skew absolute CPU deltas.</li>
+        <li>For high confidence, run a 12–24h follow-up and compare p95 CPU plus journal volume.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Recommendation</h2>
+      <p>Keep <code>sensor=2s</code> and <code>reconcile=5s</code> enabled for now. If you observe sustained high CPU on specific nodes, tune to <code>sensor=2s</code> + <code>reconcile=8s</code> as a fallback.</p>
+    </div>
+  </div>
+</body>
+</html>

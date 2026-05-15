@@ -444,7 +444,7 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			m.pruneState[appID] = st
 		}
 		m.backupMu.Unlock()
-		go m.savePruneState()
+		m.requestPruneStateSave()
 	}
 
 	// Build AppStatus list by merging registry apps with observed state
@@ -1024,23 +1024,7 @@ func (m *Manager) handleAPIAppLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy logs from agent using TCP link
-	stream, status, err := m.streamAgent(nodeName, common.LinkReqAppLogs, common.AppLogsPayload{AppID: appID})
-	if err != nil {
-		// Send error as SSE event
-		w.Write([]byte("data: Error connecting to agent: " + err.Error() + "\n\n"))
-		flusher.Flush()
-		return
-	}
-
-	if status != http.StatusOK {
-		_ = stream.Close()
-		w.Write([]byte(fmt.Sprintf("data: Agent returned error: HTTP %d\n\n", status)))
-		flusher.Flush()
-		return
-	}
-
-	if err := m.pipeLineStream(r.Context(), stream, func(line string) bool {
+	if err := m.streamAgentAppLogsPolling(r.Context(), nodeName, appID, func(line string) bool {
 		fmt.Fprintf(w, "data: %s\n\n", line)
 		flusher.Flush()
 		return true

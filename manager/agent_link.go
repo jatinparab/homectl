@@ -20,6 +20,12 @@ import (
 
 const agentLinkPort = 1339
 
+const (
+	agentRequestTimeout     = 10 * time.Second
+	agentStreamFirstTimeout = 10 * time.Second
+	agentHeavyStreamTimeout = 2 * time.Minute
+)
+
 type agentLinkPeer struct {
 	name string
 	ip   string
@@ -31,6 +37,26 @@ type agentLinkPeer struct {
 	writeMu   sync.Mutex
 	pendingMu sync.Mutex
 	pending   map[string]chan common.LinkMessage
+}
+
+func (peer *agentLinkPeer) removePending(id string, ch chan common.LinkMessage) {
+	peer.pendingMu.Lock()
+	defer peer.pendingMu.Unlock()
+	current, ok := peer.pending[id]
+	if !ok || current != ch {
+		return
+	}
+	delete(peer.pending, id)
+	close(ch)
+}
+
+func (peer *agentLinkPeer) closeAllPending() {
+	peer.pendingMu.Lock()
+	defer peer.pendingMu.Unlock()
+	for id, ch := range peer.pending {
+		delete(peer.pending, id)
+		close(ch)
+	}
 }
 
 func (m *Manager) StartAgentTCPServer() error {
@@ -90,6 +116,7 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 			delete(m.agentLinks, peer.name)
 		}
 		m.linkMu.Unlock()
+		peer.closeAllPending()
 	}()
 
 	for {
@@ -100,17 +127,18 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 
 		if msg.Type == common.LinkTypeResponse {
 			peer.pendingMu.Lock()
-			ch := peer.pending[msg.ID]
-			if msg.Done {
-				delete(peer.pending, msg.ID)
-			}
-			peer.pendingMu.Unlock()
-			if ch != nil {
+			ch, ok := peer.pending[msg.ID]
+			if ok {
 				select {
 				case ch <- msg:
 				default:
 				}
+				if msg.Done {
+					delete(peer.pending, msg.ID)
+					close(ch)
+				}
 			}
+			peer.pendingMu.Unlock()
 			continue
 		}
 
@@ -236,12 +264,12 @@ func (peer *agentLinkPeer) send(msg common.LinkMessage) error {
 	return peer.enc.Encode(msg)
 }
 
-func (m *Manager) requestAgent(agentName string, req common.LinkMessage, waitFirst time.Duration) (<-chan common.LinkMessage, error) {
+func (m *Manager) requestAgent(agentName string, req common.LinkMessage) (chan common.LinkMessage, *agentLinkPeer, string, error) {
 	m.linkMu.RLock()
 	peer := m.agentLinks[agentName]
 	m.linkMu.RUnlock()
 	if peer == nil {
-		return nil, fmt.Errorf("agent %s link unavailable", agentName)
+		return nil, nil, "", fmt.Errorf("agent %s link unavailable", agentName)
 	}
 
 	if req.ID == "" {
@@ -255,32 +283,11 @@ func (m *Manager) requestAgent(agentName string, req common.LinkMessage, waitFir
 	peer.pendingMu.Unlock()
 
 	if err := peer.send(req); err != nil {
-		peer.pendingMu.Lock()
-		delete(peer.pending, req.ID)
-		peer.pendingMu.Unlock()
-		return nil, err
+		peer.removePending(req.ID, ch)
+		return nil, nil, "", err
 	}
 
-	if waitFirst > 0 {
-		select {
-		case first := <-ch:
-			buffered := make(chan common.LinkMessage, 256)
-			buffered <- first
-			go func() {
-				for msg := range ch {
-					buffered <- msg
-				}
-			}()
-			return buffered, nil
-		case <-time.After(waitFirst):
-			peer.pendingMu.Lock()
-			delete(peer.pending, req.ID)
-			peer.pendingMu.Unlock()
-			return nil, fmt.Errorf("agent request timeout")
-		}
-	}
-
-	return ch, nil
+	return ch, peer, req.ID, nil
 }
 
 func (m *Manager) requestAgentUnary(ctx context.Context, agentID string, requestType common.LinkRequestType, payload any) (int, []byte, error) {
@@ -288,19 +295,37 @@ func (m *Manager) requestAgentUnary(ctx context.Context, agentID string, request
 	if err != nil {
 		return 0, nil, err
 	}
-	ch, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
+	ch, peer, reqID, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw})
 	if err != nil {
 		return 0, nil, err
 	}
+	defer peer.removePending(reqID, ch)
 
 	select {
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
-	case msg := <-ch:
+	case <-time.After(agentRequestTimeout):
+		return 0, nil, fmt.Errorf("agent request timeout")
+	case msg, ok := <-ch:
+		if !ok {
+			return 0, nil, fmt.Errorf("agent link closed")
+		}
 		if msg.Error != "" {
 			return msg.Status, nil, fmt.Errorf("%s", msg.Error)
 		}
 		return msg.Status, msg.Body, nil
+	}
+}
+
+func firstMessageTimeoutForRequest(requestType common.LinkRequestType) time.Duration {
+	switch requestType {
+	case common.LinkReqAppLogs,
+		common.LinkReqContainerLogs,
+		common.LinkReqRepoCheckLogs,
+		common.LinkReqRepoUnlockLogs:
+		return agentHeavyStreamTimeout
+	default:
+		return agentStreamFirstTimeout
 	}
 }
 
@@ -309,13 +334,25 @@ func (m *Manager) streamAgent(agentID string, requestType common.LinkRequestType
 	if err != nil {
 		return nil, 0, err
 	}
-	ch, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw}, 10*time.Second)
+	ch, peer, reqID, err := m.requestAgent(agentID, common.LinkMessage{RequestType: requestType, Payload: raw})
 	if err != nil {
 		return nil, 0, err
 	}
 
-	first := <-ch
+	var first common.LinkMessage
+	firstTimeout := firstMessageTimeoutForRequest(requestType)
+	select {
+	case msg, ok := <-ch:
+		if !ok {
+			return nil, 0, fmt.Errorf("agent link closed")
+		}
+		first = msg
+	case <-time.After(firstTimeout):
+		peer.removePending(reqID, ch)
+		return nil, 0, fmt.Errorf("agent request timeout")
+	}
 	if first.Status != http.StatusOK {
+		peer.removePending(reqID, ch)
 		if first.Error != "" {
 			return nil, first.Status, fmt.Errorf("%s", first.Error)
 		}
@@ -325,6 +362,7 @@ func (m *Manager) streamAgent(agentID string, requestType common.LinkRequestType
 	pr, pw := io.Pipe()
 	go func() {
 		defer pw.Close()
+		defer peer.removePending(reqID, ch)
 		if len(first.Body) > 0 {
 			_, _ = pw.Write(first.Body)
 		}
