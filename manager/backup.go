@@ -37,6 +37,8 @@ type BackupAssignment struct {
 // It resolves state transitions for in-flight assignments and may create new
 // backup or prune assignments when allowed.
 func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssignment, prune *BackupAssignment) {
+	m.cleanupBackupStateLocked()
+
 	for appID, a := range m.backupAssignments {
 		busy := m.isAppBackupBusy(a.AgentID, a.AppID)
 		if !a.BackupStarted && busy {
@@ -127,6 +129,40 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 	}
 
 	return m.backupAssignments, m.pruneAssignment
+}
+
+// cleanupBackupStateLocked prunes stale bookkeeping entries.
+// Must be called with backupMu held.
+func (m *Manager) cleanupBackupStateLocked() {
+	validApps := make(map[common.AppID]bool)
+	for _, app := range m.appRegistry.ListAll() {
+		validApps[app.ID] = true
+	}
+
+	knownAgents := make(map[string]bool)
+	for _, agent := range m.leaseManager.ListAgents() {
+		knownAgents[agent.Name] = true
+	}
+
+	for appID := range m.pruneState {
+		if !validApps[appID] {
+			delete(m.pruneState, appID)
+		}
+	}
+	for appID, pending := range m.pendingGlobalRestores {
+		if !validApps[appID] {
+			delete(m.pendingGlobalRestores, appID)
+			continue
+		}
+		for agentID := range pending {
+			if !knownAgents[agentID] {
+				delete(pending, agentID)
+			}
+		}
+		if len(pending) == 0 {
+			delete(m.pendingGlobalRestores, appID)
+		}
+	}
 }
 
 // findStaleBackupApps returns all running+healthy apps with stale backup data.
@@ -409,7 +445,7 @@ func (m *Manager) appPruneAtNewer(agentID string, appID common.AppID, than time.
 		if report.AppID == appID {
 			if report.LastPruneAt.After(than) {
 				m.pruneState[appID] = PruneState{LastPruneAt: report.LastPruneAt, LastPruneError: report.LastPruneError}
-				go m.savePruneState()
+				m.requestPruneStateSave()
 				return true
 			}
 			return false

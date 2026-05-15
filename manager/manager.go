@@ -67,6 +67,8 @@ type Manager struct {
 	lastScheduledWorkKind string
 	pendingGlobalRestores map[common.AppID]map[string]bool // appID -> agents needing restore
 	pruneState            map[common.AppID]PruneState
+	pruneStateSaving      bool
+	pruneStateSavePending bool
 
 	// Repo-wide maintenance (restic check/unlock), coordinated via gateway node.
 	repoMu                      sync.Mutex

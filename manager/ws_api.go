@@ -88,28 +88,72 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	// Single writer goroutine — all writes go through writeCh.
-	writeCh := make(chan any, 256)
+	// Single writer goroutine.
+	// stateCh is conflated (latest snapshot wins), streamCh preserves stream order.
+	stateCh := make(chan any, 1)
+	streamCh := make(chan any, 256)
 	var writeWg sync.WaitGroup
 	writeWg.Add(1)
-	go func() {
-		defer writeWg.Done()
-		for msg := range writeCh {
-			if err := conn.WriteJSON(msg); err != nil {
-				cancel()
-				return
-			}
-		}
-	}()
 
-	safeSend := func(msg any) bool {
+	safeSendStream := func(msg any) bool {
 		select {
-		case writeCh <- msg:
+		case streamCh <- msg:
 			return true
 		case <-ctx.Done():
 			return false
 		}
 	}
+	safeSendState := func(msg any) bool {
+		select {
+		case stateCh <- msg:
+			return true
+		default:
+			// Replace queued state snapshot with the latest.
+			select {
+			case <-stateCh:
+			default:
+			}
+			select {
+			case stateCh <- msg:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	go func() {
+		defer writeWg.Done()
+		for {
+			select {
+			case msg, ok := <-streamCh:
+				if !ok {
+					streamCh = nil
+					continue
+				}
+				if err := conn.WriteJSON(msg); err != nil {
+					cancel()
+					return
+				}
+			case msg, ok := <-stateCh:
+				if !ok {
+					stateCh = nil
+					continue
+				}
+				if err := conn.WriteJSON(msg); err != nil {
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+			if streamCh == nil && stateCh == nil {
+				return
+			}
+		}
+	}()
 
 	// Subscription registry.
 	type subEntry struct{ cancel context.CancelFunc }
@@ -166,7 +210,7 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 				subCtx, subCancel := context.WithCancel(ctx)
 				addSub(msg.ID, subCancel)
 				subWg.Add(1)
-				go m.handleSubscription(subCtx, msg.ID, msg.Stream, params, safeSend, &subWg)
+				go m.handleSubscription(subCtx, msg.ID, msg.Stream, params, safeSendStream, &subWg)
 			case "unsubscribe":
 				if msg.ID != "" {
 					cancelSub(msg.ID)
@@ -185,7 +229,8 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 		case <-ctx.Done():
 			cancelAllSubs()
 			subWg.Wait()
-			close(writeCh)
+			close(stateCh)
+			close(streamCh)
 			writeWg.Wait()
 			return
 		case <-ticker.C:
@@ -194,7 +239,8 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 				if ctx.Err() != nil {
 					cancelAllSubs()
 					subWg.Wait()
-					close(writeCh)
+					close(stateCh)
+					close(streamCh)
 					writeWg.Wait()
 					return
 				}
@@ -202,7 +248,7 @@ func (m *Manager) handleAPIWebSocketState(w http.ResponseWriter, r *http.Request
 				continue
 			}
 			if hash != lastHash {
-				if safeSend(msg) {
+				if safeSendState(msg) {
 					lastHash = hash
 				}
 			}
@@ -247,8 +293,15 @@ func (m *Manager) streamAppLogsWS(ctx context.Context, id string, params map[str
 		m.sendStreamError(send, id, err.Error())
 		return
 	}
-	payload := common.AppLogsPayload{AppID: appID}
-	m.forwardAgentStream(ctx, id, node, common.LinkReqAppLogs, payload, send)
+	if err := m.streamAgentAppLogsPolling(ctx, node, appID, func(line string) bool {
+		return send(wsStreamMsg{Type: "stream", ID: id, Line: line})
+	}); err != nil && ctx.Err() == nil {
+		m.sendStreamError(send, id, "stream error: "+err.Error())
+		return
+	}
+	if ctx.Err() == nil {
+		send(wsStreamMsg{Type: "stream", ID: id, Done: true})
+	}
 }
 
 func (m *Manager) streamPhaseLogsWS(ctx context.Context, id string, params map[string]string, send func(wsStreamMsg) bool) {

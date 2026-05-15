@@ -15,10 +15,32 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsRef = useRef<string[]>([]);
+  const pendingRef = useRef<string[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     logsRef.current = logs;
   }, [logs]);
+
+  const flushPending = useCallback(() => {
+    flushTimerRef.current = null;
+    if (pendingRef.current.length === 0) return;
+    const chunk = pendingRef.current;
+    pendingRef.current = [];
+    setLogs((prev) => {
+      const next = [...prev, ...chunk];
+      return next.length > 500 ? next.slice(-500) : next;
+    });
+  }, []);
+
+  const enqueueLine = useCallback(
+    (line: string) => {
+      pendingRef.current.push(line);
+      if (flushTimerRef.current != null) return;
+      flushTimerRef.current = window.setTimeout(flushPending, 80);
+    },
+    [flushPending],
+  );
 
   const streamEnabled = isOpen && !!node && !!appId;
   const streamParams = useMemo(() => {
@@ -28,6 +50,11 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
 
   useEffect(() => {
     if (!streamEnabled) {
+      if (flushTimerRef.current != null) {
+        window.clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      pendingRef.current = [];
       setLogs([]);
       setError(null);
       setConnected(false);
@@ -39,27 +66,22 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
 
   const handleStream = useCallback(
     (line: string, _source?: string, done?: boolean) => {
-      let shouldShowError = false;
       if (line) {
-        setLogs((prev) => {
-          if (done && prev.length === 0) {
-            shouldShowError = true;
-          }
-          return [...prev.slice(-499), line];
-        });
-        if (shouldShowError) {
-          setError(line);
-        }
+        enqueueLine(line);
       }
       if (done) {
+        flushPending();
         setConnected(false);
+        if (line && logsRef.current.length === 0) {
+          setError(line);
+        }
         if (!line && logsRef.current.length === 0) {
           setError("log stream ended with no output");
         }
         return;
       }
     },
-    [],
+    [enqueueLine, flushPending],
   );
 
   useStreamSubscription(
@@ -88,7 +110,6 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
       setIsAtBottom(true);
     }
   };
-  console.log(logs);
   return (
     <div
       className={`fixed right-0 top-0 h-full w-1/2 bg-white border-l border-[#e2ddd7] transform transition-transform duration-300 ${

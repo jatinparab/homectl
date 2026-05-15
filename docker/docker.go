@@ -506,8 +506,23 @@ func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
 	return nil
 }
 
-// Stop gracefully stops and removes a docker compose application (SIGTERM with 60s timeout).
+// Stop gracefully stops a docker compose application without removing containers.
 func (d *Docker) Stop(appID string) error {
+	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("docker compose file not found: %s", path)
+	}
+	command := exec.Command("docker", "compose", "-f", path, "stop", "-t", "60")
+	command.Env = d.ComposeEnv()
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to run docker compose stop: %s", string(output))
+	}
+	return nil
+}
+
+// Down gracefully stops and removes docker compose resources.
+func (d *Docker) Down(appID string) error {
 	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)

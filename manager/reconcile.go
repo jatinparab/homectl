@@ -318,7 +318,16 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 		}
 
 		reconcileLog.Info("Migrating app from quarantined agent", "app", app.ID, "from", oldAgent, "to", target)
-		app.QuarantinedOn = append(app.QuarantinedOn, oldAgent)
+		seen := false
+		for _, node := range app.QuarantinedOn {
+			if node == oldAgent {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			app.QuarantinedOn = append(app.QuarantinedOn, oldAgent)
+		}
 		app.AssignedAgent = &target
 		app.Quarantined = false // clear so the new agent gets a fresh start
 		app.LastMigratedAt = now
