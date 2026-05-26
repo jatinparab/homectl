@@ -57,6 +57,7 @@ Type=simple
 User=jatin
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${SECRETS_FILE}
+EnvironmentFile=-/etc/homectl/agent.env
 ExecStart=${INSTALL_DIR}/bin/agent
 Restart=always
 RestartSec=10
