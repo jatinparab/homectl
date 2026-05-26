@@ -78,12 +78,12 @@ func NewConfig() *Config {
 	return &Config{
 		managerURL: "http://10.42.1.100:1338",
 		agents: map[string]AgentConfig{
-			"k8s-node-1": {
-				Name:          "k8s-node-1",
+			"akira": {
+				Name:          "akira",
 				IP:            "10.42.1.101",
 				User:          "jatin",
-				AppdataDir:    "/mnt/ssd-512/homectl/storage",
-				DockerRootDir: "/mnt/ssd-512/homectl/docker",
+				AppdataDir:    "/home/jatin/homectl/storage",
+				DockerRootDir: "/home/jatin/homectl/docker",
 			},
 			"rpi-1": {
 				Name:          "rpi-1",
