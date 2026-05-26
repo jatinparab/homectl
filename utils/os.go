@@ -3,6 +3,7 @@ package utils
 import (
 	"net"
 	"os"
+	"strings"
 )
 
 func GetHostname() string {
@@ -14,7 +15,34 @@ func GetHostname() string {
 }
 
 func GetLocalIP() string {
+	if ip := strings.TrimSpace(os.Getenv("HOMECTL_AGENT_IP")); ip != "" {
+		return ip
+	}
+	if iface := strings.TrimSpace(os.Getenv("HOMECTL_AGENT_INTERFACE")); iface != "" {
+		if ip := GetLocalIPForInterface(iface); ip != "" {
+			return ip
+		}
+	}
 	return GetLocalIPInSubnet("192.168.1")
+}
+
+func GetLocalIPForInterface(interfaceName string) string {
+	iface, err := net.InterfaceByName(interfaceName)
+	if err != nil || iface.Flags&net.FlagUp == 0 {
+		return ""
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ip4 := ipnet.IP.To4(); ip4 != nil {
+				return ip4.String()
+			}
+		}
+	}
+	return ""
 }
 
 func GetLocalIPInSubnet(subnetPrefix string) string {
