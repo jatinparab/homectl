@@ -20,6 +20,9 @@ func main() {
 	if err := utils.LoadEnv(".env"); err != nil {
 		slog.Info("Warning: failed to load .env", "err", err)
 	}
+	if err := utils.LoadEnv("/etc/homectl/secrets.env"); err != nil {
+		slog.Info("Warning: failed to load manager secrets", "err", err)
+	}
 
 	hostname := utils.GetHostname()
 	logger.Init("manager", hostname)
@@ -48,6 +51,7 @@ func main() {
 	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
 	mgr.SetReconcileCancel(reconcileCancel)
 	mgr.StartReconcileLoop(reconcileCtx)
+	mgr.StartPublicRouteLoop(reconcileCtx)
 
 	// Start server in goroutine
 	server := mgr.NewServer()

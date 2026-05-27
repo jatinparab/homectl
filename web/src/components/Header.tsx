@@ -1,10 +1,11 @@
-export type Tab = "dashboard" | "backups" | "storage" | "containers"
+export type Tab = "dashboard" | "backups" | "storage" | "containers" | "routing"
 
 const TAB_PATHS: Record<Tab, string> = {
   dashboard: "/",
   backups: "/backups",
   storage: "/storage",
   containers: "/containers",
+  routing: "/routing",
 }
 
 const PATH_TABS: Record<string, Tab> = {
@@ -12,6 +13,7 @@ const PATH_TABS: Record<string, Tab> = {
   "/backups": "backups",
   "/storage": "storage",
   "/containers": "containers",
+  "/routing": "routing",
 }
 
 export function tabFromPath(path: string): Tab {
@@ -33,6 +35,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "backups", label: "Backups" },
   { id: "storage", label: "Storage" },
   { id: "containers", label: "Containers" },
+  { id: "routing", label: "Routing" },
 ]
 
 export function Header({ activeTab, onTabChange }: HeaderProps) {

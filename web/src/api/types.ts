@@ -210,3 +210,28 @@ export interface GatewayInfo {
   manual_node?: string;
   is_manual: boolean;
 }
+
+export type PublicRouteMode = "homelab" | "custom";
+
+export interface PublicRouteHealth {
+  working: boolean;
+  status: string;
+  checked_at?: string;
+  last_error?: string;
+  resolved_to?: string;
+  http_status?: number;
+  response_ms?: number;
+  request_count: number;
+  response_bytes: number;
+}
+
+export interface PublicRoute {
+  id: string;
+  host: string;
+  mode: PublicRouteMode;
+  custom_target?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  health: PublicRouteHealth;
+}

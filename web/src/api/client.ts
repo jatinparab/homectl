@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, GatewayInfo, NodeContainers, RepoStatus, SnapshotCacheResponse, SnapshotEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, GatewayInfo, NodeContainers, PublicRoute, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -199,6 +199,54 @@ export async function triggerRepoUnlock(): Promise<void> {
 
 export async function fetchGatewayInfo(): Promise<GatewayInfo> {
   return fetchJSON<GatewayInfo>(`${API_BASE}/gateway`);
+}
+
+export async function fetchPublicRoutes(): Promise<PublicRoute[]> {
+  return fetchJSON<PublicRoute[]>(`${API_BASE}/public-routes`);
+}
+
+export interface PublicRouteInput {
+  host: string;
+  mode: PublicRouteMode;
+  custom_target?: string;
+  enabled: boolean;
+}
+
+export async function createPublicRoute(route: PublicRouteInput): Promise<PublicRoute[]> {
+  const response = await fetch(`${API_BASE}/public-routes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(route),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function updatePublicRoute(id: string, route: PublicRouteInput): Promise<PublicRoute[]> {
+  const response = await fetch(`${API_BASE}/public-routes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(route),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deletePublicRoute(id: string): Promise<PublicRoute[]> {
+  const response = await fetch(`${API_BASE}/public-routes/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function setManualGateway(node: string): Promise<GatewayInfo> {

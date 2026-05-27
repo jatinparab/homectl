@@ -59,15 +59,18 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/repo/force-unlock", m.handleAPIRepoForceUnlock)
 	mux.HandleFunc("/api/v1/repo/unlock-logs", m.handleAPIRepoUnlockLogs)
 	mux.HandleFunc("/api/v1/gateway", m.handleAPIGateway)
+	mux.HandleFunc("/api/v1/public-routes", m.handleAPIPublicRoutes)
+	mux.HandleFunc("/api/v1/public-routes/", m.handleAPIPublicRoute)
 	mux.HandleFunc("/api/v1/storage", m.handleAPIStorage)
 	mux.HandleFunc("/api/v1/storage/prune", m.handleAPIStoragePrune)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
 
+	handler := m.requirePublicHostBasicAuth(mux)
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", m.port),
-		Handler: mux,
+		Handler: handler,
 	}
 }
 
@@ -341,7 +344,7 @@ func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dockerDir := filepath.Join(m.repoDir, "docker", "v2")
+	dockerDir := filepath.Join(m.repoDir, "docker")
 	if _, err := os.Stat(dockerDir); os.IsNotExist(err) {
 		http.Error(w, "Docker directory not found", http.StatusNotFound)
 		return
