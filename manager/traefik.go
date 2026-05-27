@@ -104,11 +104,11 @@ type TraefikServer struct {
 	URL string `yaml:"url"`
 }
 
-// loadAppConfigs loads homectl-config.json files from docker/v2 directories
+// loadAppConfigs loads homectl-config.json files from docker directories
 func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	configs := make(map[string]HomectlConfig)
 
-	dockerV2Dir := filepath.Join(m.repoDir, "docker", "v2")
+	dockerV2Dir := filepath.Join(m.repoDir, "docker")
 	entries, err := os.ReadDir(dockerV2Dir)
 	if err != nil {
 		traefikMgrLog.Error("Failed to read docker/v2 directory", "err", err)

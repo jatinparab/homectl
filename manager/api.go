@@ -1735,3 +1735,145 @@ func (m *Manager) handleAPIGateway(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+func (m *Manager) handleAPIPublicRoutes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(m.publicRouteStatuses())
+	case http.MethodPost:
+		var route PublicRoute
+		if err := json.NewDecoder(r.Body).Decode(&route); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		now := time.Now()
+		route.Host = normalizePublicRouteHost(route.Host)
+		if route.Mode == "" {
+			route.Mode = PublicRouteModeHomelab
+		}
+		route.ID = publicRouteID(route.Host)
+		route.CreatedAt = now
+		route.UpdatedAt = now
+		if err := validatePublicRoute(route); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		m.publicRoutesMu.Lock()
+		for _, existing := range m.publicRoutes {
+			if existing.Host == route.Host {
+				m.publicRoutesMu.Unlock()
+				http.Error(w, "route already exists", http.StatusConflict)
+				return
+			}
+		}
+		m.publicRoutes = normalizePublicRouteList(append(m.publicRoutes, route))
+		if err := m.savePublicRoutesLocked(); err != nil {
+			m.publicRoutesMu.Unlock()
+			http.Error(w, "failed to save route", http.StatusInternalServerError)
+			return
+		}
+		m.publicRoutesMu.Unlock()
+		if err := m.SyncCaddyConfig(); err != nil {
+			apiLog.Warn("Failed to sync Caddy after route create", "err", err)
+		}
+		m.refreshPublicRouteHealth(r.Context())
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(m.publicRouteStatuses())
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (m *Manager) handleAPIPublicRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/public-routes/"), "/")
+	if id == "" {
+		http.Error(w, "route ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var update PublicRoute
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		update.Host = normalizePublicRouteHost(update.Host)
+		if update.Mode == "" {
+			update.Mode = PublicRouteModeHomelab
+		}
+		if err := validatePublicRoute(update); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		m.publicRoutesMu.Lock()
+		found := false
+		for i := range m.publicRoutes {
+			if m.publicRoutes[i].ID != id {
+				if m.publicRoutes[i].Host == update.Host {
+					m.publicRoutesMu.Unlock()
+					http.Error(w, "route already exists", http.StatusConflict)
+					return
+				}
+				continue
+			}
+			update.ID = id
+			update.CreatedAt = m.publicRoutes[i].CreatedAt
+			update.UpdatedAt = time.Now()
+			m.publicRoutes[i] = update
+			found = true
+		}
+		if !found {
+			m.publicRoutesMu.Unlock()
+			http.Error(w, "route not found", http.StatusNotFound)
+			return
+		}
+		m.publicRoutes = normalizePublicRouteList(m.publicRoutes)
+		if err := m.savePublicRoutesLocked(); err != nil {
+			m.publicRoutesMu.Unlock()
+			http.Error(w, "failed to save route", http.StatusInternalServerError)
+			return
+		}
+		m.publicRoutesMu.Unlock()
+		if err := m.SyncCaddyConfig(); err != nil {
+			apiLog.Warn("Failed to sync Caddy after route update", "err", err)
+		}
+		m.refreshPublicRouteHealth(r.Context())
+		json.NewEncoder(w).Encode(m.publicRouteStatuses())
+	case http.MethodDelete:
+		m.publicRoutesMu.Lock()
+		next := m.publicRoutes[:0]
+		found := false
+		for _, route := range m.publicRoutes {
+			if route.ID == id {
+				found = true
+				delete(m.routeHealth, id)
+				continue
+			}
+			next = append(next, route)
+		}
+		if !found {
+			m.publicRoutesMu.Unlock()
+			http.Error(w, "route not found", http.StatusNotFound)
+			return
+		}
+		m.publicRoutes = next
+		if err := m.savePublicRoutesLocked(); err != nil {
+			m.publicRoutesMu.Unlock()
+			http.Error(w, "failed to save route", http.StatusInternalServerError)
+			return
+		}
+		m.publicRoutesMu.Unlock()
+		if err := m.SyncCaddyConfig(); err != nil {
+			apiLog.Warn("Failed to sync Caddy after route delete", "err", err)
+		}
+		json.NewEncoder(w).Encode(m.publicRouteStatuses())
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}

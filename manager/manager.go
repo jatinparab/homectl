@@ -28,6 +28,7 @@ func InitLoggers() {
 	gitLog = slog.Default().With("area", "git")
 	leaseLog = slog.Default().With("area", "lease")
 	pruneStateLog = slog.Default().With("area", "backup")
+	publicRouteLog = slog.Default().With("area", "public-routes")
 	reconcileLog = slog.Default().With("area", "reconcile")
 	repoMgrLog = slog.Default().With("area", "repo")
 	repoStateLog = slog.Default().With("area", "repo")
@@ -85,6 +86,10 @@ type Manager struct {
 	manualGatewayNode string // User-selected gateway (overrides automatic selection)
 	gatewayMu         sync.Mutex
 
+	publicRoutesMu sync.RWMutex
+	publicRoutes   []PublicRoute
+	routeHealth    map[string]PublicRouteHealth
+
 	linkMu      sync.RWMutex
 	agentLinks  map[string]*agentLinkPeer // by agent name
 	tcpListener net.Listener
@@ -115,10 +120,12 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		backupAssignments:     make(map[common.AppID]*BackupAssignment),
 		pendingGlobalRestores: make(map[common.AppID]map[string]bool),
 		pruneState:            make(map[common.AppID]PruneState),
+		routeHealth:           make(map[string]PublicRouteHealth),
 		agentLinks:            make(map[string]*agentLinkPeer),
 	}
 	mgr.loadRepoState()
 	mgr.loadPruneState()
+	mgr.loadPublicRoutes()
 	return mgr
 }
 
@@ -329,15 +336,15 @@ func (m *Manager) saveManualAssignments() {
 	}
 }
 
-// DiscoverApps scans docker/v2 subdirectories for apps and registers them.
+// DiscoverApps scans docker subdirectories for apps and registers them.
 // By default, traefik and adguard have DesiredRunning state, others have DesiredStopped.
 // Persisted state from the UI overrides defaults. The Register method is idempotent
 // so repeated calls are safe.
 func (m *Manager) DiscoverApps() {
-	dockerV2Dir := filepath.Join(m.repoDir, "docker", "v2")
-	entries, err := os.ReadDir(dockerV2Dir)
+	dockerDir := filepath.Join(m.repoDir, "docker")
+	entries, err := os.ReadDir(dockerDir)
 	if err != nil {
-		managerLog.Error("Failed to read docker/v2 directory for app discovery", "err", err)
+		managerLog.Error("Failed to read docker directory for app discovery", "err", err)
 		return
 	}
 

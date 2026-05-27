@@ -13,6 +13,7 @@ import type {
   AppStatus,
   GatewayInfo,
   NodeContainers,
+  PublicRoute,
   RepoStatus,
   StorageStatus,
   UpcomingBackup,
@@ -30,6 +31,7 @@ interface LiveStatePayload {
   upcoming_prune: UpcomingPrune | null;
   repo_status: RepoStatus;
   gateway: GatewayInfo;
+  public_routes: PublicRoute[];
 }
 
 // Stream subscription callback — line is "" when done is true.

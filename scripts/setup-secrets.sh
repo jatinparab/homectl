@@ -8,7 +8,7 @@ NODE_IP="${1:?Usage: $0 <node_ip> [secrets_file]}"
 SECRETS_FILE="${2:-./secrets.env}"
 REMOTE_PATH="/etc/homectl/secrets.env"
 
-if [ ! -f "$SECRETS_FILE" ]; then
+if [ ! -f "$SECRETS_FILE" ]; 
     echo "Secrets file not found: $SECRETS_FILE"
     echo ""
     echo "Create a secrets.env file with:"

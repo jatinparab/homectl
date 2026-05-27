@@ -15,8 +15,11 @@ import {
   updateAppRestoreEnabled,
   setManualGateway,
   clearManualGateway,
+  createPublicRoute,
+  deletePublicRoute,
   forceRepoUnlock,
   reassignApp,
+  updatePublicRoute,
   clearReassignment,
 } from "./client";
 import { useLiveState } from "./live";
@@ -74,6 +77,10 @@ export function useRepoStatus() {
 
 export function useGatewayInfo() {
   return useLiveSlice((payload) => payload.gateway);
+}
+
+export function usePublicRoutes() {
+  return useLiveSlice((payload) => payload.public_routes);
 }
 
 export function useRestartApp() {
@@ -167,6 +174,21 @@ export function useClearManualGateway() {
 
 export function useForceRepoUnlock() {
   return useMutation({ mutationFn: forceRepoUnlock });
+}
+
+export function useCreatePublicRoute() {
+  return useMutation({ mutationFn: createPublicRoute });
+}
+
+export function useUpdatePublicRoute() {
+  return useMutation({
+    mutationFn: ({ id, route }: { id: string; route: Parameters<typeof updatePublicRoute>[1] }) =>
+      updatePublicRoute(id, route),
+  });
+}
+
+export function useDeletePublicRoute() {
+  return useMutation({ mutationFn: deletePublicRoute });
 }
 
 export function useTriggerStoragePrune() {

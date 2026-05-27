@@ -27,6 +27,7 @@ type liveStatePayload struct {
 	UpcomingPrune   *UpcomingPruneInfo  `json:"upcoming_prune"`
 	RepoStatus      RepoStatusResponse  `json:"repo_status"`
 	Gateway         GatewayInfo         `json:"gateway"`
+	PublicRoutes    []PublicRouteStatus `json:"public_routes"`
 }
 
 type liveStateMessage struct {
@@ -491,6 +492,9 @@ func (m *Manager) buildLiveStateMessage(ctx context.Context) (liveStateMessage, 
 		return liveStateMessage{}, "", err
 	}
 	if err := m.invokeJSONEndpoint(ctx, "/api/v1/gateway", m.handleAPIGateway, &payload.Gateway); err != nil {
+		return liveStateMessage{}, "", err
+	}
+	if err := m.invokeJSONEndpoint(ctx, "/api/v1/public-routes", m.handleAPIPublicRoutes, &payload.PublicRoutes); err != nil {
 		return liveStateMessage{}, "", err
 	}
 

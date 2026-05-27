@@ -8,6 +8,7 @@ import { ContainersPage } from './components/ContainersPage'
 import { ContainerLogPanel } from './components/ContainerLogPanel'
 import { BackupsPage } from './components/BackupsPage'
 import { StoragePage } from './components/StoragePage'
+import { RoutingPage } from './components/RoutingPage'
 import { LogPanel } from './components/LogPanel'
 import { AppDetailPage } from './components/AppDetailPage'
 
@@ -125,6 +126,7 @@ function App() {
       {!appDetailId && activeTab === "backups" && <BackupsPage apps={apps} />}
       {!appDetailId && activeTab === "storage" && <StoragePage />}
       {!appDetailId && activeTab === "containers" && <ContainersPage onShowLogs={handleShowContainerLogs} />}
+      {!appDetailId && activeTab === "routing" && <RoutingPage />}
 
       {/* Sticky system log panel */}
       <SystemLogViewer
