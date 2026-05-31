@@ -72,14 +72,18 @@ func (m *Manager) savePruneState() {
 // background writer to avoid unbounded goroutine creation under heartbeat load.
 func (m *Manager) requestPruneStateSave() {
 	m.backupMu.Lock()
+	m.requestPruneStateSaveLocked()
+	m.backupMu.Unlock()
+}
+
+// requestPruneStateSaveLocked is requestPruneStateSave for callers that
+// already hold backupMu.
+func (m *Manager) requestPruneStateSaveLocked() {
 	if m.pruneStateSaving {
 		m.pruneStateSavePending = true
-		m.backupMu.Unlock()
 		return
 	}
 	m.pruneStateSaving = true
-	m.backupMu.Unlock()
-
 	go func() {
 		for {
 			m.savePruneState()

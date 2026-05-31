@@ -398,6 +398,75 @@ func TestLeastLoadedExcluding(t *testing.T) {
 	}
 }
 
+func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
+	mgr := NewManager(t.TempDir(), 1338)
+	defer mgr.Stop()
+
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+		healthyReport("traefik"),
+	}, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+		healthyReport("traefik"),
+		healthyReport("adguard"),
+	}, common.NodeMetrics{})
+
+	mgr.gatewayNode = "node1"
+	mgr.resolveGateway()
+
+	if mgr.gatewayNode != "node2" {
+		t.Fatalf("expected gateway node2, got %s", mgr.gatewayNode)
+	}
+}
+
+func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
+	mgr := NewManager(t.TempDir(), 1338)
+	defer mgr.Stop()
+
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+		healthyReport("traefik"),
+		healthyReport("adguard"),
+	}, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+		healthyReport("traefik"),
+		healthyReport("adguard"),
+	}, common.NodeMetrics{})
+
+	mgr.gatewayNode = "node2"
+	mgr.resolveGateway()
+
+	if mgr.gatewayNode != "node2" {
+		t.Fatalf("expected current preferred gateway node2 to remain selected, got %s", mgr.gatewayNode)
+	}
+}
+
+func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
+	mgr := NewManager(t.TempDir(), 1338)
+	defer mgr.Stop()
+
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+		healthyReport("traefik"),
+	}, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+		healthyReport("traefik"),
+		healthyReport("adguard"),
+	}, common.NodeMetrics{})
+
+	mgr.manualGatewayNode = "node1"
+	mgr.resolveGateway()
+
+	if mgr.gatewayNode != "node1" {
+		t.Fatalf("expected manual gateway node1, got %s", mgr.gatewayNode)
+	}
+}
+
+func healthyReport(appID common.AppID) common.AppReport {
+	return common.AppReport{
+		AppID:         appID,
+		ObservedState: common.ObservedRunning,
+		Health:        common.HealthHealthy,
+	}
+}
+
 func TestReconcileOnce_FullIntegration(t *testing.T) {
 	// Set up a manager with a lease manager and app registry
 	cfg := Config{

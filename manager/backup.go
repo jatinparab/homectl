@@ -445,7 +445,7 @@ func (m *Manager) appPruneAtNewer(agentID string, appID common.AppID, than time.
 		if report.AppID == appID {
 			if report.LastPruneAt.After(than) {
 				m.pruneState[appID] = PruneState{LastPruneAt: report.LastPruneAt, LastPruneError: report.LastPruneError}
-				m.requestPruneStateSave()
+				m.requestPruneStateSaveLocked()
 				return true
 			}
 			return false

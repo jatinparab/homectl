@@ -453,6 +453,12 @@ func (m *Manager) requirePublicHostBasicAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Public API routes are consumed by the browser directly, including the
+		// websocket dashboard stream. Keep auth on the UI surface, not the API.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		user := os.Getenv("ADMIN_USER")
 		pass := os.Getenv("ADMIN_PASSWORD")
 		if user == "" || pass == "" {
