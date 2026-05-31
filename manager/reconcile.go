@@ -67,7 +67,8 @@ func (m *Manager) reconcileOnce(now time.Time) {
 }
 
 // resolveGateway picks one online agent with traefik running+healthy as the gateway node.
-// If a manual gateway is set and valid, uses it. Otherwise it scans for a new one automatically.
+// It prefers candidates that also report adguard running+healthy. If a manual
+// gateway is set and valid, uses it.
 func (m *Manager) resolveGateway() {
 	m.gatewayMu.Lock()
 	oldGateway := m.gatewayNode
@@ -91,27 +92,16 @@ func (m *Manager) resolveGateway() {
 		reconcileLog.Warn("Gateway: manual selection no longer valid, falling back to automatic", "node", m.manualGatewayNode)
 	}
 
-	// Check if current gateway is still valid
-	if m.gatewayNode != "" && m.gatewayNode != m.manualGatewayNode {
-		if m.isTraefikHealthy(m.gatewayNode) {
-			return
+	selected := m.selectGatewayCandidate()
+	if selected != "" {
+		old := m.gatewayNode
+		m.gatewayNode = selected
+		if old == "" {
+			reconcileLog.Info("Gateway: assigned", "node", selected)
+		} else if old != selected {
+			reconcileLog.Info("Gateway: transitioned", "from", old, "to", selected)
 		}
-		reconcileLog.Warn("Gateway: node no longer valid, scanning for new gateway", "node", m.gatewayNode)
-	}
-
-	// Scan all online agents for one with traefik running+healthy
-	agents := m.leaseManager.ListAgents()
-	for _, agent := range agents {
-		if m.isTraefikHealthy(agent.Name) {
-			old := m.gatewayNode
-			m.gatewayNode = agent.Name
-			if old == "" {
-				reconcileLog.Info("Gateway: assigned", "node", agent.Name)
-			} else if old != agent.Name {
-				reconcileLog.Info("Gateway: transitioned", "from", old, "to", agent.Name)
-			}
-			return
-		}
+		return
 	}
 
 	// No valid gateway found
@@ -119,6 +109,46 @@ func (m *Manager) resolveGateway() {
 		reconcileLog.Warn("Gateway: no valid candidate, clearing", "was", m.gatewayNode)
 		m.gatewayNode = ""
 	}
+}
+
+func (m *Manager) selectGatewayCandidate() string {
+	agents := m.leaseManager.ListAgents()
+	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
+
+	bestName := ""
+	bestRank := 0
+	for _, agent := range agents {
+		rank := m.gatewayCandidateRank(agent.Name)
+		if rank > bestRank {
+			bestName = agent.Name
+			bestRank = rank
+		}
+	}
+	if bestRank == 0 {
+		return ""
+	}
+
+	if m.gatewayNode != "" && m.gatewayNode != m.manualGatewayNode {
+		currentRank := m.gatewayCandidateRank(m.gatewayNode)
+		if currentRank == bestRank {
+			return m.gatewayNode
+		}
+		if currentRank == 0 {
+			reconcileLog.Warn("Gateway: node no longer valid, scanning for new gateway", "node", m.gatewayNode)
+		}
+	}
+
+	return bestName
+}
+
+func (m *Manager) gatewayCandidateRank(agentName string) int {
+	if !m.isTraefikHealthy(agentName) {
+		return 0
+	}
+	if m.isAgentAppHealthy(agentName, "adguard") {
+		return 2
+	}
+	return 1
 }
 
 // restartNewtOnGatewayChange restarts newt when gateway ownership changes.
@@ -184,6 +214,10 @@ func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
 
 // isTraefikHealthy checks if an agent reports traefik as running+healthy.
 func (m *Manager) isTraefikHealthy(agentName string) bool {
+	return m.isAgentAppHealthy(agentName, "traefik")
+}
+
+func (m *Manager) isAgentAppHealthy(agentName string, appID common.AppID) bool {
 	agent, ok := m.leaseManager.GetAgent(agentName)
 	if !ok {
 		return false
@@ -192,7 +226,7 @@ func (m *Manager) isTraefikHealthy(agentName string) bool {
 		return false
 	}
 	for _, report := range agent.AppReports {
-		if report.AppID == "traefik" && report.ObservedState == common.ObservedRunning && report.Health == common.HealthHealthy {
+		if report.AppID == appID && report.ObservedState == common.ObservedRunning && report.Health == common.HealthHealthy {
 			return true
 		}
 	}

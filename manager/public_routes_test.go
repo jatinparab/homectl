@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +62,54 @@ func TestGenerateManagerCaddyfileRoutesCustomWithoutHostOverride(t *testing.T) {
 	assertContains(t, caddyfile, "reverse_proxy https://example.com {")
 	if strings.Contains(caddyfile, "header_up Host {host}") {
 		t.Fatalf("custom route should not override upstream Host header:\n%s", caddyfile)
+	}
+}
+
+func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_PASSWORD", "secret")
+
+	m := NewManager(t.TempDir(), 1338)
+	called := false
+	handler := m.requirePublicHostBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "https://homectl.sulphurgfx.com/api/v1/ws/state", nil)
+	req.Host = "homectl.sulphurgfx.com"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if !called {
+		t.Fatal("expected API request to bypass basic auth")
+	}
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rr.Code)
+	}
+}
+
+func TestRequirePublicHostBasicAuthProtectsUIPaths(t *testing.T) {
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_PASSWORD", "secret")
+
+	m := NewManager(t.TempDir(), 1338)
+	handler := m.requirePublicHostBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("UI request should not bypass basic auth")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "https://homectl.sulphurgfx.com/", nil)
+	req.Host = "homectl.sulphurgfx.com"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("WWW-Authenticate"); got != `Basic realm="homectl"` {
+		t.Fatalf("expected WWW-Authenticate header, got %q", got)
 	}
 }
 
