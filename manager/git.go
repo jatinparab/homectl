@@ -11,19 +11,28 @@ import (
 
 var gitLog = slog.With("area", "git")
 
-// GitSync performs a git pull to sync the repository
+// GitSync syncs the repository checkout to its configured remote upstream.
 func (m *Manager) GitSync() error {
 	if err := m.ensureGitCheckout(); err != nil {
 		return err
 	}
 
-	cmd := exec.Command("git", "-C", m.repoDir, "pull", "--ff-only")
-	output, err := cmd.CombinedOutput()
+	target, err := m.remoteSyncTarget()
 	if err != nil {
-		return fmt.Errorf("git pull failed: %s, output: %s", err, string(output))
+		return err
 	}
 
-	gitLog.Debug("Git sync completed", "output", strings.TrimSpace(string(output)))
+	if output, err := gitCommand("-C", m.repoDir, "fetch", "--prune").CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch failed: %s, output: %s", err, string(output))
+	}
+	if output, err := gitCommand("-C", m.repoDir, "reset", "--hard", target).CombinedOutput(); err != nil {
+		return fmt.Errorf("git reset failed: %s, output: %s", err, string(output))
+	}
+	if output, err := gitCommand("-C", m.repoDir, "clean", "-fdx").CombinedOutput(); err != nil {
+		return fmt.Errorf("git clean failed: %s, output: %s", err, string(output))
+	}
+
+	gitLog.Debug("Git sync completed", "target", target)
 
 	// Decrypt secrets after sync (.env.enc → .env files)
 	decryptScript := filepath.Join(m.repoDir, "scripts", "decrypt-secrets")
@@ -51,7 +60,7 @@ func (m *Manager) ensureGitCheckout() error {
 		if err := os.MkdirAll(parent, 0755); err != nil {
 			return err
 		}
-		cmd := exec.Command("git", "clone", repoURL, m.repoDir)
+		cmd := gitCommand("clone", repoURL, m.repoDir)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("git clone failed: %s, output: %s", err, string(output))
@@ -65,4 +74,60 @@ func (m *Manager) ensureGitCheckout() error {
 		return fmt.Errorf("not a git repository: %s", m.repoDir)
 	}
 	return nil
+}
+
+func (m *Manager) remoteSyncTarget() (string, error) {
+	output, err := gitCommand("-C", m.repoDir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}").CombinedOutput()
+	if err == nil {
+		target := strings.TrimSpace(string(output))
+		if target != "" {
+			return target, nil
+		}
+	}
+
+	branchOutput, branchErr := gitCommand("-C", m.repoDir, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if branchErr != nil {
+		return "", fmt.Errorf("git upstream lookup failed: %s, output: %s", err, string(output))
+	}
+	branch := strings.TrimSpace(string(branchOutput))
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("git upstream lookup failed: no upstream configured and checkout is detached")
+	}
+
+	return "origin/" + branch, nil
+}
+
+func gitCommand(args ...string) *exec.Cmd {
+	gitArgs := make([]string, 0, len(args)+4)
+	if gitToken() != "" {
+		gitArgs = append(gitArgs,
+			"-c", "credential.helper=!f() { echo username=${HOMECTL_GIT_USERNAME:-x-access-token}; echo password=$HOMECTL_GIT_TOKEN; }; f",
+		)
+	}
+	gitArgs = append(gitArgs, args...)
+
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = gitEnv()
+	return cmd
+}
+
+func gitEnv() []string {
+	env := os.Environ()
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+
+	token := gitToken()
+	if token != "" && os.Getenv("HOMECTL_GIT_TOKEN") == "" {
+		env = append(env, "HOMECTL_GIT_TOKEN="+token)
+	}
+
+	return env
+}
+
+func gitToken() string {
+	for _, name := range []string{"HOMECTL_GIT_TOKEN", "HOMECTL_GITHUB_TOKEN", "GITHUB_TOKEN"} {
+		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+			return token
+		}
+	}
+	return ""
 }
