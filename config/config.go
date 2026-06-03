@@ -22,6 +22,7 @@ const (
 	StateDir           = ConfigDir + "/state"
 	AgentDockerRootDir = ConfigDir + "/docker"
 	CaddyDir           = ConfigDir + "/caddy"
+	CrowdSecDir        = ConfigDir + "/crowdsec"
 	WireGuardDir       = ConfigDir + "/wg"
 	KeepalivedDir      = ConfigDir + "/keepalived"
 )

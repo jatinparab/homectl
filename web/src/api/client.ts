@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, GatewayInfo, NodeContainers, PublicRoute, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, CrowdSecDecision, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, GatewayInfo, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -203,6 +203,63 @@ export async function fetchGatewayInfo(): Promise<GatewayInfo> {
 
 export async function fetchPublicRoutes(): Promise<PublicRoute[]> {
   return fetchJSON<PublicRoute[]>(`${API_BASE}/public-routes`);
+}
+
+export async function fetchPublicRouteLogs(filters: {
+  host?: string;
+  ip?: string;
+  limit?: number;
+}): Promise<PublicRouteAccessLogEntry[]> {
+  const params = new URLSearchParams();
+  if (filters.host?.trim()) params.set("host", filters.host.trim());
+  if (filters.ip?.trim()) params.set("ip", filters.ip.trim());
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const query = params.toString();
+  return fetchJSON<PublicRouteAccessLogEntry[]>(`${API_BASE}/public-route-logs${query ? `?${query}` : ""}`);
+}
+
+export async function fetchCrowdSecLogs(limit = 300): Promise<CrowdSecLogEntry[]> {
+  return fetchJSON<CrowdSecLogEntry[]>(`${API_BASE}/crowdsec/logs?limit=${limit}`);
+}
+
+export async function fetchCrowdSecStatus(): Promise<CrowdSecStatus> {
+  return fetchJSON<CrowdSecStatus>(`${API_BASE}/crowdsec/status`);
+}
+
+export async function fetchCrowdSecMetrics(): Promise<CrowdSecMetrics> {
+  return fetchJSON<CrowdSecMetrics>(`${API_BASE}/crowdsec/metrics`);
+}
+
+export async function fetchCrowdSecDecisions(): Promise<CrowdSecDecision[]> {
+  return fetchJSON<CrowdSecDecision[]>(`${API_BASE}/crowdsec/bans`);
+}
+
+export async function addCrowdSecDecision(input: {
+  ip: string;
+  duration: string;
+  reason: string;
+}): Promise<CrowdSecDecision[]> {
+  const response = await fetch(`${API_BASE}/crowdsec/bans`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteCrowdSecDecision(id: number): Promise<CrowdSecDecision[]> {
+  const response = await fetch(`${API_BASE}/crowdsec/bans/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
 }
 
 export interface PublicRouteInput {

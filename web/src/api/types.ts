@@ -235,3 +235,67 @@ export interface PublicRoute {
   updated_at: string;
   health: PublicRouteHealth;
 }
+
+export interface PublicRouteAccessLogEntry {
+  timestamp: string;
+  host: string;
+  client_ip: string;
+  method: string;
+  uri: string;
+  protocol: string;
+  status: number;
+  size: number;
+  duration: number;
+  user_agent?: string;
+}
+
+export interface CrowdSecDecision {
+  id?: number;
+  scope: string;
+  value: string;
+  type: string;
+  origin?: string;
+  scenario?: string;
+  reason?: string;
+  duration?: string;
+  until?: string;
+  as_name?: string;
+  as_number?: string;
+  country?: string;
+  source_range?: string;
+  event_count: number;
+  start_at?: string;
+  stop_at?: string;
+}
+
+export interface CrowdSecMetrics {
+  acquisition_lines_read: number;
+  acquisition_lines_parsed: number;
+  acquisition_lines_pour: number;
+  alerts_count: number;
+  active_bans: number;
+  active_scenarios: number;
+  parser_hits_total: number;
+  parser_parsed_total: number;
+}
+
+export interface CrowdSecLogEntry {
+  timestamp?: string;
+  source: string;
+  level?: string;
+  message: string;
+  raw: string;
+}
+
+export interface CrowdSecStatus {
+  state: string;
+  step: string;
+  message?: string;
+  error?: string;
+  config_ready: boolean;
+  hub_ready: boolean;
+  engine_running: boolean;
+  bouncer_ready: boolean;
+  caddy_integrated: boolean;
+  updated_at: string;
+}

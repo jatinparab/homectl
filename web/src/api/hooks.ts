@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  addCrowdSecDecision,
   fetchSnapshotFiles,
+  fetchCrowdSecDecisions,
+  fetchCrowdSecLogs,
+  fetchCrowdSecMetrics,
+  fetchCrowdSecStatus,
+  fetchPublicRouteLogs,
   fetchSnapshots,
   refreshSnapshots,
   restartApp,
@@ -17,6 +23,7 @@ import {
   clearManualGateway,
   createPublicRoute,
   deletePublicRoute,
+  deleteCrowdSecDecision,
   forceRepoUnlock,
   reassignApp,
   updatePublicRoute,
@@ -81,6 +88,66 @@ export function useGatewayInfo() {
 
 export function usePublicRoutes() {
   return useLiveSlice((payload) => payload.public_routes);
+}
+
+export function usePublicRouteLogs() {
+  return useQuery({
+    queryKey: ["public-route-logs"],
+    queryFn: () => fetchPublicRouteLogs({ limit: 500 }),
+    refetchInterval: 5000,
+  });
+}
+
+export function useCrowdSecLogs() {
+  return useQuery({
+    queryKey: ["crowdsec-logs"],
+    queryFn: () => fetchCrowdSecLogs(300),
+    refetchInterval: 5000,
+  });
+}
+
+export function useCrowdSecStatus() {
+  return useQuery({
+    queryKey: ["crowdsec-status"],
+    queryFn: fetchCrowdSecStatus,
+    refetchInterval: 2000,
+  });
+}
+
+export function useCrowdSecMetrics() {
+  return useQuery({
+    queryKey: ["crowdsec-metrics"],
+    queryFn: fetchCrowdSecMetrics,
+    refetchInterval: 10000,
+  });
+}
+
+export function useCrowdSecDecisions() {
+  return useQuery({
+    queryKey: ["crowdsec-decisions"],
+    queryFn: fetchCrowdSecDecisions,
+    refetchInterval: 5000,
+  });
+}
+
+export function useAddCrowdSecDecision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: addCrowdSecDecision,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["crowdsec-decisions"], data);
+    },
+  });
+}
+
+export function useDeleteCrowdSecDecision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteCrowdSecDecision,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["crowdsec-decisions"], data);
+    },
+  });
 }
 
 export function useRestartApp() {
