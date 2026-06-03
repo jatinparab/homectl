@@ -65,6 +65,7 @@ func main() {
 	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
 	mgr.SetReconcileCancel(reconcileCancel)
 	mgr.StartReconcileLoop(reconcileCtx)
+	mgr.StartCrowdSecBootstrap(reconcileCtx)
 	mgr.StartPublicRouteLoop(reconcileCtx)
 
 	// Wait for interrupt signal

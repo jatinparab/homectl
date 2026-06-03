@@ -9,6 +9,7 @@ import { ContainerLogPanel } from './components/ContainerLogPanel'
 import { BackupsPage } from './components/BackupsPage'
 import { StoragePage } from './components/StoragePage'
 import { RoutingPage } from './components/RoutingPage'
+import { CrowdSecPage } from './components/CrowdSecPage'
 import { LogPanel } from './components/LogPanel'
 import { AppDetailPage } from './components/AppDetailPage'
 
@@ -127,6 +128,7 @@ function App() {
       {!appDetailId && activeTab === "storage" && <StoragePage />}
       {!appDetailId && activeTab === "containers" && <ContainersPage onShowLogs={handleShowContainerLogs} />}
       {!appDetailId && activeTab === "routing" && <RoutingPage />}
+      {!appDetailId && activeTab === "crowdsec" && <CrowdSecPage />}
 
       {/* Sticky system log panel */}
       <SystemLogViewer

@@ -28,6 +28,7 @@ func InitLoggers() {
 	leaseLog = slog.Default().With("area", "lease")
 	pruneStateLog = slog.Default().With("area", "backup")
 	publicRouteLog = slog.Default().With("area", "public-routes")
+	crowdSecLog = slog.Default().With("area", "crowdsec")
 	reconcileLog = slog.Default().With("area", "reconcile")
 	repoMgrLog = slog.Default().With("area", "repo")
 	repoStateLog = slog.Default().With("area", "repo")
@@ -89,6 +90,9 @@ type Manager struct {
 	publicRoutesMu sync.RWMutex
 	publicRoutes   []PublicRoute
 	routeHealth    map[string]PublicRouteHealth
+
+	crowdSecMu     sync.RWMutex
+	crowdSecStatus CrowdSecStatus
 
 	linkMu      sync.RWMutex
 	agentLinks  map[string]*agentLinkPeer // by agent name
@@ -211,6 +215,7 @@ func (m *Manager) Stop() {
 	}
 	m.waitForPruneStateSaves()
 	stopCaddy()
+	stopCrowdSec()
 }
 
 func (m *Manager) waitForPruneStateSaves() {

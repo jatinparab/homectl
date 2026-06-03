@@ -27,8 +27,9 @@ const (
 	PublicRouteModeHomelab = "homelab"
 	PublicRouteModeCustom  = "custom"
 
-	homectlLocalhostAlias = "homectl-localhost"
-	managerLocalhostAlias = "manager-localhost"
+	homectlLocalhostAlias  = "homectl-localhost"
+	managerLocalhostAlias  = "manager-localhost"
+	publicRouteLogsAPIPath = "/api/v1/public-route-logs"
 )
 
 var publicRouteHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -58,6 +59,19 @@ type PublicRouteHealth struct {
 type PublicRouteStatus struct {
 	PublicRoute
 	Health PublicRouteHealth `json:"health"`
+}
+
+type PublicRouteAccessLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Host      string    `json:"host"`
+	ClientIP  string    `json:"client_ip"`
+	Method    string    `json:"method"`
+	URI       string    `json:"uri"`
+	Protocol  string    `json:"protocol"`
+	Status    int       `json:"status"`
+	Size      uint64    `json:"size"`
+	Duration  float64   `json:"duration"`
+	UserAgent string    `json:"user_agent,omitempty"`
 }
 
 func (m *Manager) publicRoutesPath() string {
@@ -412,6 +426,18 @@ func (m *Manager) GenerateManagerCaddyfile() (string, error) {
 	if email := strings.TrimSpace(os.Getenv("CADDY_ACME_EMAIL")); email != "" {
 		fmt.Fprintf(&b, "\temail %s\n", email)
 	}
+	crowdSecKey := crowdSecBouncerKey()
+	if crowdSecKey != "" {
+		b.WriteString("\tcrowdsec {\n")
+		b.WriteString("\t\tapi_url http://127.0.0.1:8080\n")
+		fmt.Fprintf(&b, "\t\tapi_key %s\n", crowdSecKey)
+		b.WriteString("\t\tticker_interval 10s\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tservers {\n")
+		b.WriteString("\t\ttrusted_proxies static private_ranges\n")
+		b.WriteString("\t\tclient_ip_headers X-Forwarded-For X-Real-IP\n")
+		b.WriteString("\t}\n")
+	}
 	b.WriteString("}\n\n")
 
 	writeAccessLog := func() {
@@ -425,7 +451,14 @@ func (m *Manager) GenerateManagerCaddyfile() (string, error) {
 
 	fmt.Fprintf(&b, "%s {\n", publicHost)
 	writeAccessLog()
-	b.WriteString("\treverse_proxy 127.0.0.1:1338\n")
+	if crowdSecKey != "" {
+		b.WriteString("\troute {\n")
+		b.WriteString("\t\tcrowdsec\n")
+		b.WriteString("\t\treverse_proxy 127.0.0.1:1338\n")
+		b.WriteString("\t}\n")
+	} else {
+		b.WriteString("\treverse_proxy 127.0.0.1:1338\n")
+	}
 	b.WriteString("}\n\n")
 
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
@@ -446,13 +479,30 @@ func (m *Manager) GenerateManagerCaddyfile() (string, error) {
 
 		fmt.Fprintf(&b, "%s {\n", route.Host)
 		writeAccessLog()
-		fmt.Fprintf(&b, "\treverse_proxy %s {\n", target)
-		if route.Mode == PublicRouteModeHomelab {
-			b.WriteString("\t\theader_up Host {host}\n")
-			b.WriteString("\t\theader_up X-Forwarded-Host {host}\n")
-			fmt.Fprintf(&b, "\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n", route.Host)
+		if crowdSecKey != "" {
+			b.WriteString("\troute {\n")
+			b.WriteString("\t\tcrowdsec\n")
+			fmt.Fprintf(&b, "\t\treverse_proxy %s {\n", target)
+		} else {
+			fmt.Fprintf(&b, "\treverse_proxy %s {\n", target)
 		}
-		b.WriteString("\t}\n")
+		if route.Mode == PublicRouteModeHomelab {
+			if crowdSecKey != "" {
+				b.WriteString("\t\t\theader_up Host {host}\n")
+				b.WriteString("\t\t\theader_up X-Forwarded-Host {host}\n")
+				fmt.Fprintf(&b, "\t\t\ttransport http {\n\t\t\t\ttls_server_name %s\n\t\t\t}\n", route.Host)
+			} else {
+				b.WriteString("\t\theader_up Host {host}\n")
+				b.WriteString("\t\theader_up X-Forwarded-Host {host}\n")
+				fmt.Fprintf(&b, "\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n", route.Host)
+			}
+		}
+		if crowdSecKey != "" {
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t}\n")
+		} else {
+			b.WriteString("\t}\n")
+		}
 		b.WriteString("}\n\n")
 	}
 
@@ -495,6 +545,114 @@ func (m *Manager) readPublicRouteStats() map[string]routeStats {
 		stats[host] = stat
 	}
 	return stats
+}
+
+func (m *Manager) readPublicRouteAccessLogs(hostFilter, ipFilter string, limit int) []PublicRouteAccessLogEntry {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	hostFilter = normalizePublicRouteHost(hostFilter)
+	ipFilter = strings.ToLower(strings.TrimSpace(ipFilter))
+
+	path := managerCaddyAccessLogPath()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	entries := make([]PublicRouteAccessLogEntry, 0, limit)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		entry, ok := parsePublicRouteAccessLogLine(scanner.Bytes())
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(entry.URI, publicRouteLogsAPIPath) {
+			continue
+		}
+		if hostFilter != "" && !strings.Contains(entry.Host, hostFilter) {
+			continue
+		}
+		if ipFilter != "" && !strings.Contains(strings.ToLower(entry.ClientIP), ipFilter) {
+			continue
+		}
+		entries = append(entries, entry)
+		if len(entries) > limit {
+			copy(entries, entries[1:])
+			entries = entries[:limit]
+		}
+	}
+
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return entries
+}
+
+func parsePublicRouteAccessLogLine(line []byte) (PublicRouteAccessLogEntry, bool) {
+	var raw struct {
+		Timestamp json.Number `json:"ts"`
+		Request   struct {
+			ClientIP string              `json:"client_ip"`
+			RemoteIP string              `json:"remote_ip"`
+			Proto    string              `json:"proto"`
+			Method   string              `json:"method"`
+			Host     string              `json:"host"`
+			URI      string              `json:"uri"`
+			Headers  map[string][]string `json:"headers"`
+		} `json:"request"`
+		Duration float64 `json:"duration"`
+		Size     uint64  `json:"size"`
+		Status   int     `json:"status"`
+	}
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return PublicRouteAccessLogEntry{}, false
+	}
+	host := normalizePublicRouteHost(raw.Request.Host)
+	if host == "" {
+		return PublicRouteAccessLogEntry{}, false
+	}
+	clientIP := strings.TrimSpace(raw.Request.ClientIP)
+	if clientIP == "" {
+		clientIP = strings.TrimSpace(raw.Request.RemoteIP)
+	}
+	entry := PublicRouteAccessLogEntry{
+		Timestamp: parseCaddyLogTimestamp(raw.Timestamp),
+		Host:      host,
+		ClientIP:  clientIP,
+		Method:    raw.Request.Method,
+		URI:       raw.Request.URI,
+		Protocol:  raw.Request.Proto,
+		Status:    raw.Status,
+		Size:      raw.Size,
+		Duration:  raw.Duration,
+		UserAgent: firstHeaderValue(raw.Request.Headers, "User-Agent"),
+	}
+	return entry, true
+}
+
+func parseCaddyLogTimestamp(value json.Number) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	seconds, err := value.Float64()
+	if err != nil {
+		return time.Time{}
+	}
+	whole := int64(seconds)
+	nanos := int64((seconds - float64(whole)) * 1_000_000_000)
+	return time.Unix(whole, nanos).UTC()
+}
+
+func firstHeaderValue(headers map[string][]string, name string) string {
+	for key, values := range headers {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
 }
 
 func (m *Manager) requirePublicHostBasicAuth(next http.Handler) http.Handler {
