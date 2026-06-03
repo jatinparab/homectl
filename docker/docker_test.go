@@ -2,6 +2,7 @@ package docker
 
 import (
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 )
@@ -118,5 +119,33 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 
 	if len(apps) != 2 {
 		t.Errorf("expected 2 apps, got %d", len(apps))
+	}
+}
+
+func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
+	rootDir := filepath.Join("..", "testdata", "docker", "v2")
+	d := NewDocker(rootDir, "/appdata", "root")
+	d.SetComposeExtraArgs([]string{"-f", "docker-compose.gpu.yml", "--profile", "gpu"})
+
+	cmd := d.ComposeCommand("adguard", "up", "-d")
+	wantArgs := []string{
+		"docker",
+		"compose",
+		"-f",
+		filepath.Join(rootDir, "adguard", "docker-compose.yml"),
+		"-f",
+		"docker-compose.gpu.yml",
+		"--profile",
+		"gpu",
+		"up",
+		"-d",
+	}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("cmd.Args = %#v, want %#v", cmd.Args, wantArgs)
+	}
+
+	wantDir := filepath.Join(rootDir, "adguard")
+	if cmd.Dir != wantDir {
+		t.Fatalf("cmd.Dir = %q, want %q", cmd.Dir, wantDir)
 	}
 }

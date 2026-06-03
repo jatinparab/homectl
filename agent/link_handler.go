@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/jatinparab/homectl/common"
@@ -153,9 +152,7 @@ func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) <-chan common.L
 		if err != nil || payload.AppID == "" {
 			return errMsg(http.StatusBadRequest, "invalid app logs payload")
 		}
-		composePath := filepath.Join(a.dockerRootDir, payload.AppID, "docker-compose.yml")
-		cmd := exec.Command("docker", "compose", "-f", composePath, "logs", "--tail="+defaultAppLogsTailLines, "--no-log-prefix=false")
-		cmd.Env = a.docker.ComposeEnv()
+		cmd := a.docker.ComposeCommand(payload.AppID, "logs", "--tail="+defaultAppLogsTailLines, "--no-log-prefix=false")
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil && len(strings.TrimSpace(string(out))) == 0 {
 			return errMsg(http.StatusInternalServerError, fmt.Sprintf("%s: %s", cmdErr, strings.TrimSpace(string(out))))
