@@ -78,10 +78,10 @@ func (c HomectlConfig) GetBackupInterval() time.Duration {
 func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	configs := make(map[string]HomectlConfig)
 
-	dockerV2Dir := filepath.Join(m.repoDir, "docker")
-	entries, err := os.ReadDir(dockerV2Dir)
+	dockerDir := filepath.Join(m.repoDir, "docker")
+	entries, err := os.ReadDir(dockerDir)
 	if err != nil {
-		caddyMgrLog.Error("Failed to read docker/v2 directory", "err", err)
+		caddyMgrLog.Error("Failed to read docker directory", "err", err)
 		return configs
 	}
 
@@ -91,7 +91,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 		}
 
 		appName := entry.Name()
-		configPath := filepath.Join(dockerV2Dir, appName, "homectl-config.json")
+		configPath := filepath.Join(dockerDir, appName, "homectl-config.json")
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
