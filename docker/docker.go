@@ -601,7 +601,7 @@ func firstLine(b []byte) string {
 
 // ComposeEnv returns the environment variables for docker compose commands
 func (d *Docker) ComposeEnv() []string {
-	env := os.Environ()
+	env := withoutEnvKey(os.Environ(), "APPDATA")
 	env = append(env, "APPDATA="+d.appdataDir)
 
 	// Get current user's UID
@@ -610,6 +610,18 @@ func (d *Docker) ComposeEnv() []string {
 	}
 
 	return env
+}
+
+func withoutEnvKey(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (d *Docker) RunDockerComposeUp(service string) error {

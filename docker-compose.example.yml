@@ -8,7 +8,6 @@ services:
       HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
       HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
       HOMECTL_GIT_TOKEN: github_pat_xxx
-      HOMECTL_REPO_DIR: /opt/homectl/repo
       HOMECTL_DOMAIN_SUFFIX: your-domain.example
       HOMECTL_PUBLIC_HOST: homectl.your-domain.example
       CADDY_ACME_EMAIL: you@example.com
@@ -28,4 +27,4 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/homectl:/opt/homectl
+      - /opt/homectl/config:/config

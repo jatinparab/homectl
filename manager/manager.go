@@ -107,8 +107,8 @@ func NewManager(repoDir string, port int) *Manager {
 
 // NewManagerWithConfig creates a new Manager instance with custom config
 func NewManagerWithConfig(cfg Config) *Manager {
-	stateDir := os.Getenv("HOMECTL_STATE_DIR")
-	if stateDir == "" {
+	stateDir := config.StateDir
+	if cfg.RepoDir != "" && cfg.RepoDir != config.RepoDir {
 		stateDir = filepath.Join(cfg.RepoDir, ".homectl")
 	}
 	mgr := &Manager{

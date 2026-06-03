@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,8 +54,13 @@ type Agent struct {
 	agentConfig      Config
 	managerClient    *client.Client
 	managerURL       string
+	bootstrapURL     string
+	wireGuardReady   bool
+	bootstrapMu      sync.Mutex
 	dockerRootDir    string // Local directory for docker compose files
 	appdataDir       string // Local directory for app data
+	appdataHostDir   string // Host path mounted at appdataDir, passed to Docker Compose
+	stateDir         string // Local directory for homectl-owned agent state
 	user             string // User for docker compose commands
 	composeExtraArgs []string
 
@@ -108,7 +114,7 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent instance
-func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string, composeExtraArgs []string) *Agent {
+func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, bootstrapURL string, wireGuardReady bool, appdataHostDir, user string, composeExtraArgs []string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
 	a := &Agent{
 		name:              name,
@@ -116,14 +122,18 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		config:            cfg,
 		agentConfig:       agentCfg,
 		managerURL:        managerURL,
-		dockerRootDir:     dockerRootDir,
-		appdataDir:        appdataDir,
+		bootstrapURL:      bootstrapURL,
+		wireGuardReady:    wireGuardReady,
+		dockerRootDir:     config.AgentDockerRootDir,
+		appdataDir:        config.AppDataDir,
+		appdataHostDir:    appdataHostDir,
+		stateDir:          config.StateDir,
 		user:              user,
 		composeExtraArgs:  append([]string(nil), composeExtraArgs...),
 		managerClient:     client.NewClient(managerURL),
 		runtime:           make(map[common.AppID]*AppRuntime),
 		assignedApps:      make(map[common.AppID]bool),
-		restic:            NewRepoRestic(appdataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true"),
+		restic:            NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true"),
 		stopChan:          make(chan struct{}),
 		sensorCtx:         sensorCtx,
 		sensorCancel:      sensorCancel,
@@ -157,41 +167,47 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 	if hostCfg == nil {
 		return nil, fmt.Errorf("agent config not found for hostname: %s", hostname)
 	}
+	appdataHostDir, err := resolveSelfBindMountSource(config.AppDataDir)
+	if err != nil {
+		return nil, err
+	}
 
 	managerURL := cfg.GetManagerURL()
+	bootstrapURL := os.Getenv("HOMECTL_MANAGER_URL")
 	agentName := hostCfg.Name
+	wireGuardReady := false
 	if tok := strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")); tok != "" {
-		bootstrap, err := bootstrapWireGuard(agentName, os.Getenv("HOMECTL_MANAGER_URL"))
+		bootstrap, err := bootstrapWireGuard(agentName, bootstrapURL)
 		if err != nil {
 			agentLog.Warn("WireGuard bootstrap failed, continuing without overlay", "err", err)
 		} else {
 			agentName = bootstrap.AgentName
 			ip = bootstrap.AgentIP
 			managerURL = bootstrap.ManagerURL
+			wireGuardReady = true
 			hostCfg.IP = ip
 		}
 	}
 
 	// Bootstrap keepalived VIP if configured
 	if haIP := os.Getenv("HOMECTL_LOCAL_HA_IP"); haIP != "" {
-		configDir := os.Getenv("HOMECTL_HACONFIG_DIR")
-		if configDir == "" {
-			configDir = "/opt/homectl/keepalived"
-		}
-		hostConfigDir := os.Getenv("HOMECTL_HACONFIG_HOST_DIR")
-		if hostConfigDir == "" {
-			hostConfigDir = configDir
-		}
-		if err := keepalived.Ensure(configDir, hostConfigDir, haIP); err != nil {
-			agentLog.Error("Failed to start keepalived container", "err", err)
+		hostConfigRoot, err := resolveSelfBindMountSource(config.ConfigDir)
+		if err != nil {
+			agentLog.Error("Failed to resolve /config host path for keepalived", "err", err)
 		} else {
-			agentLog.Info("Keepalived container ensured", "vip", haIP)
+			configDir := config.KeepalivedDir
+			hostConfigDir := filepath.Join(hostConfigRoot, "keepalived")
+			if err := keepalived.Ensure(configDir, hostConfigDir, haIP); err != nil {
+				agentLog.Error("Failed to start keepalived container", "err", err)
+			} else {
+				agentLog.Info("Keepalived container ensured", "vip", haIP)
+			}
 		}
 	}
 
-	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User, hostCfg.ComposeExtraArgs)
+	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, bootstrapURL, wireGuardReady, appdataHostDir, hostCfg.User, hostCfg.ComposeExtraArgs)
 
-	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User, "composeExtraArgs", hostCfg.ComposeExtraArgs)
+	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", config.AgentDockerRootDir, "appdataDir", config.AppDataDir, "appdataHostDir", appdataHostDir, "user", hostCfg.User, "composeExtraArgs", hostCfg.ComposeExtraArgs)
 
 	// Try to connect and load apps (best-effort)
 	agent.tryConnect()
@@ -201,6 +217,8 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 
 // tryConnect attempts to connect to the manager and sync docker configs
 func (a *Agent) tryConnect() {
+	a.retryWireGuardBootstrap()
+
 	if !a.managerClient.IsConnected() {
 		if err := a.managerClient.Connect(a.agentConfig.ConnectionTimeout); err != nil {
 			agentLog.Info("Manager TCP link unavailable (will retry)", "url", a.managerURL, "err", err)
@@ -225,6 +243,26 @@ func (a *Agent) tryConnect() {
 	agentLog.Info("Connected to manager over TCP", "url", a.managerURL)
 }
 
+func (a *Agent) retryWireGuardBootstrap() {
+	a.bootstrapMu.Lock()
+	defer a.bootstrapMu.Unlock()
+	if a.wireGuardReady || strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")) == "" || strings.TrimSpace(a.bootstrapURL) == "" {
+		return
+	}
+	bootstrap, err := bootstrapWireGuard(a.name, a.bootstrapURL)
+	if err != nil {
+		agentLog.Info("WireGuard bootstrap unavailable (will retry)", "err", err)
+		return
+	}
+	a.name = bootstrap.AgentName
+	a.ip = bootstrap.AgentIP
+	a.managerURL = bootstrap.ManagerURL
+	a.wireGuardReady = true
+	a.managerClient.SetIdentity(a.name, a.ip)
+	a.managerClient.SetBaseURL(a.managerURL)
+	agentLog.Info("WireGuard bootstrap succeeded", "name", a.name, "ip", a.ip, "managerURL", a.managerURL)
+}
+
 // SyncConfigs pulls docker configs from the manager and reloads apps.
 func (a *Agent) SyncConfigs() error {
 	agentLog.Info("Syncing docker configs", "dir", a.dockerRootDir)
@@ -234,7 +272,7 @@ func (a *Agent) SyncConfigs() error {
 	agentLog.Info("Docker configs synced successfully")
 
 	// Create Docker instance using local files
-	d := docker.NewDocker(a.dockerRootDir, a.appdataDir, a.user)
+	d := docker.NewDocker(a.dockerRootDir, a.appdataHostDir, a.user)
 	d.SetComposeExtraArgs(a.composeExtraArgs)
 	d.SetContext(a.sensorCtx)
 	if err := d.LoadApps(); err != nil {
@@ -260,7 +298,7 @@ func (a *Agent) SyncConfigs() error {
 
 	// Initialize Caddy sync if not already done
 	if a.caddySync == nil {
-		a.caddySync = NewCaddySync(a.appdataDir, a.name, a.managerClient)
+		a.caddySync = NewCaddySync(config.CaddyDir, a.name, a.managerClient)
 	}
 
 	return nil
