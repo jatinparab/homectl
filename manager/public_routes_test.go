@@ -94,7 +94,7 @@ func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 	assertContains(t, caddyfile, "@route0 host photos.example.net photos.internal.example.net")
 	assertContains(t, caddyfile, "import homectl_tls")
 	assertContains(t, caddyfile, "dns cloudflare {env.CLOUDFLARE_API_TOKEN}")
-	assertContains(t, caddyfile, "reverse_proxy http://172.17.0.1:2283")
+	assertContains(t, caddyfile, "reverse_proxy http://homectl-photos:2283")
 }
 
 func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {

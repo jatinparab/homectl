@@ -175,7 +175,21 @@ func (m *Manager) Stop() {
 	if m.tcpListener != nil {
 		_ = m.tcpListener.Close()
 	}
+	m.waitForPruneStateSaves()
 	stopCaddy()
+}
+
+func (m *Manager) waitForPruneStateSaves() {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.backupMu.Lock()
+		done := !m.pruneStateSaving && !m.pruneStateSavePending
+		m.backupMu.Unlock()
+		if done || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // desiredStatePath returns the path to the persisted desired-state file.

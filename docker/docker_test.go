@@ -8,7 +8,7 @@ import (
 )
 
 func TestAnalyzeDockerComposeFile_Caddy(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml")
+	path := filepath.Join("..", "testdata", "docker", "caddy", "docker-compose.yml")
 	app, err := analyzeDockerComposeFile(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -24,7 +24,7 @@ func TestAnalyzeDockerComposeFile_Caddy(t *testing.T) {
 }
 
 func TestAnalyzeDockerComposeFile_Adguard(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml")
+	path := filepath.Join("..", "testdata", "docker", "adguard", "docker-compose.yml")
 	app, err := analyzeDockerComposeFile(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,7 +83,7 @@ func TestParsePort(t *testing.T) {
 }
 
 func TestDiscoverApps(t *testing.T) {
-	rootDir := filepath.Join("..", "testdata", "docker", "v2")
+	rootDir := filepath.Join("..", "testdata", "docker")
 	apps, err := DiscoverApps(rootDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,8 +108,8 @@ func TestDiscoverApps(t *testing.T) {
 
 func TestDiscoverAppsFromPaths(t *testing.T) {
 	paths := []string{
-		filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml"),
-		filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml"),
+		filepath.Join("..", "testdata", "docker", "caddy", "docker-compose.yml"),
+		filepath.Join("..", "testdata", "docker", "adguard", "docker-compose.yml"),
 	}
 
 	apps, err := DiscoverAppsFromPaths(paths)
@@ -123,7 +123,7 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 }
 
 func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
-	rootDir := filepath.Join("..", "testdata", "docker", "v2")
+	rootDir := filepath.Join("..", "testdata", "docker")
 	d := NewDocker(rootDir, "/appdata", "root")
 	d.SetComposeExtraArgs([]string{"-f", "docker-compose.gpu.yml", "--profile", "gpu"})
 
