@@ -112,7 +112,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 }
 
 // GenerateCaddyConfig generates Caddy config for a specific node.
-// For local apps (same node): use 172.17.0.1 (docker gateway)
+// For local apps (same node): use the shared Docker network alias.
 // For remote apps: use the remote node's IP
 func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	suffix, err := domainSuffix()

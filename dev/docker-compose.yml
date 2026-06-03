@@ -26,7 +26,7 @@ services:
       - "1338:1338"   # exposed so the browser can connect WebSocket directly
     volumes:
       - ../:/src                          # full source for Air to watch + rebuild
-      - ../e2e/apps:/src/docker/v2       # manager looks for {REPO_DIR}/docker/v2
+      - ../testdata/docker/v2:/src/docker/v2 # manager looks for {REPO_DIR}/docker/v2
       - go-modules:/go/pkg/mod           # shared module cache
       - manager-cache:/root/.cache/go-build
     environment:
