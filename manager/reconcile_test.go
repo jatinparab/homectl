@@ -403,10 +403,10 @@ func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
 
@@ -423,11 +423,11 @@ func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
 
@@ -444,10 +444,10 @@ func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
-		healthyReport("traefik"),
+		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
 

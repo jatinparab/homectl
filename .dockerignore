@@ -1,0 +1,7 @@
+.git
+bin
+manager/ui/dist
+web/node_modules
+coverage.*
+*.out
+.env

@@ -1,3 +1,5 @@
+//go:build e2e
+
 package e2e_test
 
 import (
@@ -12,7 +14,7 @@ import (
 // TestAppDiscovery verifies the manager discovers all four apps from e2e/apps/.
 func TestAppDiscovery(t *testing.T) {
 	apps := getApps(t)
-	for _, id := range []string{appAdguard, appTraefik, appPaperless, appVaultwarden} {
+	for _, id := range []string{appAdguard, appCaddy, appPaperless, appVaultwarden} {
 		if findApp(apps, id) == nil {
 			t.Errorf("app %q not discovered; found: %v", id, appIDs(apps))
 		}
@@ -20,17 +22,17 @@ func TestAppDiscovery(t *testing.T) {
 }
 
 // TestDefaultDesiredState verifies the manager sets the correct initial desired
-// state: traefik and adguard are DesiredRunning; paperless and vaultwarden are
+// state: caddy and adguard are DesiredRunning; paperless and vaultwarden are
 // DesiredStopped (as per DiscoverApps defaults in manager.go).
 func TestDefaultDesiredState(t *testing.T) {
 	apps := getApps(t)
 
 	runByDefault := map[string]bool{
 		appAdguard: true,
-		appTraefik: true,
+		appCaddy:   true,
 	}
 
-	for _, id := range []string{appAdguard, appTraefik, appPaperless, appVaultwarden} {
+	for _, id := range []string{appAdguard, appCaddy, appPaperless, appVaultwarden} {
 		app := findApp(apps, id)
 		if app == nil {
 			t.Errorf("app %q not found", id)
@@ -53,7 +55,7 @@ func TestDefaultDesiredState(t *testing.T) {
 func TestRunningAppsAssigned(t *testing.T) {
 	poll(t, "running apps have assigned_agent", 2*time.Minute, 5*time.Second, func() string {
 		apps := getApps(t)
-		for _, id := range []string{appAdguard, appTraefik} {
+		for _, id := range []string{appAdguard, appCaddy} {
 			app := findApp(apps, id)
 			if app == nil {
 				return fmt.Sprintf("app %q not found", id)

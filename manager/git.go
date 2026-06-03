@@ -13,13 +13,8 @@ var gitLog = slog.With("area", "git")
 
 // GitSync performs a git pull to sync the repository
 func (m *Manager) GitSync() error {
-	if _, err := os.Stat(m.repoDir); os.IsNotExist(err) {
-		return fmt.Errorf("repository directory does not exist: %s", m.repoDir)
-	}
-
-	gitDir := filepath.Join(m.repoDir, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		return fmt.Errorf("not a git repository: %s", m.repoDir)
+	if err := m.ensureGitCheckout(); err != nil {
+		return err
 	}
 
 	cmd := exec.Command("git", "-C", m.repoDir, "pull", "--ff-only")
@@ -43,5 +38,31 @@ func (m *Manager) GitSync() error {
 		}
 	}
 
+	return nil
+}
+
+func (m *Manager) ensureGitCheckout() error {
+	repoURL := strings.TrimSpace(os.Getenv("HOMECTL_GIT_REPO"))
+	if repoURL == "" {
+		return fmt.Errorf("HOMECTL_GIT_REPO is required")
+	}
+	if _, err := os.Stat(m.repoDir); os.IsNotExist(err) {
+		parent := filepath.Dir(m.repoDir)
+		if err := os.MkdirAll(parent, 0755); err != nil {
+			return err
+		}
+		cmd := exec.Command("git", "clone", repoURL, m.repoDir)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git clone failed: %s, output: %s", err, string(output))
+		}
+		gitLog.Info("Git repository cloned", "repo", repoURL, "dir", m.repoDir)
+		return nil
+	}
+
+	gitDir := filepath.Join(m.repoDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return fmt.Errorf("not a git repository: %s", m.repoDir)
+	}
 	return nil
 }

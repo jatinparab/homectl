@@ -46,6 +46,7 @@ type Client struct {
 
 	agentName string
 	agentIP   string
+	joinToken string
 
 	handlerMu sync.RWMutex
 	handler   func(common.LinkMessage) <-chan common.LinkMessage
@@ -92,6 +93,10 @@ func (c *Client) SetIdentity(name, ip string) {
 	c.agentIP = ip
 }
 
+func (c *Client) SetJoinToken(token string) {
+	c.joinToken = token
+}
+
 // SetRequestHandler sets the callback used for manager-initiated requests.
 func (c *Client) SetRequestHandler(fn func(common.LinkMessage) <-chan common.LinkMessage) {
 	c.handlerMu.Lock()
@@ -115,6 +120,7 @@ func (c *Client) Connect(timeout time.Duration) error {
 		Source:    "agent",
 		AgentName: c.agentName,
 		AgentIP:   c.agentIP,
+		JoinToken: c.joinToken,
 	}
 	if err := enc.Encode(hello); err != nil {
 		_ = conn.Close()
@@ -297,10 +303,10 @@ func (c *Client) FetchDesiredApps(agentID string) (common.DesiredAppsResponse, e
 	return out, nil
 }
 
-// FetchTraefikConfig fetches traefik config for this agent.
-func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
+// FetchCaddyConfig fetches Caddy config for this agent.
+func (c *Client) FetchCaddyConfig(agentID string) (string, error) {
 	_ = agentID
-	resp, err := c.request(common.LinkReqAgentTraefik, nil, 10*time.Second)
+	resp, err := c.request(common.LinkReqAgentCaddy, nil, 10*time.Second)
 	if err != nil {
 		return "", err
 	}
@@ -308,6 +314,11 @@ func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
 		return "", fmt.Errorf("status %d", resp.Status)
 	}
 	return string(resp.Body), nil
+}
+
+// FetchTraefikConfig is kept for mixed-version compatibility.
+func (c *Client) FetchTraefikConfig(agentID string) (string, error) {
+	return c.FetchCaddyConfig(agentID)
 }
 
 // SyncDockerConfigs fetches docker configs from manager and extracts to local directory.

@@ -124,7 +124,7 @@ export function RoutingPage() {
           <div className="px-4 py-3 border-b border-[#e2ddd7] flex items-center justify-between">
             <div>
               <h2 className="text-xs font-semibold text-[#1c1917] uppercase tracking-widest">Public routes</h2>
-              <p className="text-[11px] text-stone-400 mt-1">Manager Caddy forwards homelab routes to the elected Traefik gateway.</p>
+              <p className="text-[11px] text-stone-400 mt-1">Manager Caddy forwards homelab routes to the elected Caddy gateway.</p>
             </div>
           </div>
 
@@ -134,7 +134,7 @@ export function RoutingPage() {
               <input
                 value={form.host}
                 onChange={(e) => setForm((v) => ({ ...v, host: e.target.value }))}
-                placeholder="photos.example.net"
+                placeholder="photos.your-domain.example"
                 className="mt-1 w-full px-2 py-1.5 text-xs border border-[#e2ddd7] rounded bg-white text-[#1c1917] focus:outline-none focus:border-teal-500"
               />
             </label>
@@ -154,10 +154,15 @@ export function RoutingPage() {
               <input
                 value={form.custom_target}
                 onChange={(e) => setForm((v) => ({ ...v, custom_target: e.target.value }))}
-                placeholder="https://someother-site.com"
+                placeholder="http://homectl-localhost:3001"
                 disabled={form.mode !== 'custom'}
                 className="mt-1 w-full px-2 py-1.5 text-xs border border-[#e2ddd7] rounded bg-white text-[#1c1917] disabled:bg-stone-50 disabled:text-stone-300 focus:outline-none focus:border-teal-500"
               />
+              {form.mode === 'custom' && (
+                <p className="mt-1 text-[10px] text-stone-400">
+                  For VPS-local services, use <span className="font-mono">homectl-localhost</span> instead of <span className="font-mono">localhost</span>.
+                </p>
+              )}
             </label>
             <div className="flex items-center gap-2">
               <DesiredToggle

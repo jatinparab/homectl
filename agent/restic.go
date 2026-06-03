@@ -74,8 +74,12 @@ type RepoRestic struct {
 
 // NewRepoRestic creates a new RepoRestic instance
 func NewRepoRestic(appDataDir string, useSudo bool) *RepoRestic {
+	repo := os.Getenv("RESTIC_REPOSITORY")
+	if repo == "" {
+		repo = "restic-repository-not-configured"
+	}
 	return &RepoRestic{
-		repo:       "b2:labctl",
+		repo:       repo,
 		appDataDir: appDataDir,
 		useSudo:    useSudo,
 	}

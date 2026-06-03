@@ -13,6 +13,7 @@ const (
 const (
 	LinkReqAgentHeartbeat   LinkRequestType = "agent_heartbeat"
 	LinkReqAgentDesired     LinkRequestType = "agent_desired"
+	LinkReqAgentCaddy       LinkRequestType = "agent_caddy_config"
 	LinkReqAgentTraefik     LinkRequestType = "agent_traefik_config"
 	LinkReqAgentDockerSync  LinkRequestType = "agent_docker_sync"
 	LinkReqAgentManagerSync LinkRequestType = "agent_manager_sync"
@@ -42,6 +43,7 @@ type LinkMessage struct {
 	Source      string          `json:"source,omitempty"`
 	AgentName   string          `json:"agent_name,omitempty"`
 	AgentIP     string          `json:"agent_ip,omitempty"`
+	JoinToken   string          `json:"join_token,omitempty"`
 	RequestType LinkRequestType `json:"request_type,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	Status      int             `json:"status,omitempty"`
@@ -55,6 +57,22 @@ type AgentHeartbeatPayload struct {
 	IP      string      `json:"ip"`
 	Reports []AppReport `json:"reports,omitempty"`
 	Metrics NodeMetrics `json:"metrics,omitempty"`
+}
+
+type AgentJoinRequest struct {
+	Name               string `json:"name"`
+	JoinToken          string `json:"join_token"`
+	WireGuardPublicKey string `json:"wireguard_public_key"`
+}
+
+type AgentJoinResponse struct {
+	Name                  string `json:"name"`
+	WireGuardAddress      string `json:"wireguard_address"`
+	ManagerWireGuardIP    string `json:"manager_wireguard_ip"`
+	ManagerPublicKey      string `json:"manager_public_key"`
+	ManagerEndpointIP     string `json:"manager_endpoint_ip"`
+	ManagerEndpointPort   int    `json:"manager_endpoint_port"`
+	ManagerControlBaseURL string `json:"manager_control_base_url"`
 }
 
 type RestartAppPayload struct {

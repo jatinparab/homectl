@@ -6,49 +6,19 @@ import (
 	"testing"
 )
 
-func TestAnalyzeDockerComposeFile_Stash(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "stash", "docker-compose.yml")
+func TestAnalyzeDockerComposeFile_Caddy(t *testing.T) {
+	path := filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml")
 	app, err := analyzeDockerComposeFile(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if app.Name != "stash" {
-		t.Errorf("expected app name 'stash', got '%s'", app.Name)
+	if app.Name != "caddy" {
+		t.Errorf("expected app name 'caddy', got '%s'", app.Name)
 	}
 
-	if len(app.Ports) != 1 {
-		t.Errorf("expected 1 port, got %d", len(app.Ports))
-	}
-
-	if len(app.Ports) > 0 && app.Ports[0] != 9999 {
-		t.Errorf("expected port 9999, got %d", app.Ports[0])
-	}
-}
-
-func TestAnalyzeDockerComposeFile_Traefik(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "traefik", "docker-compose.yml")
-	app, err := analyzeDockerComposeFile(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if app.Name != "traefik" {
-		t.Errorf("expected app name 'traefik', got '%s'", app.Name)
-	}
-
-	// Traefik has ports 8080, 80, 443
-	expectedPorts := []int{80, 443, 8080}
-	sort.Ints(app.Ports)
-
-	if len(app.Ports) != len(expectedPorts) {
-		t.Errorf("expected %d ports, got %d: %v", len(expectedPorts), len(app.Ports), app.Ports)
-	}
-
-	for i, port := range expectedPorts {
-		if i < len(app.Ports) && app.Ports[i] != port {
-			t.Errorf("expected port %d at index %d, got %d", port, i, app.Ports[i])
-		}
+	if len(app.Ports) != 0 {
+		t.Errorf("expected caddy to publish ports via homectl-agent, got %v", app.Ports)
 	}
 }
 
@@ -118,9 +88,8 @@ func TestDiscoverApps(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// We expect at least stash, traefik, and adguard
-	if len(apps) < 3 {
-		t.Errorf("expected at least 3 apps, got %d", len(apps))
+	if len(apps) != 2 {
+		t.Errorf("expected 2 apps, got %d", len(apps))
 	}
 
 	// Check that all expected apps are present
@@ -129,7 +98,7 @@ func TestDiscoverApps(t *testing.T) {
 		appNames[app.Name] = true
 	}
 
-	for _, expected := range []string{"stash", "traefik", "adguard"} {
+	for _, expected := range []string{"caddy", "adguard"} {
 		if !appNames[expected] {
 			t.Errorf("expected to find app '%s'", expected)
 		}
@@ -138,7 +107,7 @@ func TestDiscoverApps(t *testing.T) {
 
 func TestDiscoverAppsFromPaths(t *testing.T) {
 	paths := []string{
-		filepath.Join("..", "testdata", "docker", "v2", "stash", "docker-compose.yml"),
+		filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml"),
 		filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml"),
 	}
 

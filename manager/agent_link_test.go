@@ -12,6 +12,7 @@ import (
 
 func setupAgentLinkTest(t *testing.T) (*Manager, net.Conn, *json.Encoder, *json.Decoder) {
 	t.Helper()
+	t.Setenv("HOMECTL_JOIN_TOKEN", "test-token")
 	mgr := NewManagerWithConfig(Config{
 		RepoDir: t.TempDir(),
 		Port:    0,
@@ -27,6 +28,7 @@ func setupAgentLinkTest(t *testing.T) (*Manager, net.Conn, *json.Encoder, *json.
 		Type:      common.LinkTypeHello,
 		AgentName: "agent-1",
 		AgentIP:   "10.0.0.1",
+		JoinToken: "test-token",
 	}); err != nil {
 		t.Fatalf("hello encode failed: %v", err)
 	}

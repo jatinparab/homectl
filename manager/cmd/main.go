@@ -13,6 +13,7 @@ import (
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager"
 	"github.com/jatinparab/homectl/utils"
+	"github.com/jatinparab/homectl/wireguard"
 )
 
 func main() {
@@ -34,6 +35,16 @@ func main() {
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
+	tokenSet := true
+	if _, err := manager.RequireJoinTokenForStartup(); err != nil {
+		slog.Warn("WireGuard not configured, running without overlay", "err", err)
+		tokenSet = false
+	}
+	if tokenSet {
+		if err := mgr.EnsureWireGuard(); err != nil {
+			slog.Warn("Failed to start WireGuard overlay (continuing anyway)", "err", err)
+		}
+	}
 	if err := mgr.StartAgentTCPServer(); err != nil {
 		slog.Error("Failed to start agent TCP server", "err", err)
 		os.Exit(1)
@@ -48,12 +59,8 @@ func main() {
 	// Discover apps from docker/v2 and start reconcile loop
 	mgr.DiscoverApps()
 
-	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
-	mgr.SetReconcileCancel(reconcileCancel)
-	mgr.StartReconcileLoop(reconcileCtx)
-	mgr.StartPublicRouteLoop(reconcileCtx)
-
-	// Start server in goroutine
+	// Start server before public route health checks. The generated Caddy config
+	// proxies the public manager host back to this listener.
 	server := mgr.NewServer()
 	go func() {
 		slog.Info("Manager server starting", "port", port)
@@ -63,6 +70,11 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
+	mgr.SetReconcileCancel(reconcileCancel)
+	mgr.StartReconcileLoop(reconcileCtx)
+	mgr.StartPublicRouteLoop(reconcileCtx)
 
 	// Wait for interrupt signal
 	sigCh := make(chan os.Signal, 1)
@@ -81,5 +93,6 @@ func main() {
 	}
 
 	mgr.Stop()
+	wireguard.Teardown()
 	slog.Info("Manager stopped")
 }

@@ -1,3 +1,5 @@
+//go:build e2e
+
 package e2e_test
 
 import (
@@ -90,7 +92,7 @@ func TestClearManualAssignment(t *testing.T) {
 // k nodes, i.e. the difference between max and min load is ≤ 1.
 func TestForceRebalance(t *testing.T) {
 	// First ensure all 4 apps are DesiredRunning so there is something to balance
-	for _, id := range []string{appAdguard, appTraefik, appPaperless, appVaultwarden} {
+	for _, id := range []string{appAdguard, appCaddy, appPaperless, appVaultwarden} {
 		setDesiredState(t, id, "running")
 	}
 	t.Cleanup(func() {
@@ -102,7 +104,7 @@ func TestForceRebalance(t *testing.T) {
 	// Wait for all apps to be assigned
 	poll(t, "all 4 apps assigned", 2*time.Minute, 5*time.Second, func() string {
 		apps := getApps(t)
-		for _, id := range []string{appAdguard, appTraefik, appPaperless, appVaultwarden} {
+		for _, id := range []string{appAdguard, appCaddy, appPaperless, appVaultwarden} {
 			a := findApp(apps, id)
 			if a == nil {
 				return fmt.Sprintf("app %q not found", id)
