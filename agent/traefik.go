@@ -1,87 +1,176 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/jatinparab/homectl/manager/client"
 )
 
-var traefikLog = slog.With("area", "traefik")
+var caddyLog = slog.With("area", "caddy")
 
-// TraefikSync handles syncing traefik config from manager
-type TraefikSync struct {
-	configPath    string // Path to write traefik.yml
-	currentConfig string // Cached current config for diff check
+const caddyBinary = "caddy"
+
+var (
+	agentCaddyCmd   *exec.Cmd
+	agentCaddyCmdMu sync.Mutex
+)
+
+type CaddySync struct {
+	configPath    string
+	configDir     string
+	currentConfig string
 	client        *client.Client
 	agentID       string
 }
 
-// NewTraefikSync creates a new TraefikSync instance
-func NewTraefikSync(appdataDir, agentID string, c *client.Client) *TraefikSync {
-	// Config path: {appdataDir}/traefik/config/traefik.yml
-	configPath := filepath.Join(appdataDir, "traefik", "config", "traefik.yml")
-	ts := &TraefikSync{
+func NewCaddySync(appdataDir, agentID string, c *client.Client) *CaddySync {
+	configPath := filepath.Join(appdataDir, "caddy", "Caddyfile")
+	cs := &CaddySync{
 		configPath: configPath,
+		configDir:  filepath.Dir(configPath),
 		client:     c,
 		agentID:    agentID,
 	}
-	// Seed currentConfig from disk so the first Sync won't rewrite an identical file
 	if data, err := os.ReadFile(configPath); err == nil {
-		ts.currentConfig = string(data)
+		cs.currentConfig = string(data)
 	}
-	return ts
+	return cs
 }
 
-// FetchConfig fetches traefik config from manager
-func (t *TraefikSync) FetchConfig() (string, error) {
-	return t.client.FetchTraefikConfig(t.agentID)
+func (c *CaddySync) FetchConfig() (string, error) {
+	return c.client.FetchCaddyConfig(c.agentID)
 }
 
-// WriteConfig writes the config to disk only if the content differs from what
-// is already on disk. This avoids unnecessary file-change events that cause
-// traefik to reload its config and momentarily return 404s.
-func (t *TraefikSync) WriteConfig(content string) error {
-	// Ensure parent directory exists
-	dir := filepath.Dir(t.configPath)
+func (c *CaddySync) WriteConfig(content string) error {
+	dir := filepath.Dir(c.configPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
-
-	// Read existing file and skip write if identical
-	if existing, err := os.ReadFile(t.configPath); err == nil && string(existing) == content {
-		traefikLog.Info("Config unchanged, skipping write", "path", t.configPath)
+	if existing, err := os.ReadFile(c.configPath); err == nil && string(existing) == content {
+		caddyLog.Info("Config unchanged, skipping write", "path", c.configPath)
 		return nil
 	}
-
-	// Write config file
-	if err := os.WriteFile(t.configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(c.configPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
-
 	return nil
 }
 
-// Sync fetches config from manager and writes if changed
-func (t *TraefikSync) Sync() error {
-	config, err := t.FetchConfig()
+func (c *CaddySync) Sync() error {
+	config, err := c.FetchConfig()
 	if err != nil {
-		return fmt.Errorf("failed to fetch traefik config: %w", err)
+		return fmt.Errorf("failed to fetch caddy config: %w", err)
 	}
-
-	// Check if config has changed
-	if config == t.currentConfig {
-		return nil // No change
+	if config == c.currentConfig {
+		return nil
 	}
-
-	// Write new config
-	if err := t.WriteConfig(config); err != nil {
+	if err := c.WriteConfig(config); err != nil {
 		return err
 	}
+	c.currentConfig = config
+	return reloadLocalCaddy()
+}
 
-	t.currentConfig = config
-	traefikLog.Debug("Config updated", "path", t.configPath)
+func EnsureCaddy() error {
+	agentCaddyCmdMu.Lock()
+	defer agentCaddyCmdMu.Unlock()
+	if agentCaddyCmd != nil && agentCaddyCmd.Process != nil {
+		return nil
+	}
+	return startCaddyLocked()
+}
+
+func startCaddyLocked() error {
+	caddyDir := resolveCaddyConfigDir()
+	caddyfilePath := filepath.Join(caddyDir, "Caddyfile")
+	if err := os.MkdirAll(caddyDir, 0755); err != nil {
+		return fmt.Errorf("create caddy config dir: %w", err)
+	}
+	fmt.Println("caddyDir: ", caddyDir)
+	if _, err := os.Stat(caddyfilePath); os.IsNotExist(err) {
+		os.WriteFile(caddyfilePath, []byte("# placeholder\n"), 0644)
+	}
+
+	cmd := exec.Command(caddyBinary, "run", "--config", caddyfilePath, "--adapter", "caddyfile")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start caddy: %w", err)
+	}
+	agentCaddyCmd = cmd
+	caddyLog.Info("Caddy started", "pid", cmd.Process.Pid)
 	return nil
+}
+
+func StopCaddy() {
+	agentCaddyCmdMu.Lock()
+	defer agentCaddyCmdMu.Unlock()
+	if agentCaddyCmd != nil && agentCaddyCmd.Process != nil {
+		_ = agentCaddyCmd.Process.Kill()
+		_ = agentCaddyCmd.Wait()
+		agentCaddyCmd = nil
+	}
+}
+
+func IsCaddyRunning() bool {
+	agentCaddyCmdMu.Lock()
+	defer agentCaddyCmdMu.Unlock()
+	return agentCaddyCmd != nil && agentCaddyCmd.Process != nil
+}
+
+func reloadLocalCaddy() error {
+	agentCaddyCmdMu.Lock()
+	defer agentCaddyCmdMu.Unlock()
+
+	if agentCaddyCmd == nil || agentCaddyCmd.Process == nil {
+		caddyLog.Debug("Caddy not running yet, reload deferred")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	caddyDir := resolveCaddyConfigDir()
+	caddyfilePath := filepath.Join(caddyDir, "Caddyfile")
+	cmd := exec.CommandContext(ctx, caddyBinary, "reload", "--config", caddyfilePath, "--adapter", "caddyfile")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		caddyLog.Debug("Caddy reloaded")
+		return nil
+	}
+	msg := strings.TrimSpace(string(output))
+
+	stopCaddyLocked()
+	if startErr := startCaddyLocked(); startErr != nil {
+		return fmt.Errorf("caddy reload+restart failed: reload: %w: %s; restart: %w", err, msg, startErr)
+	}
+	caddyLog.Info("Caddy restarted after reload failure")
+	return nil
+}
+
+func stopCaddyLocked() {
+	if agentCaddyCmd != nil && agentCaddyCmd.Process != nil {
+		_ = agentCaddyCmd.Process.Kill()
+		_ = agentCaddyCmd.Wait()
+		agentCaddyCmd = nil
+	}
+}
+
+func resolveCaddyConfigDir() string {
+	if dir := os.Getenv("HOMECTL_CADDY_DIR"); dir != "" {
+		return dir
+	}
+	appdataDir := os.Getenv("HOMECTL_APPDATA_DIR")
+	if appdataDir == "" {
+		appdataDir = "/opt/homectl/appdata"
+	}
+	return filepath.Join(appdataDir, "caddy")
 }

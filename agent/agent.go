@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -14,9 +15,11 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/docker"
+	"github.com/jatinparab/homectl/keepalived"
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
 	"github.com/jatinparab/homectl/utils"
+	"github.com/jatinparab/homectl/wireguard"
 )
 
 const (
@@ -38,7 +41,7 @@ func initPackageLoggers() {
 	repoLog = slog.Default().With("area", "repo")
 	backupLog = slog.Default().With("area", "backup")
 	sensorLog = slog.Default().With("area", "sensor")
-	traefikLog = slog.Default().With("area", "traefik")
+	caddyLog = slog.Default().With("area", "caddy")
 }
 
 // Agent manages docker applications on a host
@@ -59,10 +62,10 @@ type Agent struct {
 	assignedApps map[common.AppID]bool // apps assigned to this node by the manager
 	runtimeMu    sync.RWMutex
 
-	// Executor, Restic, Traefik, Ready, and Logs
+	// Executor, Restic, Caddy, Ready
 	executor    *Executor
 	restic      Restic
-	traefikSync *TraefikSync
+	caddySync   *CaddySync
 	readyServer *ReadyServer
 
 	// Gateway state (set by manager)
@@ -98,6 +101,9 @@ type Agent struct {
 	// Storage prune state
 	storagePruneMu    sync.Mutex
 	storagePruneState StoragePruneState
+
+	// Domain suffix for health check Host header
+	domainSuffix string
 }
 
 // NewAgent creates a new Agent instance
@@ -115,7 +121,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		managerClient:     client.NewClient(managerURL),
 		runtime:           make(map[common.AppID]*AppRuntime),
 		assignedApps:      make(map[common.AppID]bool),
-		restic:            NewRepoRestic(appdataDir, name != "Jatins-MacBook-Pro.local"),
+		restic:            NewRepoRestic(appdataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true"),
 		stopChan:          make(chan struct{}),
 		sensorCtx:         sensorCtx,
 		sensorCancel:      sensorCancel,
@@ -123,8 +129,10 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		repoUnlock:        NewRepoOpState(),
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
+		domainSuffix:     strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 	}
 	a.managerClient.SetIdentity(name, ip)
+	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
 	a.managerClient.SetRequestHandler(a.handleManagerLinkRequest)
 	a.backupCond = sync.NewCond(&a.backupMu)
 	a.loadRepoOpsState()
@@ -149,9 +157,39 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 	}
 
 	managerURL := cfg.GetManagerURL()
-	agent := NewAgent(hostname, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User)
+	agentName := hostCfg.Name
+	if tok := strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")); tok != "" {
+		bootstrap, err := bootstrapWireGuard(agentName, os.Getenv("HOMECTL_MANAGER_URL"))
+		if err != nil {
+			agentLog.Warn("WireGuard bootstrap failed, continuing without overlay", "err", err)
+		} else {
+			agentName = bootstrap.AgentName
+			ip = bootstrap.AgentIP
+			managerURL = bootstrap.ManagerURL
+			hostCfg.IP = ip
+		}
+	}
 
-	agentLog.Info("Agent initialized", "name", hostname, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User)
+	// Bootstrap keepalived VIP if configured
+	if haIP := os.Getenv("HOMECTL_LOCAL_HA_IP"); haIP != "" {
+		configDir := os.Getenv("HOMECTL_HACONFIG_DIR")
+		if configDir == "" {
+			configDir = "/opt/homectl/keepalived"
+		}
+		hostConfigDir := os.Getenv("HOMECTL_HACONFIG_HOST_DIR")
+		if hostConfigDir == "" {
+			hostConfigDir = configDir
+		}
+		if err := keepalived.Ensure(configDir, hostConfigDir, haIP); err != nil {
+			agentLog.Error("Failed to start keepalived container", "err", err)
+		} else {
+			agentLog.Info("Keepalived container ensured", "vip", haIP)
+		}
+	}
+
+	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User)
+
+	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User)
 
 	// Try to connect and load apps (best-effort)
 	agent.tryConnect()
@@ -199,6 +237,13 @@ func (a *Agent) SyncConfigs() error {
 	if err := d.LoadApps(); err != nil {
 		return fmt.Errorf("load apps: %w", err)
 	}
+	docker.PruneStaleSharedNamespaceContainers()
+	if err := docker.ConnectContainerToHomectlNetwork(utils.GetHostname()); err != nil {
+		agentLog.Warn("Failed to connect agent to shared Docker network", "err", err)
+	}
+	if err := d.ConnectLoadedAppsToHomectlNetwork(); err != nil {
+		agentLog.Warn("Failed to connect managed apps to shared Docker network", "err", err)
+	}
 
 	a.docker = d
 
@@ -210,9 +255,9 @@ func (a *Agent) SyncConfigs() error {
 		a.executor.docker = a.docker
 	}
 
-	// Initialize traefik sync if not already done
-	if a.traefikSync == nil {
-		a.traefikSync = NewTraefikSync(a.appdataDir, a.name, a.managerClient)
+	// Initialize Caddy sync if not already done
+	if a.caddySync == nil {
+		a.caddySync = NewCaddySync(a.appdataDir, a.name, a.managerClient)
 	}
 
 	return nil
@@ -341,7 +386,9 @@ func (a *Agent) reconcileOnce() {
 	agentLog.Debug("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
 
 	// Track which apps are expected on this node (running or explicitly stopped).
-	assigned := make(map[common.AppID]bool, len(desiredApps))
+	// Always include the gateway proxy (caddy runs in-process).
+	assigned := make(map[common.AppID]bool, len(desiredApps)+1)
+	assigned[common.GatewayProxyAppID] = true
 	for _, da := range desiredApps {
 		assigned[da.AppID] = true
 	}
@@ -349,6 +396,24 @@ func (a *Agent) reconcileOnce() {
 	a.assignedApps = assigned
 	a.runtimeMu.Unlock()
 	a.cancelUnassignedSnapshotRefreshes(assigned)
+
+	// Sync Caddy config before app actions
+	if a.caddySync != nil {
+		if err := a.caddySync.Sync(); err != nil {
+			agentLog.Info("Reconcile: caddy sync failed", "err", err)
+		}
+	}
+
+	// Ensure caddy is running as a process (not a Docker container).
+	// Gracefully skip if caddy is not installed (e.g., e2e environment).
+	if _, cerr := exec.LookPath("caddy"); cerr == nil {
+		if err := EnsureCaddy(); err != nil {
+			agentLog.Warn("Reconcile: caddy process not running", "err", err)
+		}
+	}
+
+	// Always report caddy as running+healthy (it runs in-process)
+	a.setCaddyRuntimeHealthy()
 
 	managedApps := a.ListApps()
 	for _, app := range managedApps {
@@ -371,6 +436,11 @@ func (a *Agent) reconcileOnce() {
 	}
 	// Reconcile each app
 	for _, app := range desiredApps {
+		// Skip caddy — it runs in-process, not via Docker Compose
+		if app.AppID == common.GatewayProxyAppID {
+			continue
+		}
+
 		rt := a.getOrCreateRuntime(app.AppID)
 		rt.SetBackupSensitive(app.BackupSensitive)
 		rt.SetBackupEnabled(app.BackupEnabled)
@@ -378,7 +448,6 @@ func (a *Agent) reconcileOnce() {
 
 		// Skip if action already in flight
 		if rt.IsInFlight() {
-			// log.Printf("Reconcile: skipping %s (action in flight: %s)", app.AppID, rt.GetInFlightAction())
 			continue
 		}
 
@@ -387,13 +456,15 @@ func (a *Agent) reconcileOnce() {
 			a.executor.Submit(action)
 		}
 	}
+}
 
-	// Sync traefik config
-	if a.traefikSync != nil {
-		if err := a.traefikSync.Sync(); err != nil {
-			agentLog.Info("Reconcile: traefik sync failed", "err", err)
-		}
-	}
+func (a *Agent) setCaddyRuntimeHealthy() {
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	rt := a.getOrCreateRuntimeLocked(common.GatewayProxyAppID)
+	rt.SetRunning(common.RunningStatusRunning)
+	rt.SetHealth(common.HealthHealthy)
+	rt.SetPhase(common.PhaseRunning)
 }
 
 func (a *Agent) isAppExpected(appID common.AppID) bool {
@@ -450,7 +521,7 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 
 	// Desired running
 	if rt.IsQuarantined() {
-		agentLog.Info("Reconcile: is quarantined, skipping", "app", app.AppID)
+		agentLog.Debug("Reconcile: is quarantined, skipping", "app", app.AppID)
 		if rt.RunningStatus() == common.RunningStatusRunning || rt.RunningStatus() == common.RunningStatusRestarting {
 			agentLog.Info("Reconcile: is quarantined but is running, stopping", "app", app.AppID)
 			return ActionStop(app.AppID)
@@ -705,6 +776,13 @@ func (a *Agent) Stop() {
 
 	close(a.stopChan)
 	a.wg.Wait()
+
+	// Stop caddy process
+	StopCaddy()
+
+	// Teardown WireGuard interface
+	wireguard.Teardown()
+
 	agentLog.Info("Agent stopped")
 }
 

@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
-	"gopkg.in/yaml.v3"
+	"github.com/jatinparab/homectl/docker"
 )
 
-var traefikMgrLog = slog.With("area", "traefik")
+var caddyMgrLog = slog.With("area", "caddy")
 
 // FlexPort unmarshals a port from either a JSON number or a JSON string.
 type FlexPort int
@@ -37,10 +38,12 @@ func (f *FlexPort) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-const (
-	// DomainSuffix is the base domain for traefik routes
-	DomainSuffix = "sulphurgfx.com"
-)
+func domainSuffix() (string, error) {
+	if suffix := normalizePublicRouteHost(os.Getenv("HOMECTL_DOMAIN_SUFFIX")); suffix != "" {
+		return suffix, nil
+	}
+	return "", fmt.Errorf("HOMECTL_DOMAIN_SUFFIX is required")
+}
 
 // HomectlConfig represents the homectl-config.json file for an app
 type HomectlConfig struct {
@@ -71,39 +74,6 @@ func (c HomectlConfig) GetBackupInterval() time.Duration {
 	return BackupInterval
 }
 
-// TraefikConfig represents the traefik dynamic configuration
-type TraefikConfig struct {
-	HTTP TraefikHTTP `yaml:"http"`
-}
-
-// TraefikHTTP contains routers and services
-type TraefikHTTP struct {
-	Routers  map[string]TraefikRouter  `yaml:"routers,omitempty"`
-	Services map[string]TraefikService `yaml:"services,omitempty"`
-}
-
-// TraefikRouter defines a traefik router
-type TraefikRouter struct {
-	Rule        string   `yaml:"rule"`
-	Service     string   `yaml:"service"`
-	EntryPoints []string `yaml:"entryPoints"`
-}
-
-// TraefikService defines a traefik service
-type TraefikService struct {
-	LoadBalancer TraefikLoadBalancer `yaml:"loadBalancer"`
-}
-
-// TraefikLoadBalancer defines load balancer settings
-type TraefikLoadBalancer struct {
-	Servers []TraefikServer `yaml:"servers"`
-}
-
-// TraefikServer defines a backend server
-type TraefikServer struct {
-	URL string `yaml:"url"`
-}
-
 // loadAppConfigs loads homectl-config.json files from docker directories
 func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	configs := make(map[string]HomectlConfig)
@@ -111,7 +81,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	dockerV2Dir := filepath.Join(m.repoDir, "docker")
 	entries, err := os.ReadDir(dockerV2Dir)
 	if err != nil {
-		traefikMgrLog.Error("Failed to read docker/v2 directory", "err", err)
+		caddyMgrLog.Error("Failed to read docker/v2 directory", "err", err)
 		return configs
 	}
 
@@ -131,7 +101,7 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 
 		var cfg HomectlConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			traefikMgrLog.Error("Failed to parse config", "path", configPath, "err", err)
+			caddyMgrLog.Error("Failed to parse config", "path", configPath, "err", err)
 			continue
 		}
 
@@ -141,15 +111,13 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 	return configs
 }
 
-// GenerateTraefikConfig generates traefik config for a specific node
+// GenerateCaddyConfig generates Caddy config for a specific node.
 // For local apps (same node): use 172.17.0.1 (docker gateway)
 // For remote apps: use the remote node's IP
-func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
-	config := TraefikConfig{
-		HTTP: TraefikHTTP{
-			Routers:  make(map[string]TraefikRouter),
-			Services: make(map[string]TraefikService),
-		},
+func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
+	suffix, err := domainSuffix()
+	if err != nil {
+		return "", err
 	}
 
 	// Load app configs for exposed_subdomains overrides
@@ -159,6 +127,13 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 	agents := m.leaseManager.ListAgents()
 	alive := m.aliveAgents()
 	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
+
+	type route struct {
+		publicHost   string
+		internalHost string
+		target       string
+	}
+	routes := make([]route, 0)
 
 	for _, agent := range agents {
 		if !alive[agent.Name] {
@@ -171,13 +146,21 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 			}
 
 			appName := string(report.AppID)
+			if report.AppID == common.GatewayProxyAppID {
+				continue
+			}
 
-			// Determine IP based on local vs remote
-			var ip string
+			// Determine target host based on local vs remote.
+			// Local apps are reached via the homectl Docker network alias.
+			// Remote apps are proxied to the remote agent's caddy over WireGuard.
+			var targetHost string
+			var defaultPort int
 			if agent.Name == forNodeID {
-				ip = "172.17.0.1" // Docker gateway for local
+				targetHost = docker.HealthAlias(appName)
+				defaultPort = report.Port
 			} else {
-				ip = agent.IP // Remote node IP
+				targetHost = agent.IP
+				defaultPort = 80
 			}
 
 			// Check if app has exposed_subdomains override
@@ -192,25 +175,14 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 				// Use custom subdomains from homectl-config.json
 				for _, subdomain := range subdomains {
 					port := appCfg.ExposedSubdomains[subdomain]
-					routerName := fmt.Sprintf("%s-%s", appName, subdomain)
-					serviceName := fmt.Sprintf("%s-%s", appName, subdomain)
 
-					publicDomain := fmt.Sprintf("%s.%s", subdomain, DomainSuffix)
-					internalDomain := fmt.Sprintf("%s.internal.%s", subdomain, DomainSuffix)
-
-					config.HTTP.Routers[routerName] = TraefikRouter{
-						Rule:        fmt.Sprintf("Host(`%s`) || Host(`%s`)", internalDomain, publicDomain),
-						Service:     serviceName,
-						EntryPoints: []string{"web", "websecure"},
-					}
-
-					config.HTTP.Services[serviceName] = TraefikService{
-						LoadBalancer: TraefikLoadBalancer{
-							Servers: []TraefikServer{
-								{URL: fmt.Sprintf("http://%s:%d", ip, int(port))},
-							},
-						},
-					}
+					publicDomain := fmt.Sprintf("%s.%s", subdomain, suffix)
+					internalDomain := fmt.Sprintf("%s.internal.%s", subdomain, suffix)
+					routes = append(routes, route{
+						publicHost:   publicDomain,
+						internalHost: internalDomain,
+						target:       fmt.Sprintf("http://%s:%d", targetHost, int(port)),
+					})
 				}
 			} else {
 				// Default behavior: use app name as subdomain and reported port
@@ -218,31 +190,78 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 					continue // Skip apps without exposed ports
 				}
 
-				publicDomain := fmt.Sprintf("%s.%s", appName, DomainSuffix)
-				internalDomain := fmt.Sprintf("%s.internal.%s", appName, DomainSuffix)
-
-				config.HTTP.Routers[appName] = TraefikRouter{
-					Rule:        fmt.Sprintf("Host(`%s`) || Host(`%s`)", internalDomain, publicDomain),
-					Service:     appName,
-					EntryPoints: []string{"web", "websecure"},
-				}
-
-				config.HTTP.Services[appName] = TraefikService{
-					LoadBalancer: TraefikLoadBalancer{
-						Servers: []TraefikServer{
-							{URL: fmt.Sprintf("http://%s:%d", ip, report.Port)},
-						},
-					},
-				}
+				publicDomain := fmt.Sprintf("%s.%s", appName, suffix)
+				internalDomain := fmt.Sprintf("%s.internal.%s", appName, suffix)
+				routes = append(routes, route{
+					publicHost:   publicDomain,
+					internalHost: internalDomain,
+					target:       fmt.Sprintf("http://%s:%d", targetHost, defaultPort),
+				})
 			}
 		}
 	}
 
-	// Marshal to YAML
-	data, err := yaml.Marshal(config)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal traefik config: %w", err)
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].publicHost != routes[j].publicHost {
+			return routes[i].publicHost < routes[j].publicHost
+		}
+		return routes[i].target < routes[j].target
+	})
+
+	var b strings.Builder
+	b.WriteString("{\n")
+	b.WriteString("\tadmin 0.0.0.0:2019\n")
+	if email := strings.TrimSpace(os.Getenv("CADDY_ACME_EMAIL")); email != "" {
+		fmt.Fprintf(&b, "\temail %s\n", email)
+	}
+	b.WriteString("}\n\n")
+	tlsImport := caddyTLSSnippet(&b)
+	if tlsImport != "" {
+		fmt.Fprintf(&b, "*.%s, *.internal.%s {\n", suffix, suffix)
+		fmt.Fprintf(&b, "\timport %s\n", tlsImport)
+		for i, route := range routes {
+			matcher := fmt.Sprintf("route%d", i)
+			fmt.Fprintf(&b, "\t@%s host %s %s\n", matcher, route.publicHost, route.internalHost)
+			fmt.Fprintf(&b, "\thandle @%s {\n", matcher)
+			fmt.Fprintf(&b, "\t\treverse_proxy %s\n", route.target)
+			b.WriteString("\t}\n")
+		}
+		b.WriteString("}\n\n")
+	} else {
+		for _, route := range routes {
+			fmt.Fprintf(&b, "%s, %s {\n", route.publicHost, route.internalHost)
+			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			b.WriteString("}\n\n")
+		}
 	}
 
-	return string(data), nil
+	// Gateway health check route for keepalived VRRP
+	b.WriteString("http:// {\n")
+	b.WriteString("\thandle /is-gateway {\n")
+	b.WriteString("\t\treverse_proxy 127.0.0.1:1337\n")
+	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
+
+	return b.String(), nil
+}
+
+func caddyTLSSnippet(b *strings.Builder) string {
+	provider := strings.TrimSpace(os.Getenv("CADDY_DNS_PROVIDER"))
+	if provider == "" {
+		return ""
+	}
+	tokenEnv := strings.TrimSpace(os.Getenv("CADDY_DNS_TOKEN_ENV"))
+	if tokenEnv == "" {
+		tokenEnv = "CLOUDFLARE_API_TOKEN"
+	}
+	b.WriteString("(homectl_tls) {\n")
+	fmt.Fprintf(b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, tokenEnv)
+	b.WriteString("}\n\n")
+	return "homectl_tls"
+}
+
+// GenerateTraefikConfig is kept for mixed-version compatibility. It now emits
+// the Caddyfile consumed by the compatibility /traefik-config endpoint.
+func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
+	return m.GenerateCaddyConfig(forNodeID)
 }

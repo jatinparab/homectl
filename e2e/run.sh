@@ -102,7 +102,7 @@ ci)
     # ── run Go tests, capture exit code ────────────────────────────────────
     TEST_EXIT=0
     cd "$REPO_DIR"
-    go test -v -timeout 15m ./e2e/ || TEST_EXIT=$?
+    go test -tags=e2e -v -timeout 15m ./e2e/ || TEST_EXIT=$?
 
     # ── tear down only if we started the cluster ────────────────────────────
     if [[ "$STARTED_CLUSTER" -eq 1 ]]; then
@@ -128,7 +128,7 @@ up)
 
     log ""
     log "Cluster is up. Manager API: $MANAGER_URL"
-    log "  Run tests:  make e2e-test"
+    log "  Run tests:  make e2e-tests"
     log "  Logs:       make e2e-logs"
     log "  Teardown:   make e2e-down"
     ;;
@@ -144,7 +144,7 @@ test)
     # Run Go e2e tests against an already-running cluster
     wait_for "manager HTTP API" "$MANAGER_URL/health" 10
     cd "$(dirname "$SCRIPT_DIR")"
-    exec go test -v -timeout 15m ./e2e/
+    exec go test -tags=e2e -v -timeout 15m ./e2e/
     ;;
 
 logs)

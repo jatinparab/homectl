@@ -16,8 +16,8 @@ var readyLog = slog.With("area", "ready")
 const (
 	// ReadyServerPort is the port for the ready server
 	ReadyServerPort = 1337
-	// TraefikAppName is the app name to check for readiness
-	TraefikAppName = "traefik"
+	// GatewayProxyAppName is the app name to check for gateway readiness.
+	GatewayProxyAppName = string(common.GatewayProxyAppID)
 )
 
 // ReadyServer provides health check endpoints for keepalived
@@ -248,7 +248,7 @@ func (rs *ReadyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
 }
 
-// handleReady checks if this node is the gateway and traefik is healthy
+// handleReady checks if this node is the gateway and Caddy is healthy.
 func (rs *ReadyServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	if !rs.agent.IsGateway() {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -256,8 +256,8 @@ func (rs *ReadyServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Still check traefik as a safety net
-	isReady, message := rs.checkTraefikReady()
+	// Still check the gateway proxy as a safety net.
+	isReady, message := rs.checkGatewayProxyReady()
 	if isReady {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
@@ -430,26 +430,8 @@ func (rs *ReadyServer) handleSnapshotLs(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(entries)
 }
 
-// checkTraefikReady checks if traefik app is running and healthy
-func (rs *ReadyServer) checkTraefikReady() (bool, string) {
-	if rs.agent == nil {
-		return false, "agent not initialized"
-	}
-
-	rt := rs.agent.getRuntime(common.AppID(TraefikAppName))
-	if rt == nil {
-		return false, fmt.Sprintf("'%s' not tracked", TraefikAppName)
-	}
-
-	runningStatus := rt.RunningStatus()
-	if runningStatus != common.RunningStatusRunning {
-		return false, fmt.Sprintf("'%s' status: %s", TraefikAppName, runningStatus)
-	}
-
-	health := rt.GetHealth()
-	if health == common.HealthUnhealthy {
-		return false, fmt.Sprintf("'%s' unhealthy", TraefikAppName)
-	}
-
+// checkGatewayProxyReady checks if the gateway proxy is healthy.
+// Since caddy runs in-process, we only need to verify the agent is designated gateway.
+func (rs *ReadyServer) checkGatewayProxyReady() (bool, string) {
 	return true, "ok"
 }

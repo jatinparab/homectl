@@ -35,7 +35,7 @@ type AppRuntime struct {
 	InFlight        bool                   // Action in progress
 	InFlightAction  string                 // Description of the in-flight action
 	LastError       string                 // Last error message
-	Port            int                    // First exposed port (for traefik routing)
+	Port            int                    // First exposed port (for gateway proxy routing)
 	Progress        *common.ResticProgress // Restic backup/restore progress
 	Backup          BackupState
 	Prune           PruneState
