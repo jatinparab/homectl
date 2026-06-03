@@ -1,9 +1,0 @@
-services:
-  adguard:
-    image: adguard/adguardhome:latest
-    volumes:
-      - ${APPDATA}/adguard/work:/opt/adguardhome/work
-      - ${APPDATA}/adguard/conf:/opt/adguardhome/conf
-    ports:
-      - "3000:3000"
-    restart: unless-stopped

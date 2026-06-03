@@ -205,23 +205,6 @@ Stop the dev cluster:
 make dev-down
 ```
 
-## End-to-End Tests
-
-End-to-end tests are excluded from the default `go test ./...` run by the `e2e`
-build tag.
-
-Start an e2e cluster, run tests, and tear it down:
-
-```sh
-make e2e
-```
-
-Run e2e tests against an already-running cluster:
-
-```sh
-make e2e-tests
-```
-
 ## Project Status
 
 Homectl is early-stage software. The current public packaging path is Docker
