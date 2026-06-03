@@ -134,6 +134,8 @@ Manager environment variables:
 | `HOMECTL_JOIN_TOKEN` | Yes | Shared token agents present during join and TCP link setup. |
 | `HOMECTL_WG_ENDPOINT_IP` | Yes | Public IPv4 address agents use for WireGuard. |
 | `HOMECTL_GIT_REPO` | Yes | Git URL for the app-definition repository. |
+| `HOMECTL_GIT_TOKEN` | If the Git repo requires auth | Token used for non-interactive HTTPS Git clone/sync. `HOMECTL_GITHUB_TOKEN` and `GITHUB_TOKEN` are also accepted. |
+| `HOMECTL_GIT_USERNAME` | No | HTTPS Git username when using `HOMECTL_GIT_TOKEN`; defaults to `x-access-token` for GitHub PATs. |
 | `HOMECTL_REPO_DIR` | Yes | Path to the app repository inside the container. |
 | `HOMECTL_DOMAIN_SUFFIX` | Yes | Base domain for generated app routes. |
 | `HOMECTL_PUBLIC_HOST` | Yes | Public hostname reserved for the manager UI. |
@@ -167,8 +169,10 @@ Homectl expects apps under:
 ```
 
 On first manager startup, Homectl clones `HOMECTL_GIT_REPO` into
-`HOMECTL_REPO_DIR`. On later syncs, it runs `git pull --ff-only` in that
-checkout.
+`HOMECTL_REPO_DIR`. On later syncs, it fetches the configured upstream branch,
+resets the checkout to that remote state, and removes untracked and ignored
+files. Treat the Git remote as authoritative for everything under
+`HOMECTL_REPO_DIR`.
 
 An app may include `homectl-config.json` next to its Compose file for Homectl
 metadata such as exposed subdomains, excluded nodes, backup settings, and global
