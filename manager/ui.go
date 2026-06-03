@@ -7,14 +7,13 @@ import (
 	"strings"
 )
 
-//go:embed ui/dist/*
+//go:embed ui
 var uiFiles embed.FS
 
 // ServeUI returns an http.Handler that serves the embedded UI files
 // with SPA fallback for client-side routing
 func (m *Manager) ServeUI() http.Handler {
-	// Get the dist subdirectory
-	distFS, err := fs.Sub(uiFiles, "ui/dist")
+	distFS, err := embeddedUIFS()
 	if err != nil {
 		// Return a handler that reports the error
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,4 +42,11 @@ func (m *Manager) ServeUI() http.Handler {
 
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func embeddedUIFS() (fs.FS, error) {
+	if distFS, err := fs.Sub(uiFiles, "ui/dist"); err == nil {
+		return distFS, nil
+	}
+	return fs.Sub(uiFiles, "ui")
 }
