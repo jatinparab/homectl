@@ -67,9 +67,7 @@ services:
       - ../.homectl-dev/agent-1/config:/config
       - ../.homectl-dev/agent-1/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-1
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager
@@ -89,9 +87,7 @@ services:
       - ../.homectl-dev/agent-2/config:/config
       - ../.homectl-dev/agent-2/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-2
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager
@@ -111,9 +107,7 @@ services:
       - ../.homectl-dev/agent-3/config:/config
       - ../.homectl-dev/agent-3/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-3
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager

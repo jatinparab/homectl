@@ -294,12 +294,6 @@ func (c *Client) ListAgents() ([]AgentInfo, error) {
 	return nil, fmt.Errorf("not supported over tcp")
 }
 
-// TriggerSync triggers a git sync on the manager.
-func (c *Client) TriggerSync() error {
-	_, err := c.request(common.LinkReqAgentManagerSync, nil, 10*time.Second)
-	return err
-}
-
 // FetchDesiredApps fetches desired apps for this agent.
 func (c *Client) FetchDesiredApps(agentID string) (common.DesiredAppsResponse, error) {
 	_ = agentID

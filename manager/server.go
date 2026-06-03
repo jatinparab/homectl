@@ -115,11 +115,6 @@ func (m *Manager) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.GitSync(); err != nil {
-		http.Error(w, fmt.Sprintf("Sync failed: %s", err), http.StatusInternalServerError)
-		return
-	}
-
 	m.DiscoverApps()
 
 	w.WriteHeader(http.StatusOK)

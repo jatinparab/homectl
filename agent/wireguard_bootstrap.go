@@ -21,6 +21,13 @@ type wireGuardBootstrapResult struct {
 	ManagerURL string
 }
 
+func forceBootstrapWireGuard(agentName, bootstrapManagerURL string) (wireGuardBootstrapResult, error) {
+	configDir := config.WireGuardDir
+	keyDir := filepath.Join(configDir, "keys")
+	os.RemoveAll(keyDir)
+	return bootstrapWireGuard(agentName, bootstrapManagerURL)
+}
+
 func bootstrapWireGuard(agentName, bootstrapManagerURL string) (wireGuardBootstrapResult, error) {
 	joinToken := strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN"))
 	if joinToken == "" {

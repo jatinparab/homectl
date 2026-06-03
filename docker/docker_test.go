@@ -126,7 +126,7 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 
 func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
 	rootDir := filepath.Join("..", "testdata", "docker")
-	d := NewDocker(rootDir, "/srv/homectl/app-data", "root")
+	d := NewDocker(rootDir, "/srv/homectl/app-data")
 	d.SetComposeExtraArgs([]string{"-f", "docker-compose.gpu.yml", "--profile", "gpu"})
 
 	cmd := d.ComposeCommand("adguard", "up", "-d")
@@ -168,7 +168,7 @@ func envContains(env []string, want string) bool {
 
 func TestComposeEnvOverridesInheritedAPPDATA(t *testing.T) {
 	t.Setenv("APPDATA", "/wrong")
-	d := NewDocker("/tmp/docker", "/srv/homectl/app-data", "root")
+	d := NewDocker("/tmp/docker", "/srv/homectl/app-data")
 
 	env := d.ComposeEnv()
 	if !envContains(env, "APPDATA=/srv/homectl/app-data") {

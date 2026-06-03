@@ -600,7 +600,7 @@ func (m *Manager) handleAPIAppRestore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"app_id": appID, "restore_enabled": enabled})
 }
 
-// handleAPISync syncs the Git checkout, re-discovers apps, and tells all online agents to re-sync.
+// handleAPISync re-discovers apps and tells all online agents to re-sync.
 // POST /api/v1/sync
 func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -608,16 +608,10 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 1: Sync Git checkout
-	if err := m.GitSync(); err != nil {
-		http.Error(w, fmt.Sprintf("Git sync failed: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Step 2: Re-discover apps
+	// Step 1: Re-discover apps
 	m.DiscoverApps()
 
-	// Step 3: Fan out to all online agents
+	// Step 2: Fan out to all online agents
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 	var syncErrors []string

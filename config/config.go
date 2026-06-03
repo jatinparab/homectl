@@ -18,7 +18,7 @@ type Config struct {
 const (
 	ConfigDir          = "/config"
 	AppDataDir         = "/app-data"
-	RepoDir            = ConfigDir + "/repo"
+	RepoDir            = "/homelab"
 	StateDir           = ConfigDir + "/state"
 	AgentDockerRootDir = ConfigDir + "/docker"
 	CaddyDir           = ConfigDir + "/caddy"
@@ -29,7 +29,6 @@ const (
 type AgentConfig struct {
 	Name             string
 	IP               string
-	User             string
 	ComposeExtraArgs []string
 }
 
@@ -64,7 +63,6 @@ func (c *Config) GetAgentConfig(hostname string) *AgentConfig {
 	return &AgentConfig{
 		Name:             name,
 		IP:               ip,
-		User:             envOrDefault("HOMECTL_USER", "root"),
 		ComposeExtraArgs: composeExtraArgs,
 	}
 }
@@ -128,7 +126,7 @@ func parseComposeExtraArgs(value string) ([]string, error) {
 }
 
 func GetGitRepoDir(hostname string) string {
-	return RepoDir
+	return "/homelab"
 }
 
 func NewConfig() *Config {
