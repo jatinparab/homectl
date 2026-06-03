@@ -56,7 +56,7 @@ func main() {
 		slog.Info("Warning: Initial git sync failed (continuing anyway)", "err", err)
 	}
 
-	// Discover apps from docker/v2 and start reconcile loop
+	// Discover apps from docker and start reconcile loop
 	mgr.DiscoverApps()
 
 	// Start server before public route health checks. The generated Caddy config

@@ -339,7 +339,7 @@ func (m *Manager) handleCaddyConfig(w http.ResponseWriter, r *http.Request, agen
 	w.Write([]byte(config))
 }
 
-// handleDockerSync returns the docker/v2 folder as a tar.gz archive
+// handleDockerSync returns the docker folder as a tar.gz archive
 // GET /docker/sync
 func (m *Manager) handleDockerSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
