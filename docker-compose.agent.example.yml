@@ -10,6 +10,7 @@ services:
       HOMECTL_DOCKER_ROOT_DIR: /opt/homectl/docker
       HOMECTL_APPDATA_DIR: /opt/homectl/appdata
       HOMECTL_USER: root
+      HOMECTL_COMPOSE_EXTRA_ARGS: ""
       CADDY_ACME_EMAIL: you@example.com
       CLOUDFLARE_API_TOKEN: change-me
       RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path

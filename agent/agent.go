@@ -46,16 +46,17 @@ func initPackageLoggers() {
 
 // Agent manages docker applications on a host
 type Agent struct {
-	name          string
-	ip            string
-	docker        *docker.Docker
-	config        *config.Config
-	agentConfig   Config
-	managerClient *client.Client
-	managerURL    string
-	dockerRootDir string // Local directory for docker compose files
-	appdataDir    string // Local directory for app data
-	user          string // User for docker compose commands
+	name             string
+	ip               string
+	docker           *docker.Docker
+	config           *config.Config
+	agentConfig      Config
+	managerClient    *client.Client
+	managerURL       string
+	dockerRootDir    string // Local directory for docker compose files
+	appdataDir       string // Local directory for app data
+	user             string // User for docker compose commands
+	composeExtraArgs []string
 
 	// Runtime state
 	runtime      map[common.AppID]*AppRuntime
@@ -107,7 +108,7 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent instance
-func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string) *Agent {
+func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, dockerRootDir, appdataDir, user string, composeExtraArgs []string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
 	a := &Agent{
 		name:              name,
@@ -118,6 +119,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		dockerRootDir:     dockerRootDir,
 		appdataDir:        appdataDir,
 		user:              user,
+		composeExtraArgs:  append([]string(nil), composeExtraArgs...),
 		managerClient:     client.NewClient(managerURL),
 		runtime:           make(map[common.AppID]*AppRuntime),
 		assignedApps:      make(map[common.AppID]bool),
@@ -129,7 +131,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		repoUnlock:        NewRepoOpState(),
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
-		domainSuffix:     strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
+		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 	}
 	a.managerClient.SetIdentity(name, ip)
 	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
@@ -187,9 +189,9 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 		}
 	}
 
-	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User)
+	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, hostCfg.DockerRootDir, hostCfg.AppdataDir, hostCfg.User, hostCfg.ComposeExtraArgs)
 
-	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User)
+	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", hostCfg.DockerRootDir, "appdataDir", hostCfg.AppdataDir, "user", hostCfg.User, "composeExtraArgs", hostCfg.ComposeExtraArgs)
 
 	// Try to connect and load apps (best-effort)
 	agent.tryConnect()
@@ -233,6 +235,7 @@ func (a *Agent) SyncConfigs() error {
 
 	// Create Docker instance using local files
 	d := docker.NewDocker(a.dockerRootDir, a.appdataDir, a.user)
+	d.SetComposeExtraArgs(a.composeExtraArgs)
 	d.SetContext(a.sensorCtx)
 	if err := d.LoadApps(); err != nil {
 		return fmt.Errorf("load apps: %w", err)

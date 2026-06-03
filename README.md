@@ -151,6 +151,7 @@ Agent environment variables:
 | `HOMECTL_MANAGER_URL` | Yes | Public manager origin served by Caddy, for example `https://homectl.your-domain.example`. |
 | `HOMECTL_DOCKER_ROOT_DIR` | Yes | Host-visible path where synced Compose files are stored. |
 | `HOMECTL_APPDATA_DIR` | Yes | Host-visible path for app data. |
+| `HOMECTL_COMPOSE_EXTRA_ARGS` | No | Extra Docker Compose options for this agent, inserted before `up`, `down`, `pull`, `ps`, `stop`, and `logs`; for example `-f docker-compose.gpu.yml --profile gpu`. Relative `-f` paths are resolved from each app directory. |
 | `CADDY_ACME_EMAIL` | Recommended | Contact email used by the gateway agent's Caddy instance. |
 | `CLOUDFLARE_API_TOKEN` | If `CADDY_DNS_PROVIDER=cloudflare` | Token used by the agent Caddy DNS plugin for DNS-01 challenges. |
 | `RESTIC_REPOSITORY` | Recommended | Restic repository URL for backups. |
