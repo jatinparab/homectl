@@ -90,11 +90,31 @@ func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 		t.Fatalf("GenerateCaddyConfig: %v", err)
 	}
 
-	assertContains(t, caddyfile, "*.example.net, *.internal.example.net {")
-	assertContains(t, caddyfile, "@route0 host photos.example.net photos.internal.example.net")
-	assertContains(t, caddyfile, "import homectl_tls")
-	assertContains(t, caddyfile, "dns cloudflare {env.CLOUDFLARE_API_TOKEN}")
-	assertContains(t, caddyfile, "reverse_proxy http://homectl-photos:2283")
+	assertContains(t, caddyfile, "photos.example.net {\n\treverse_proxy http://homectl-photos:2283\n}")
+	assertContains(t, caddyfile, "photos.internal.example.net {\n\treverse_proxy http://homectl-photos:2283\n}")
+}
+
+func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.net")
+	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
+	t.Setenv("CADDY_DNS_TOKEN_ENV", "CF_DNS_API_TOKEN")
+	m := NewManager(t.TempDir(), 1338)
+	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
+		{
+			AppID:         "photos",
+			ObservedState: common.ObservedRunning,
+			Health:        common.HealthHealthy,
+			Port:          2283,
+		},
+	}, common.NodeMetrics{})
+
+	caddyfile, err := m.GenerateCaddyConfig("node-1")
+	if err != nil {
+		t.Fatalf("GenerateCaddyConfig: %v", err)
+	}
+
+	assertContains(t, caddyfile, "photos.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
+	assertContains(t, caddyfile, "photos.internal.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
 }
 
 func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {

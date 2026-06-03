@@ -2,12 +2,11 @@ services:
   agent:
     image: homectl/agent:latest
     container_name: homectl-agent
+    hostname: node-1
     restart: unless-stopped
     environment:
-      HOMECTL_AGENT_NAME: node-1
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_MANAGER_URL: https://homectl.your-domain.example
-      HOMECTL_USER: root
       HOMECTL_COMPOSE_EXTRA_ARGS: ""
       CADDY_ACME_EMAIL: you@example.com
       CLOUDFLARE_API_TOKEN: change-me

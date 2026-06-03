@@ -25,7 +25,6 @@ func InitLoggers() {
 	apiLog = slog.Default().With("area", "api")
 	appLog = slog.Default().With("area", "app")
 	backupMgrLog = slog.Default().With("area", "backup")
-	gitLog = slog.Default().With("area", "git")
 	leaseLog = slog.Default().With("area", "lease")
 	pruneStateLog = slog.Default().With("area", "backup")
 	publicRouteLog = slog.Default().With("area", "public-routes")
@@ -52,7 +51,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Manager handles git sync and file serving for agents
+// Manager handles app management and file serving for agents
 type Manager struct {
 	repoDir         string
 	stateDir        string
@@ -94,6 +93,9 @@ type Manager struct {
 	linkMu      sync.RWMutex
 	agentLinks  map[string]*agentLinkPeer // by agent name
 	tcpListener net.Listener
+
+	wgCleanupStop chan struct{}
+	startedAt     time.Time
 }
 
 // NewManager creates a new Manager instance with default lease config
@@ -130,7 +132,36 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	mgr.loadRepoState()
 	mgr.loadPruneState()
 	mgr.loadPublicRoutes()
+	mgr.startWireGuardCleanup()
 	return mgr
+}
+
+func (m *Manager) startWireGuardCleanup() {
+	m.startedAt = time.Now()
+	m.wgCleanupStop = make(chan struct{})
+	go m.wireGuardCleanupLoop()
+}
+
+func (m *Manager) wireGuardCleanupLoop() {
+	const wgCleanupInterval = 10 * time.Minute
+	const startupGracePeriod = 5 * time.Minute
+
+	ticker := time.NewTicker(wgCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if time.Since(m.startedAt) < startupGracePeriod {
+				continue
+			}
+			if err := m.CleanupStaleWireGuardPeers(); err != nil {
+				managerLog.Warn("WireGuard peer cleanup failed", "err", err)
+			}
+		case <-m.wgCleanupStop:
+			return
+		}
+	}
 }
 
 // RepoDir returns the repository directory
@@ -166,6 +197,9 @@ func (m *Manager) SetReconcileCancel(cancel context.CancelFunc) {
 
 // Stop stops the manager and cleans up resources
 func (m *Manager) Stop() {
+	if m.wgCleanupStop != nil {
+		close(m.wgCleanupStop)
+	}
 	if m.reconcileCancel != nil {
 		m.reconcileCancel()
 	}

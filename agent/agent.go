@@ -47,22 +47,23 @@ func initPackageLoggers() {
 
 // Agent manages docker applications on a host
 type Agent struct {
-	name             string
-	ip               string
-	docker           *docker.Docker
-	config           *config.Config
-	agentConfig      Config
-	managerClient    *client.Client
-	managerURL       string
-	bootstrapURL     string
-	wireGuardReady   bool
-	bootstrapMu      sync.Mutex
-	dockerRootDir    string // Local directory for docker compose files
-	appdataDir       string // Local directory for app data
-	appdataHostDir   string // Host path mounted at appdataDir, passed to Docker Compose
-	stateDir         string // Local directory for homectl-owned agent state
-	user             string // User for docker compose commands
-	composeExtraArgs []string
+	name                 string
+	ip                   string
+	docker               *docker.Docker
+	config               *config.Config
+	agentConfig          Config
+	managerClient        *client.Client
+	managerURL           string
+	bootstrapURL         string
+	wireGuardReady       bool
+	bootstrapMu          sync.Mutex
+	lastBootstrapAttempt time.Time
+	lastConnectedAt      time.Time
+	dockerRootDir        string // Local directory for docker compose files
+	appdataDir           string // Local directory for app data
+	appdataHostDir       string // Host path mounted at appdataDir, passed to Docker Compose
+	stateDir             string // Local directory for homectl-owned agent state
+	composeExtraArgs     []string
 
 	// Runtime state
 	runtime      map[common.AppID]*AppRuntime
@@ -82,6 +83,8 @@ type Agent struct {
 	// Connection state
 	connected   bool
 	connectedMu sync.RWMutex
+	appsReady   bool
+	appsReadyMu sync.RWMutex
 
 	// Background goroutines
 	renewalTicker *time.Ticker
@@ -114,7 +117,7 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent instance
-func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, bootstrapURL string, wireGuardReady bool, appdataHostDir, user string, composeExtraArgs []string) *Agent {
+func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, bootstrapURL string, wireGuardReady bool, appdataHostDir string, composeExtraArgs []string) *Agent {
 	sensorCtx, sensorCancel := context.WithCancel(context.Background())
 	a := &Agent{
 		name:              name,
@@ -128,7 +131,6 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		appdataDir:        config.AppDataDir,
 		appdataHostDir:    appdataHostDir,
 		stateDir:          config.StateDir,
-		user:              user,
 		composeExtraArgs:  append([]string(nil), composeExtraArgs...),
 		managerClient:     client.NewClient(managerURL),
 		runtime:           make(map[common.AppID]*AppRuntime),
@@ -142,6 +144,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
 		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
+		lastConnectedAt:   time.Now(),
 	}
 	a.managerClient.SetIdentity(name, ip)
 	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
@@ -205,9 +208,9 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 		}
 	}
 
-	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, bootstrapURL, wireGuardReady, appdataHostDir, hostCfg.User, hostCfg.ComposeExtraArgs)
+	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, bootstrapURL, wireGuardReady, appdataHostDir, hostCfg.ComposeExtraArgs)
 
-	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", config.AgentDockerRootDir, "appdataDir", config.AppDataDir, "appdataHostDir", appdataHostDir, "user", hostCfg.User, "composeExtraArgs", hostCfg.ComposeExtraArgs)
+	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", config.AgentDockerRootDir, "appdataDir", config.AppDataDir, "appdataHostDir", appdataHostDir, "composeExtraArgs", hostCfg.ComposeExtraArgs)
 
 	// Try to connect and load apps (best-effort)
 	agent.tryConnect()
@@ -215,7 +218,9 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 	return agent, nil
 }
 
-// tryConnect attempts to connect to the manager and sync docker configs
+// tryConnect attempts to connect to the manager and sync docker configs.
+// TCP connection is independent from docker sync so the agent can heartbeat
+// even when the homelab directory hasn't been set up yet.
 func (a *Agent) tryConnect() {
 	a.retryWireGuardBootstrap()
 
@@ -223,6 +228,7 @@ func (a *Agent) tryConnect() {
 		if err := a.managerClient.Connect(a.agentConfig.ConnectionTimeout); err != nil {
 			agentLog.Info("Manager TCP link unavailable (will retry)", "url", a.managerURL, "err", err)
 			a.setConnected(false)
+			a.setAppsReady(false)
 			return
 		}
 	}
@@ -230,34 +236,70 @@ func (a *Agent) tryConnect() {
 	if err := a.managerClient.Health(); err != nil {
 		agentLog.Info("Manager not available (will retry)", "url", a.managerURL, "err", err)
 		a.setConnected(false)
+		a.setAppsReady(false)
 		return
+	}
+
+	if !a.IsConnected() {
+		a.setConnected(true)
+		agentLog.Info("Connected to manager over TCP", "url", a.managerURL)
 	}
 
 	if err := a.SyncConfigs(); err != nil {
 		agentLog.Info("Failed to sync configs (will retry)", "err", err)
-		a.setConnected(false)
+		a.setAppsReady(false)
 		return
 	}
 
-	a.setConnected(true)
-	agentLog.Info("Connected to manager over TCP", "url", a.managerURL)
+	a.setAppsReady(true)
+	agentLog.Info("Docker configs synced and apps loaded")
 }
 
 func (a *Agent) retryWireGuardBootstrap() {
 	a.bootstrapMu.Lock()
 	defer a.bootstrapMu.Unlock()
-	if a.wireGuardReady || strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")) == "" || strings.TrimSpace(a.bootstrapURL) == "" {
+
+	tok := strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN"))
+	if tok == "" || strings.TrimSpace(a.bootstrapURL) == "" {
 		return
 	}
+
+	if a.wireGuardReady {
+		if a.IsConnected() {
+			a.lastConnectedAt = time.Now()
+			return
+		}
+		if time.Since(a.lastConnectedAt) < a.agentConfig.BootstrapCooldown {
+			return
+		}
+		if time.Since(a.lastBootstrapAttempt) < a.agentConfig.BootstrapCooldown {
+			return
+		}
+		a.lastBootstrapAttempt = time.Now()
+		bootstrap, err := forceBootstrapWireGuard(a.name, a.bootstrapURL)
+		if err != nil {
+			agentLog.Info("WireGuard re-bootstrap failed (will retry)", "err", err)
+			return
+		}
+		a.applyBootstrap(bootstrap)
+		return
+	}
+
+	a.lastBootstrapAttempt = time.Now()
 	bootstrap, err := bootstrapWireGuard(a.name, a.bootstrapURL)
 	if err != nil {
 		agentLog.Info("WireGuard bootstrap unavailable (will retry)", "err", err)
 		return
 	}
+	a.applyBootstrap(bootstrap)
+}
+
+func (a *Agent) applyBootstrap(bootstrap wireGuardBootstrapResult) {
 	a.name = bootstrap.AgentName
 	a.ip = bootstrap.AgentIP
 	a.managerURL = bootstrap.ManagerURL
 	a.wireGuardReady = true
+	a.lastConnectedAt = time.Now()
 	a.managerClient.SetIdentity(a.name, a.ip)
 	a.managerClient.SetBaseURL(a.managerURL)
 	agentLog.Info("WireGuard bootstrap succeeded", "name", a.name, "ip", a.ip, "managerURL", a.managerURL)
@@ -272,7 +314,7 @@ func (a *Agent) SyncConfigs() error {
 	agentLog.Info("Docker configs synced successfully")
 
 	// Create Docker instance using local files
-	d := docker.NewDocker(a.dockerRootDir, a.appdataHostDir, a.user)
+	d := docker.NewDocker(a.dockerRootDir, a.appdataHostDir)
 	d.SetComposeExtraArgs(a.composeExtraArgs)
 	d.SetContext(a.sensorCtx)
 	if err := d.LoadApps(); err != nil {
@@ -309,13 +351,30 @@ func (a *Agent) setConnected(connected bool) {
 	a.connectedMu.Lock()
 	defer a.connectedMu.Unlock()
 	a.connected = connected
+	if connected {
+		a.lastConnectedAt = time.Now()
+	}
 }
 
-// IsConnected returns whether the agent is connected to the manager
+// IsConnected returns whether the agent is connected to the manager via TCP
 func (a *Agent) IsConnected() bool {
 	a.connectedMu.RLock()
 	defer a.connectedMu.RUnlock()
 	return a.connected
+}
+
+// setAppsReady sets whether docker configs have been synced and apps are loaded.
+func (a *Agent) setAppsReady(ready bool) {
+	a.appsReadyMu.Lock()
+	defer a.appsReadyMu.Unlock()
+	a.appsReady = ready
+}
+
+// IsAppsReady returns whether docker configs are synced and the executor is initialized.
+func (a *Agent) IsAppsReady() bool {
+	a.appsReadyMu.RLock()
+	defer a.appsReadyMu.RUnlock()
+	return a.appsReady
 }
 
 // Start starts all background loops.
@@ -366,7 +425,7 @@ func (a *Agent) heartbeatLoop() {
 	}
 }
 
-// reconnectLoop attempts to reconnect when disconnected.
+// reconnectLoop attempts to reconnect when disconnected or when apps are not ready.
 // May block during connection attempts.
 func (a *Agent) reconnectLoop() {
 	defer a.wg.Done()
@@ -377,7 +436,7 @@ func (a *Agent) reconnectLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			if !a.IsConnected() {
+			if !a.IsConnected() || !a.IsAppsReady() {
 				a.tryConnect()
 			}
 		case <-a.stopChan:
@@ -397,7 +456,7 @@ func (a *Agent) reconcileLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			if a.IsConnected() {
+			if a.IsAppsReady() {
 				a.reconcileOnce()
 			}
 		case <-a.stopChan:

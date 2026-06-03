@@ -199,7 +199,6 @@ func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]
 			return peers, peers[i]
 		}
 	}
-	// Validate key length (44 base64 chars = 32 bytes)
 	if len(publicKey) != 44 {
 		return peers, wireGuardPeerState{}
 	}
@@ -210,4 +209,36 @@ func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]
 	}
 	peers = append(peers, peer)
 	return peers, peer
+}
+
+func (m *Manager) CleanupStaleWireGuardPeers() error {
+	peers, err := m.loadWireGuardPeers()
+	if err != nil {
+		return err
+	}
+	alive := make(map[string]bool)
+	for _, agent := range m.leaseManager.ListAgents() {
+		alive[agent.Name] = true
+	}
+	changed := false
+	filtered := make([]wireGuardPeerState, 0, len(peers))
+	for _, peer := range peers {
+		if alive[peer.Name] {
+			filtered = append(filtered, peer)
+		} else {
+			managerLog.Info("Removing stale WireGuard peer", "peer", peer.Name)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := m.saveWireGuardPeers(filtered); err != nil {
+		return err
+	}
+	privateKey, _, err := wireguard.EnsureKeyPair(m.wireGuardDir())
+	if err != nil {
+		return err
+	}
+	return m.reconcileWireGuard(privateKey, filtered)
 }

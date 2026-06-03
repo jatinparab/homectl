@@ -90,10 +90,10 @@ ADMIN_PASSWORD: replace-me
 docker compose -f docker-compose.example.yml up -d
 ```
 
-4. On each agent host, copy `docker-compose.agent.example.yml` and edit:
+4. On each agent host, copy `docker-compose.agent.example.yml`, set a stable
+   `hostname:` for that node, and edit:
 
 ```yaml
-HOMECTL_AGENT_NAME: node-1
 HOMECTL_JOIN_TOKEN: replace-with-the-manager-token
 HOMECTL_MANAGER_URL: https://homectl.your-domain.example
 CADDY_ACME_EMAIL: you@example.com
@@ -148,7 +148,6 @@ Agent environment variables:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `HOMECTL_AGENT_NAME` | Yes | Stable agent name shown in the manager. |
 | `HOMECTL_JOIN_TOKEN` | Yes | Must match the manager join token. |
 | `HOMECTL_MANAGER_URL` | Yes | Public manager origin served by Caddy, for example `https://homectl.your-domain.example`. |
 | `HOMECTL_COMPOSE_EXTRA_ARGS` | No | Extra Docker Compose options for this agent, inserted before `up`, `down`, `pull`, `ps`, `stop`, and `logs`; for example `-f docker-compose.gpu.yml --profile gpu`. Relative `-f` paths are resolved from each app directory. |

@@ -14,8 +14,7 @@ COPY --from=web /web/dist /src/manager/ui/dist
 RUN CGO_ENABLED=0 go build -o /out/manager ./manager/cmd
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates caddy docker-cli docker-cli-compose git openssh-client wireguard-tools
-RUN git config --system --add safe.directory '*'
+RUN apk add --no-cache ca-certificates caddy docker-cli docker-cli-compose openssh-client wireguard-tools
 COPY --from=builder /out/manager /usr/local/bin/manager
 EXPOSE 80 443 51844/udp
 VOLUME ["/config"]
