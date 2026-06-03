@@ -97,7 +97,7 @@ func (m *Manager) attachAgentLink(conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	if hello.Type != common.LinkTypeHello || hello.AgentName == "" {
+	if hello.Type != common.LinkTypeHello || hello.AgentName == "" || !validJoinToken(hello.JoinToken) {
 		_ = conn.Close()
 		return
 	}
@@ -183,8 +183,8 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 			resp.Status = res.status
 			resp.Body = res.body
 		}
-	case common.LinkReqAgentTraefik:
-		res, err := m.invokeRawEndpoint(http.MethodGet, fmt.Sprintf("/agents/%s/traefik-config", peer.name), nil)
+	case common.LinkReqAgentCaddy, common.LinkReqAgentTraefik:
+		res, err := m.invokeRawEndpoint(http.MethodGet, fmt.Sprintf("/agents/%s/caddy-config", peer.name), nil)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
 			resp.Error = err.Error()
@@ -242,6 +242,8 @@ func (m *Manager) invokeRawEndpoint(method, path string, body []byte) (rawRespon
 	case path == "/sync":
 		m.handleSync(rec, req)
 	case strings.HasPrefix(path, "/agents/") && strings.HasSuffix(path, "/desired"):
+		m.handleAgentRoutes(rec, req)
+	case strings.HasPrefix(path, "/agents/") && strings.HasSuffix(path, "/caddy-config"):
 		m.handleAgentRoutes(rec, req)
 	case strings.HasPrefix(path, "/agents/") && strings.HasSuffix(path, "/traefik-config"):
 		m.handleAgentRoutes(rec, req)

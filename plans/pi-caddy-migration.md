@@ -19,7 +19,7 @@ This plan is based on `docs/plans/caddy-migration.md`, plus a repo-level audit o
 | **Agent-side config sync with write-on-diff** (avoid proxy reload churn/temporary 404s) | `agent/traefik.go`, `agent/agent.go` | Introduce `CaddySync` with same diff-aware write behavior; write Caddyfile only when changed. |
 | **Generated dynamic routing model** per running app | `manager/traefik.go` (`GenerateTraefikConfig`) | Implement `GenerateCaddyConfig` producing deterministic Caddyfile site blocks. |
 | **Routing target selection** local app via `172.17.0.1`, remote app via agent IP | `manager/traefik.go` | Keep identical backend target logic in Caddy `reverse_proxy`. |
-| **Domain model**: both public and internal hostnames per app | `manager/traefik.go`, `docs/networking.md` | Keep both hostnames in each Caddy site block (`{app}.sulphurgfx.com`, `{app}.internal.sulphurgfx.com`). |
+| **Domain model**: both public and internal hostnames per app | `manager/traefik.go`, `docs/networking.md` | Keep both hostnames in each Caddy site block (`{app}.example.com`, `{app}.internal.example.com`). |
 | **`exposed_subdomains` overrides** in `homectl-config.json` | `manager/traefik.go` + `HomectlConfig` | Preserve exact behavior: map subdomain → port; deterministic sort order in generated output. |
 | **HTTP/HTTPS ingress ports and redirect behavior** | `testdata/docker/v2/traefik/docker-compose.yml` flags (`web`, `websecure`, redirect) | Let Caddy handle automatic HTTPS and HTTP→HTTPS redirect on :80/:443. |
 | **ACME TLS with persisted cert storage** | `testdata/docker/v2/traefik/docker-compose.yml` (`/data/letsencrypt.json`) | Persist Caddy storage (`/data`, optional `/config`) under appdata to preserve cert/account state. |

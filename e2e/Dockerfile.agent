@@ -7,7 +7,7 @@ RUN CGO_ENABLED=0 go build -o /agent ./agent/cmd
 
 # docker:dind provides the Docker daemon + CLI needed to run compose apps
 FROM docker:27-dind
-RUN apk add --no-cache docker-compose
+RUN apk add --no-cache docker-compose wireguard-tools caddy
 COPY --from=builder /agent /usr/local/bin/agent
 COPY e2e/entrypoint-agent.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

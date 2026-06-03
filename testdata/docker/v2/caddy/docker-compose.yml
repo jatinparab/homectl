@@ -1,0 +1,17 @@
+services:
+  caddy:
+    container_name: homectl-caddy
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    network_mode: "container:homectl-agent"
+    env_file:
+      - .env
+    volumes:
+      - ${APPDATA:?'environment variable not set'}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${APPDATA:?'environment variable not set'}/caddy/data:/data
+      - ${APPDATA:?'environment variable not set'}/caddy/config:/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

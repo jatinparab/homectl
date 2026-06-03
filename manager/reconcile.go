@@ -66,7 +66,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	m.reconcileRepoOps(now)
 }
 
-// resolveGateway picks one online agent with traefik running+healthy as the gateway node.
+// resolveGateway picks one online agent with the gateway proxy running+healthy as the gateway node.
 // It prefers candidates that also report adguard running+healthy. If a manual
 // gateway is set and valid, uses it.
 func (m *Manager) resolveGateway() {
@@ -82,7 +82,7 @@ func (m *Manager) resolveGateway() {
 
 	// Check if manual gateway is set and still valid
 	if m.manualGatewayNode != "" {
-		if m.isTraefikHealthy(m.manualGatewayNode) {
+		if m.isGatewayProxyHealthy(m.manualGatewayNode) {
 			if m.gatewayNode != m.manualGatewayNode {
 				reconcileLog.Debug("Gateway: using manual selection", "node", m.manualGatewayNode)
 			}
@@ -142,7 +142,7 @@ func (m *Manager) selectGatewayCandidate() string {
 }
 
 func (m *Manager) gatewayCandidateRank(agentName string) int {
-	if !m.isTraefikHealthy(agentName) {
+	if !m.isGatewayProxyHealthy(agentName) {
 		return 0
 	}
 	if m.isAgentAppHealthy(agentName, "adguard") {
@@ -212,9 +212,9 @@ func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
 	return nil
 }
 
-// isTraefikHealthy checks if an agent reports traefik as running+healthy.
-func (m *Manager) isTraefikHealthy(agentName string) bool {
-	return m.isAgentAppHealthy(agentName, "traefik")
+// isGatewayProxyHealthy checks if an agent reports the gateway proxy as running+healthy.
+func (m *Manager) isGatewayProxyHealthy(agentName string) bool {
+	return m.isAgentAppHealthy(agentName, common.GatewayProxyAppID)
 }
 
 func (m *Manager) isAgentAppHealthy(agentName string, appID common.AppID) bool {

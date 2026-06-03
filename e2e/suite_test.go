@@ -1,3 +1,5 @@
+//go:build e2e
+
 // Package e2e contains end-to-end tests for homectl.
 // The tests run against a live cluster started with `make e2e` (or `e2e/run.sh up`).
 //
@@ -7,10 +9,10 @@
 //	make e2e
 //
 //	# Then run tests (from repo root)
-//	go test -v -timeout 15m ./e2e/
+//	make e2e-tests
 //
 //	# Or run with a non-default manager URL
-//	HOMECTL_MANAGER_URL=http://localhost:1338 go test -v -timeout 15m ./e2e/
+//	HOMECTL_MANAGER_URL=http://localhost:1338 go test -tags=e2e -v -timeout 15m ./e2e/
 package e2e_test
 
 import (
@@ -34,10 +36,10 @@ const (
 	node2 = "e2e-node-2"
 	node3 = "e2e-node-3"
 
-	// apps present in e2e/apps/ — traefik+adguard are DesiredRunning by default
-	appAdguard    = "adguard"
-	appTraefik    = "traefik"
-	appPaperless  = "paperless"
+	// apps present in e2e/apps/ — caddy+adguard are DesiredRunning by default
+	appAdguard     = "adguard"
+	appCaddy       = "caddy"
+	appPaperless   = "paperless"
 	appVaultwarden = "vaultwarden"
 )
 
@@ -72,14 +74,14 @@ type NodeMetrics struct {
 }
 
 type AppReport struct {
-	AppID         string  `json:"app_id"`
-	ObservedState string  `json:"observed_state"`
-	Health        string  `json:"health"`
-	Phase         string  `json:"phase"`
-	LastError     string  `json:"last_error"`
-	RestartCount  int     `json:"restart_count"`
-	Quarantined   bool    `json:"quarantined"`
-	Port          int     `json:"port"`
+	AppID         string `json:"app_id"`
+	ObservedState string `json:"observed_state"`
+	Health        string `json:"health"`
+	Phase         string `json:"phase"`
+	LastError     string `json:"last_error"`
+	RestartCount  int    `json:"restart_count"`
+	Quarantined   bool   `json:"quarantined"`
+	Port          int    `json:"port"`
 }
 
 type APIAgentInfo struct {
@@ -106,13 +108,13 @@ type NodeReport struct {
 }
 
 type AppStatus struct {
-	AppID         string      `json:"app_id"`
-	DesiredState  string      `json:"desired_state"`
-	AssignedAgent *string     `json:"assigned_agent"`
-	IsGlobal      bool        `json:"is_global"`
-	ObservedState string      `json:"observed_state"`
-	Health        string      `json:"health"`
-	Phase         string      `json:"phase"`
+	AppID         string       `json:"app_id"`
+	DesiredState  string       `json:"desired_state"`
+	AssignedAgent *string      `json:"assigned_agent"`
+	IsGlobal      bool         `json:"is_global"`
+	ObservedState string       `json:"observed_state"`
+	Health        string       `json:"health"`
+	Phase         string       `json:"phase"`
 	NodeReports   []NodeReport `json:"node_reports"`
 }
 

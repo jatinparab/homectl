@@ -23,6 +23,7 @@ func (m *Manager) NewServer() *http.Server {
 
 	// Health check
 	mux.HandleFunc("/health", m.handleHealth)
+	mux.HandleFunc("/api/join", m.handleAgentJoin)
 
 	// File serving
 	mux.HandleFunc("/files/", m.handleFiles)
@@ -211,8 +212,10 @@ func (m *Manager) handleAgentRoutes(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "desired":
 		m.handleDesiredApps(w, r, agentID)
+	case "caddy-config":
+		m.handleCaddyConfig(w, r, agentID)
 	case "traefik-config":
-		m.handleTraefikConfig(w, r, agentID)
+		m.handleCaddyConfig(w, r, agentID)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
@@ -317,22 +320,22 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	}
 }
 
-// handleTraefikConfig returns the traefik config for an agent
-// GET /agents/{id}/traefik-config
-func (m *Manager) handleTraefikConfig(w http.ResponseWriter, r *http.Request, agentID string) {
+// handleCaddyConfig returns the Caddy config for an agent.
+// GET /agents/{id}/caddy-config
+func (m *Manager) handleCaddyConfig(w http.ResponseWriter, r *http.Request, agentID string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	config, err := m.GenerateTraefikConfig(agentID)
+	config, err := m.GenerateCaddyConfig(agentID)
 	if err != nil {
-		serverLog.Error("Failed to generate traefik config", "agent", agentID, "err", err)
+		serverLog.Error("Failed to generate Caddy config", "agent", agentID, "err", err)
 		http.Error(w, "Failed to generate config", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/yaml")
+	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(config))
 }
 
