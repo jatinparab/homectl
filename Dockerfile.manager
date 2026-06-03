@@ -18,5 +18,5 @@ RUN apk add --no-cache ca-certificates caddy docker-cli docker-cli-compose git o
 RUN git config --system --add safe.directory '*'
 COPY --from=builder /out/manager /usr/local/bin/manager
 EXPOSE 80 443 51844/udp
-VOLUME ["/opt/homectl"]
+VOLUME ["/config"]
 ENTRYPOINT ["/usr/local/bin/manager"]

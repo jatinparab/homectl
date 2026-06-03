@@ -12,8 +12,8 @@ done
 echo "[dev-agent] Docker daemon ready"
 
 # Create required directories
-mkdir -p "${HOMECTL_APPDATA_DIR:-/appdata}"
-mkdir -p "${HOMECTL_DOCKER_ROOT_DIR:-/docker}"
+mkdir -p /app-data
+mkdir -p /config/docker
 
 # Run agent via Air — rebuilds automatically on Go source changes
 exec /go/bin/air -c /src/dev/.air.agent.toml
