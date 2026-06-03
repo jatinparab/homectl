@@ -1,3 +1,5 @@
+//go:build e2e
+
 package e2e_test
 
 import (
@@ -16,13 +18,13 @@ const containerStopTimeout = 2 * time.Minute
 
 // ─── default running apps ────────────────────────────────────────────────────
 
-// TestTraefikRunningOnAgent verifies that the traefik container eventually
+// TestCaddyRunningOnAgent verifies that the caddy container eventually
 // reaches observed_state=running on whichever agent it was assigned to.
 // This tests the full pipeline: manager assigns → agent syncs configs → agent
 // runs docker compose up → agent sensor detects running → agent reports via
 // heartbeat → manager shows observed_state=running.
-func TestTraefikRunningOnAgent(t *testing.T) {
-	waitForAppRunning(t, appTraefik)
+func TestCaddyRunningOnAgent(t *testing.T) {
+	waitForAppRunning(t, appCaddy)
 }
 
 // TestAdguardRunningOnAgent verifies that adguard reaches observed_state=running.
@@ -120,36 +122,36 @@ func TestPaperlessStartStopCycle(t *testing.T) {
 
 // ─── agent-reported state ────────────────────────────────────────────────────
 
-// TestAgentReportsAppState verifies that after traefik starts, the assigned
+// TestAgentReportsAppState verifies that after caddy starts, the assigned
 // agent includes it in its app_reports with observed_state=running.
 func TestAgentReportsAppState(t *testing.T) {
-	// Ensure traefik is running before we check agent reports
-	waitForAppRunning(t, appTraefik)
+	// Ensure caddy is running before we check agent reports
+	waitForAppRunning(t, appCaddy)
 
-	// Find the assigned agent for traefik
+	// Find the assigned agent for caddy
 	apps := getApps(t)
-	traefik := findApp(apps, appTraefik)
-	if traefik == nil || traefik.AssignedAgent == nil {
-		t.Skip("traefik not assigned to any agent")
+	caddy := findApp(apps, appCaddy)
+	if caddy == nil || caddy.AssignedAgent == nil {
+		t.Skip("caddy not assigned to any agent")
 	}
-	assignedNode := *traefik.AssignedAgent
+	assignedNode := *caddy.AssignedAgent
 
-	// The assigned agent should report traefik as running in its app_reports
-	poll(t, "agent "+assignedNode+" reports traefik running", 1*time.Minute, 5*time.Second, func() string {
+	// The assigned agent should report caddy as running in its app_reports
+	poll(t, "agent "+assignedNode+" reports caddy running", 1*time.Minute, 5*time.Second, func() string {
 		agents := getAgents(t)
 		agent := findAgent(agents, assignedNode)
 		if agent == nil {
 			return fmt.Sprintf("agent %q not found", assignedNode)
 		}
 		for _, r := range agent.AppReports {
-			if r.AppID == appTraefik {
+			if r.AppID == appCaddy {
 				if r.ObservedState == "running" {
 					return ""
 				}
 				return fmt.Sprintf("app_report observed_state=%q", r.ObservedState)
 			}
 		}
-		return "traefik not in agent app_reports"
+		return "caddy not in agent app_reports"
 	})
 }
 

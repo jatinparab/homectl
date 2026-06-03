@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,7 +27,8 @@ const (
 	PublicRouteModeHomelab = "homelab"
 	PublicRouteModeCustom  = "custom"
 
-	homectlPublicHost = "homectl.example.net"
+	homectlLocalhostAlias = "homectl-localhost"
+	managerLocalhostAlias = "manager-localhost"
 )
 
 var publicRouteHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -118,6 +119,13 @@ func publicRouteID(host string) string {
 	return strings.Trim(id, "-")
 }
 
+func homectlPublicHost() (string, error) {
+	if host := normalizePublicRouteHost(os.Getenv("HOMECTL_PUBLIC_HOST")); host != "" {
+		return host, nil
+	}
+	return "", errors.New("HOMECTL_PUBLIC_HOST is required")
+}
+
 func normalizePublicRouteHost(host string) string {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if h, _, ok := strings.Cut(host, ":"); ok {
@@ -128,6 +136,10 @@ func normalizePublicRouteHost(host string) string {
 }
 
 func validatePublicRoute(route PublicRoute) error {
+	publicHost, err := homectlPublicHost()
+	if err != nil {
+		return err
+	}
 	route.Host = normalizePublicRouteHost(route.Host)
 	if route.Host == "" {
 		return errors.New("host is required")
@@ -135,8 +147,8 @@ func validatePublicRoute(route PublicRoute) error {
 	if !publicRouteHostPattern.MatchString(route.Host) {
 		return fmt.Errorf("invalid host %q", route.Host)
 	}
-	if route.Host == homectlPublicHost {
-		return fmt.Errorf("%s is reserved for the manager UI", homectlPublicHost)
+	if route.Host == publicHost {
+		return fmt.Errorf("%s is reserved for the manager UI", publicHost)
 	}
 	switch route.Mode {
 	case PublicRouteModeHomelab:
@@ -201,10 +213,10 @@ func (m *Manager) StartPublicRouteLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				m.refreshPublicRouteHealth(ctx)
 				if err := m.SyncCaddyConfig(); err != nil {
 					publicRouteLog.Warn("Caddy sync failed", "err", err)
 				}
-				m.refreshPublicRouteHealth(ctx)
 			}
 		}
 	}()
@@ -215,15 +227,30 @@ func (m *Manager) refreshPublicRouteHealth(ctx context.Context) {
 	routes := append([]PublicRoute(nil), m.publicRoutes...)
 	m.publicRoutesMu.RUnlock()
 
+	publicRouteLog.Info("Checking public route health", "count", len(routes))
+
 	health := make(map[string]PublicRouteHealth, len(routes))
 	for _, route := range routes {
-		health[route.ID] = m.checkPublicRoute(ctx, route)
+		func(r PublicRoute) {
+			defer func() {
+				if v := recover(); v != nil {
+					publicRouteLog.Warn("Panic checking route", "host", r.Host, "panic", v)
+				}
+			}()
+			health[r.ID] = m.checkPublicRoute(ctx, r)
+		}(route)
 	}
 	m.publicRoutesMu.Lock()
-	for id, value := range health {
-		m.routeHealth[id] = value
+	for id, v := range health {
+		if v.CheckedAt.IsZero() {
+			v.CheckedAt = time.Now()
+			v.Status = "unhealthy"
+			v.LastError = "health check did not complete"
+		}
+		m.routeHealth[id] = v
 	}
 	m.publicRoutesMu.Unlock()
+	publicRouteLog.Info("Public route health updated", "count", len(health))
 }
 
 func (m *Manager) checkPublicRoute(ctx context.Context, route PublicRoute) PublicRouteHealth {
@@ -288,23 +315,62 @@ func (m *Manager) publicRouteTarget(route PublicRoute) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return u.Scheme + "://" + u.Host, nil
+		u.Path = ""
+		u.RawPath = ""
+		u.RawQuery = ""
+		u.Fragment = ""
+		return resolveManagerLocalhostTarget(u.String()), nil
 	}
 	gateway := m.getGatewayNode()
 	if gateway == "" {
 		return "", errors.New("no gateway selected")
 	}
 	agent, ok := m.leaseManager.GetAgent(gateway)
-	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+	if !ok || time.Since(agent.LastSeen) > 90*time.Second {
 		return "", errors.New("gateway offline")
+	}
+	if wgIP := m.agentWireGuardAddress(gateway); wgIP != "" {
+		return "https://" + wgIP, nil
 	}
 	if agent.IP == "" {
 		return "", errors.New("gateway IP unavailable")
 	}
-	if cfg := m.config.GetAgentConfig(gateway); cfg != nil && cfg.IP != "" {
-		return "https://" + cfg.IP, nil
-	}
 	return "https://" + agent.IP, nil
+}
+
+func resolveManagerLocalhostTarget(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		return target
+	}
+	host := u.Hostname()
+	if host != homectlLocalhostAlias && host != managerLocalhostAlias {
+		return target
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return target
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(ips[0], port)
+	} else {
+		u.Host = ips[0]
+	}
+	return u.String()
+}
+
+func (m *Manager) agentWireGuardAddress(agentName string) string {
+	peers, err := m.loadWireGuardPeers()
+	if err != nil {
+		publicRouteLog.Warn("Failed to read WireGuard peers", "err", err)
+		return ""
+	}
+	for _, peer := range peers {
+		if peer.Name == agentName {
+			return strings.TrimSpace(peer.Address)
+		}
+	}
+	return ""
 }
 
 func (m *Manager) SyncCaddyConfig() error {
@@ -316,43 +382,22 @@ func (m *Manager) SyncCaddyConfig() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(managerCaddyAccessLogPath()), 0755); err != nil {
+		return err
+	}
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, []byte(content)) {
-		return nil
+		if isCaddyRunning() {
+			return nil
+		}
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return err
 	}
-	if err := reloadCaddy(path); err != nil {
+	if err := ensureCaddy(); err != nil {
 		return err
 	}
-	return nil
-}
-
-func managerCaddyfilePath() string {
-	if path := os.Getenv("HOMECTL_CADDYFILE"); path != "" {
-		return path
-	}
-	return "/etc/caddy/Caddyfile"
-}
-
-func managerCaddyAccessLogPath() string {
-	if path := os.Getenv("HOMECTL_CADDY_ACCESS_LOG"); path != "" {
-		return path
-	}
-	return "/var/log/homectl/caddy-access.log"
-}
-
-func reloadCaddy(configPath string) error {
-	caddyBin := os.Getenv("HOMECTL_CADDY_BIN")
-	if caddyBin == "" {
-		caddyBin = "caddy"
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, caddyBin, "reload", "--config", configPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("caddy reload failed: %w: %s", err, strings.TrimSpace(string(output)))
+	if err := reloadCaddy(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -373,7 +418,12 @@ func (m *Manager) GenerateManagerCaddyfile() (string, error) {
 		fmt.Fprintf(&b, "\tlog {\n\t\toutput file %s {\n\t\t\troll_size 10MiB\n\t\t\troll_keep 5\n\t\t}\n\t\tformat json\n\t}\n", managerCaddyAccessLogPath())
 	}
 
-	fmt.Fprintf(&b, "%s {\n", homectlPublicHost)
+	publicHost, err := homectlPublicHost()
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(&b, "%s {\n", publicHost)
 	writeAccessLog()
 	b.WriteString("\treverse_proxy 127.0.0.1:1338\n")
 	b.WriteString("}\n\n")
@@ -449,13 +499,18 @@ func (m *Manager) readPublicRouteStats() map[string]routeStats {
 
 func (m *Manager) requirePublicHostBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if normalizePublicRouteHost(r.Host) != homectlPublicHost {
+		publicHost, err := homectlPublicHost()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if normalizePublicRouteHost(r.Host) != publicHost {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Public API routes are consumed by the browser directly, including the
-		// websocket dashboard stream. Keep auth on the UI surface, not the API.
-		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		// Public API routes are consumed by the browser and agents directly.
+		// Keep basic auth on the UI surface; /api/join is token-authenticated.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.Path == "/api/join" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -1,0 +1,30 @@
+services:
+  manager:
+    image: homectl/manager:latest
+    container_name: homectl-manager
+    restart: unless-stopped
+    environment:
+      HOMECTL_JOIN_TOKEN: change-me
+      HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
+      HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
+      HOMECTL_REPO_DIR: /opt/homectl/repo
+      HOMECTL_DOMAIN_SUFFIX: your-domain.example
+      HOMECTL_PUBLIC_HOST: homectl.your-domain.example
+      CADDY_ACME_EMAIL: you@example.com
+      CADDY_DNS_PROVIDER: cloudflare
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: change-me
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+    cap_add:
+      - NET_ADMIN
+    extra_hosts:
+      - "homectl-localhost:host-gateway"
+      - "manager-localhost:host-gateway"
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "51844:51844/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/homectl:/opt/homectl

@@ -118,9 +118,10 @@ func (a *Agent) sample() {
 		}
 	}
 
-	// Mark apps not in managed list as not running
+	// Mark apps not in managed list as not running.
+	// Skip caddy — it runs in-process and is managed by the reconcile loop.
 	for appID, rt := range a.runtime {
-		if !seen[appID] {
+		if !seen[appID] && appID != common.GatewayProxyAppID {
 			rt.SetRunning(common.RunningStatusStopped)
 			rt.SetHealth(common.HealthUnknown)
 		}
@@ -161,6 +162,12 @@ func (a *Agent) checkApp(appID string) appStatus {
 		health: common.HealthUnknown,
 	}
 
+	if common.AppID(appID) == common.GatewayProxyAppID {
+		status.running = common.RunningStatusRunning
+		status.health = common.HealthHealthy
+		return status
+	}
+
 	// Check if running
 	running, err := a.docker.IsRunning(appID)
 	if err != nil {
@@ -174,17 +181,22 @@ func (a *Agent) checkApp(appID string) appStatus {
 		return status
 	}
 
-	// Get ports for health check
-	ports, err := a.docker.GetPorts(appID)
+	// Get app info for health check
+	app, err := a.docker.GetAppInfo(appID)
 	if err != nil {
-		sensorLog.Error("Failed to get ports", "app", appID, "err", err)
+		sensorLog.Error("Failed to get app info", "app", appID, "err", err)
 		return status
 	}
 
 	// Health check on first port if available
-	if len(ports) > 0 {
-		status.port = ports[0]
-		status.health = a.healthCheck(ports[0])
+	if app.HealthHost != "" && app.HealthPort > 0 {
+		status.port = app.HealthPort
+		url := fmt.Sprintf("http://%s:%d", app.HealthHost, app.HealthPort)
+		var hostHeader string
+		if a.domainSuffix != "" {
+			hostHeader = fmt.Sprintf("%s.internal.%s", app.Name, a.domainSuffix)
+		}
+		status.health = a.healthCheck(url, hostHeader)
 	} else {
 		// No ports exposed: if container is running, consider it healthy
 		status.health = common.HealthHealthy
@@ -193,15 +205,21 @@ func (a *Agent) checkApp(appID string) appStatus {
 	return status
 }
 
-// healthCheck performs an HTTP health check on the given port
-func (a *Agent) healthCheck(port int) common.HealthStatus {
-	url := fmt.Sprintf("http://localhost:%d", port)
-
+// healthCheck performs an HTTP health check on the given URL with an optional Host header.
+func (a *Agent) healthCheck(url, hostHeader string) common.HealthStatus {
 	client := &http.Client{
 		Timeout: HealthCheckTimeout,
 	}
 
-	resp, err := client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return common.HealthUnhealthy
+	}
+	if hostHeader != "" {
+		req.Host = hostHeader
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return common.HealthUnhealthy
 	}

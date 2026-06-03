@@ -33,7 +33,8 @@ func InitLoggers() {
 	repoMgrLog = slog.Default().With("area", "repo")
 	repoStateLog = slog.Default().With("area", "repo")
 	serverLog = slog.Default().With("area", "server")
-	traefikMgrLog = slog.Default().With("area", "traefik")
+	caddyContainerLog = slog.Default().With("area", "caddy-container")
+	caddyMgrLog = slog.Default().With("area", "caddy")
 }
 
 // Config holds manager configuration
@@ -106,7 +107,10 @@ func NewManager(repoDir string, port int) *Manager {
 
 // NewManagerWithConfig creates a new Manager instance with custom config
 func NewManagerWithConfig(cfg Config) *Manager {
-	stateDir := filepath.Join(filepath.Dir(cfg.RepoDir), ".homectl")
+	stateDir := os.Getenv("HOMECTL_STATE_DIR")
+	if stateDir == "" {
+		stateDir = filepath.Join(cfg.RepoDir, ".homectl")
+	}
 	mgr := &Manager{
 		repoDir:      cfg.RepoDir,
 		stateDir:     stateDir,
@@ -171,6 +175,7 @@ func (m *Manager) Stop() {
 	if m.tcpListener != nil {
 		_ = m.tcpListener.Close()
 	}
+	stopCaddy()
 }
 
 // desiredStatePath returns the path to the persisted desired-state file.
@@ -201,7 +206,6 @@ func (m *Manager) loadDesiredState() map[string]common.DesiredState {
 // Only stores apps whose state differs from the default (stopped).
 func (m *Manager) saveDesiredState() {
 	runByDefault := map[string]bool{
-		"traefik": true,
 		"adguard": true,
 	}
 
@@ -337,10 +341,13 @@ func (m *Manager) saveManualAssignments() {
 }
 
 // DiscoverApps scans docker subdirectories for apps and registers them.
-// By default, traefik and adguard have DesiredRunning state, others have DesiredStopped.
+// By default, caddy and adguard have DesiredRunning state, others have DesiredStopped.
 // Persisted state from the UI overrides defaults. The Register method is idempotent
 // so repeated calls are safe.
 func (m *Manager) DiscoverApps() {
+	// Always register the built-in gateway proxy (caddy runs in-process on each agent).
+	m.appRegistry.Register(common.GatewayProxyAppID, common.DesiredRunning, true)
+
 	dockerDir := filepath.Join(m.repoDir, "docker")
 	entries, err := os.ReadDir(dockerDir)
 	if err != nil {
@@ -355,7 +362,6 @@ func (m *Manager) DiscoverApps() {
 
 	count := 0
 	runByDefault := map[string]bool{
-		"traefik": true,
 		"adguard": true,
 	}
 

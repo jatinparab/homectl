@@ -1,0 +1,30 @@
+FROM golang:1.25-alpine AS caddy-builder
+RUN apk add --no-cache git && \
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest && \
+    /go/bin/xcaddy build --with github.com/caddy-dns/cloudflare --output /usr/local/bin/caddy
+
+FROM golang:1.25-alpine AS builder
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/agent ./agent/cmd
+
+FROM alpine:3.20
+ARG RESTIC_VERSION=0.18.0
+ARG TARGETARCH
+RUN apk add --no-cache ca-certificates curl bzip2 docker-cli docker-cli-compose wireguard-tools
+COPY --from=caddy-builder /usr/local/bin/caddy /usr/local/bin/caddy
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64|arm64) ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/restic.bz2 "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2"; \
+    bunzip2 /tmp/restic.bz2; \
+    install -m 0755 /tmp/restic /usr/local/bin/restic; \
+    rm -f /tmp/restic
+COPY --from=builder /out/agent /usr/local/bin/agent
+VOLUME ["/opt/homectl"]
+ENTRYPOINT ["/usr/local/bin/agent"]

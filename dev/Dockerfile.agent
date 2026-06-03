@@ -3,7 +3,7 @@
 FROM golang:1.25-alpine AS gobase
 
 FROM docker:27-dind
-RUN apk add --no-cache docker-compose git
+RUN apk add --no-cache docker-compose git wireguard-tools caddy
 
 # Bring in Go from the golang image (both are alpine so libs are compatible)
 COPY --from=gobase /usr/local/go /usr/local/go

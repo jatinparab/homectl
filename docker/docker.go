@@ -62,8 +62,11 @@ type Docker struct {
 }
 
 type DockerApp struct {
-	Name  string
-	Ports []int
+	Name          string
+	Ports         []int
+	HealthHost    string
+	HealthPort    int
+	HealthService string
 }
 
 func NewDocker(rootDir, appdataDir, user string) *Docker {
@@ -101,18 +104,37 @@ func NewDockerWithFileReader(rootDir string, reader FileReader) *Docker {
 // Supported formats: "9999", "9999:9999", "9999:9999/tcp", "9999:9999/udp"
 // Returns the host (exposed) port.
 func parsePort(portStr string) (int, error) {
+	hostPort, _, err := parsePortMapping(portStr)
+	return hostPort, err
+}
+
+func parseContainerPort(portStr string) (int, error) {
+	_, containerPort, err := parsePortMapping(portStr)
+	return containerPort, err
+}
+
+func parsePortMapping(portStr string) (hostPort, containerPort int, err error) {
 	// Remove protocol suffix if present (e.g., "/tcp", "/udp")
 	portStr = strings.Split(portStr, "/")[0]
 
 	// Check if it's a host:container mapping
 	parts := strings.Split(portStr, ":")
-	hostPort := parts[0]
-
-	port, err := strconv.Atoi(hostPort)
-	if err != nil {
-		return 0, fmt.Errorf("invalid port number: %s", hostPort)
+	hostPortStr := parts[0]
+	containerPortStr := parts[0]
+	if len(parts) > 1 {
+		hostPortStr = parts[len(parts)-2]
+		containerPortStr = parts[len(parts)-1]
 	}
-	return port, nil
+
+	hostPortInt, err := strconv.Atoi(hostPortStr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid port number: %s", hostPortStr)
+	}
+	containerPortInt, err := strconv.Atoi(containerPortStr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid port number: %s", containerPortStr)
+	}
+	return hostPortInt, containerPortInt, nil
 }
 
 // dockerComposeFile represents the structure of a docker-compose.yml file
@@ -172,6 +194,13 @@ func analyzeDockerComposeContent(appName string, content []byte) (DockerApp, err
 				}
 				portSet[port] = struct{}{}
 				dockerApp.Ports = append(dockerApp.Ports, port)
+				if dockerApp.HealthPort == 0 {
+					containerPort, err := parseContainerPort(portMapping)
+					if err == nil {
+						dockerApp.HealthHost = HealthAlias(appName)
+						dockerApp.HealthPort = containerPort
+					}
+				}
 			}
 		}
 		return dockerApp, nil
@@ -198,6 +227,14 @@ func analyzeDockerComposeContent(appName string, content []byte) (DockerApp, err
 			}
 			seenPorts[port] = struct{}{}
 			dockerApp.Ports = append(dockerApp.Ports, port)
+			if dockerApp.HealthPort == 0 {
+				containerPort, err := parseContainerPort(portMapping)
+				if err == nil {
+					dockerApp.HealthHost = HealthAlias(appName)
+					dockerApp.HealthPort = containerPort
+					dockerApp.HealthService = serviceName
+				}
+			}
 		}
 	}
 
@@ -324,8 +361,11 @@ func ping(url string) error {
 	return nil
 }
 
-func waitForService(ctx context.Context, port int, tries int, interval time.Duration) error {
-	url := fmt.Sprintf("http://localhost:%d", port)
+func waitForService(ctx context.Context, app DockerApp, tries int, interval time.Duration) error {
+	if app.HealthHost == "" || app.HealthPort == 0 {
+		return nil
+	}
+	url := fmt.Sprintf("http://%s:%d", app.HealthHost, app.HealthPort)
 	for i := 0; i < tries; i++ {
 		if err := ping(url); err != nil {
 			dockerLog.Info("Service not ready", "url", url, "err", err, "try", i+1, "tries", tries)
@@ -341,6 +381,24 @@ func waitForService(ctx context.Context, port int, tries int, interval time.Dura
 		}
 	}
 	return fmt.Errorf("service not ready after %d tries", tries)
+}
+
+// HealthAlias returns the DNS alias Homectl uses for an app on its shared Docker network.
+func HealthAlias(appID string) string {
+	appID = strings.ToLower(strings.TrimSpace(appID))
+	var b strings.Builder
+	for _, r := range appID {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	alias := strings.Trim(b.String(), "-")
+	if alias == "" {
+		alias = "app"
+	}
+	return "homectl-" + alias
 }
 
 func (d *Docker) GetPorts(service string) ([]int, error) {
@@ -365,6 +423,156 @@ func (d *Docker) GetPorts(service string) ([]int, error) {
 	d.dockerApps[service] = app
 
 	return app.Ports, nil
+}
+
+func (d *Docker) GetAppInfo(service string) (DockerApp, error) {
+	if app, ok := d.dockerApps[service]; ok {
+		return app, nil
+	}
+	path := filepath.Join(d.rootDir, service, "docker-compose.yml")
+	content, err := d.fileReader.ReadFile(path)
+	if err != nil {
+		return DockerApp{}, fmt.Errorf("failed to read docker compose file: %w", err)
+	}
+	app, err := analyzeDockerComposeContent(service, content)
+	if err != nil {
+		return DockerApp{}, err
+	}
+	d.dockerApps[service] = app
+	return app, nil
+}
+
+const HomectlDockerNetwork = "homectl-docker-network"
+
+// EnsureHomectlDockerNetwork creates the shared app network if it is missing.
+func EnsureHomectlDockerNetwork() error {
+	if err := exec.Command("docker", "network", "inspect", HomectlDockerNetwork).Run(); err == nil {
+		return nil
+	}
+	output, err := exec.Command("docker", "network", "create", HomectlDockerNetwork).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("create docker network %s: %w: %s", HomectlDockerNetwork, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// ConnectContainerToHomectlNetwork connects a container to the shared app network.
+func ConnectContainerToHomectlNetwork(container string, aliases ...string) error {
+	if strings.TrimSpace(container) == "" {
+		return nil
+	}
+	if err := EnsureHomectlDockerNetwork(); err != nil {
+		return err
+	}
+	args := []string{"network", "connect"}
+	for _, alias := range aliases {
+		if alias = strings.TrimSpace(alias); alias != "" {
+			args = append(args, "--alias", alias)
+		}
+	}
+	args = append(args, HomectlDockerNetwork, container)
+	output, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		text := strings.TrimSpace(string(output))
+		if strings.Contains(text, "already exists") || strings.Contains(text, "already connected") ||
+			strings.Contains(text, "sharing network namespace") || strings.Contains(text, "cannot be connected") {
+			return nil
+		}
+		return fmt.Errorf("connect %s to %s: %w: %s", container, HomectlDockerNetwork, err, text)
+	}
+	return nil
+}
+
+func (d *Docker) connectAppNetwork(app DockerApp) error {
+	path := filepath.Join(d.rootDir, app.Name, "docker-compose.yml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("docker compose file not found: %s", path)
+	}
+	if err := EnsureHomectlDockerNetwork(); err != nil {
+		return err
+	}
+	command := exec.Command("docker", "compose", "-f", path, "ps", "-q")
+	command.Env = d.ComposeEnv()
+	output, err := command.Output()
+	if err != nil {
+		return err
+	}
+	healthContainer := ""
+	if app.HealthService != "" {
+		command = exec.Command("docker", "compose", "-f", path, "ps", "-q", app.HealthService)
+		command.Env = d.ComposeEnv()
+		serviceOutput, err := command.Output()
+		if err == nil {
+			healthContainer = firstLine(serviceOutput)
+		}
+	}
+	for _, container := range strings.Fields(string(output)) {
+		var aliases []string
+		if container == healthContainer && app.HealthHost != "" {
+			aliases = append(aliases, app.HealthHost)
+		}
+		if err := ConnectContainerToHomectlNetwork(container, aliases...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ConnectLoadedAppsToHomectlNetwork connects all discovered managed app containers
+// to the shared network used for agent health checks.
+func (d *Docker) ConnectLoadedAppsToHomectlNetwork() error {
+	for _, app := range d.dockerApps {
+		running, err := d.IsRunning(app.Name)
+		if err != nil || running == common.RunningStatusStopped {
+			continue
+		}
+		if err := d.connectAppNetwork(app); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PruneStaleSharedNamespaceContainers removes containers whose network_mode
+// references a container that no longer exists (e.g. caddy referencing a
+// previous homectl-agent container after agent restart).
+func PruneStaleSharedNamespaceContainers() {
+	out, _ := exec.Command("docker", "ps", "-q", "--filter", "name=^homectl-agent$").Output()
+	agentID := firstLine(out)
+	if agentID == "" {
+		return
+	}
+
+	output, err := exec.Command("docker", "ps", "-q", "--no-trunc").CombinedOutput()
+	if err != nil {
+		return
+	}
+
+	for _, cid := range strings.Fields(string(output)) {
+		if cid == agentID {
+			continue
+		}
+		inspect, err := exec.Command("docker", "inspect", "--format", "{{.HostConfig.NetworkMode}}", cid).CombinedOutput()
+		if err != nil {
+			continue
+		}
+		mode := strings.TrimSpace(string(inspect))
+		if !strings.HasPrefix(mode, "container:") {
+			continue
+		}
+		refName := strings.TrimPrefix(mode, "container:")
+		if refName == "homectl-agent" {
+			_ = exec.Command("docker", "rm", "-f", cid).Run()
+		}
+	}
+}
+
+func firstLine(b []byte) string {
+	lines := strings.Fields(string(b))
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
 }
 
 // ComposeEnv returns the environment variables for docker compose commands
@@ -393,16 +601,17 @@ func (d *Docker) RunDockerComposeUp(service string) error {
 	}
 
 	// Wait for the service to be ready on its first port
-	ports, err := d.GetPorts(service)
+	app, err := d.GetAppInfo(service)
 	if err != nil {
 		// Log but don't fail - service started successfully
 		return nil
 	}
-	if len(ports) > 0 {
-		if err := waitForService(d.ctx, ports[0], 5, 30*time.Second); err != nil {
-			// Log but don't fail - service started, just not responding yet
-			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
-		}
+	if err := d.connectAppNetwork(app); err != nil {
+		return err
+	}
+	if err := waitForService(d.ctx, app, 5, 30*time.Second); err != nil {
+		// Log but don't fail - service started, just not responding yet
+		return fmt.Errorf("service not ready after %d tries: %w", 5, err)
 	}
 
 	return nil
@@ -428,16 +637,18 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 		return fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr concurrently to avoid deadlock.
-	// io.MultiReader reads sequentially, which blocks if the command
-	// writes primarily to stderr (e.g. docker compose pull progress).
+	// Capture all output for error reporting
+	var buf strings.Builder
+
 	scanLines := func(r io.Reader) {
-		if onLog == nil {
-			return
-		}
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			onLog(scanner.Text())
+			line := scanner.Text()
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+			if onLog != nil {
+				onLog(line)
+			}
 		}
 	}
 
@@ -451,7 +662,7 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
-		return err
+		return fmt.Errorf("%s: %w", strings.TrimSpace(buf.String()), err)
 	}
 	return nil
 }
@@ -493,14 +704,15 @@ func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
 	}
 
 	// Wait for the service to be ready on its first port
-	ports, err := d.GetPorts(appID)
+	app, err := d.GetAppInfo(appID)
 	if err != nil {
 		return nil
 	}
-	if len(ports) > 0 {
-		if err := waitForService(d.ctx, ports[0], 5, 30*time.Second); err != nil {
-			return fmt.Errorf("service not ready after %d tries: %w", 5, err)
-		}
+	if err := d.connectAppNetwork(app); err != nil {
+		return err
+	}
+	if err := waitForService(d.ctx, app, 5, 30*time.Second); err != nil {
+		return fmt.Errorf("service not ready after %d tries: %w", 5, err)
 	}
 
 	return nil

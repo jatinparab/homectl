@@ -1,188 +1,106 @@
-# Networking Architecture
+# Networking
 
-## Overview
+Homectl uses a mandatory WireGuard overlay for manager-agent control traffic.
+WireGuard and Caddy run as in-process daemons inside the manager and agent
+containers (no sidecar containers).
 
-The system uses two separate networks:
+## Overlay Model
 
-- **LAN (`192.168.1.0/24`)** — physical node connectivity and keepalived VIP failover
-- **WireGuard VPN (`10.42.1.0/24`)** — encrypted overlay for all manager↔agent communication
+- WireGuard network: `10.44.0.0/24`
+- Manager WireGuard IP: `10.44.0.1`
+- Default WireGuard UDP port: `51844`
+- Manager endpoint: explicit public IPv4 address from `HOMECTL_WG_ENDPOINT_IP`
+- Public manager origin: `https://<HOMECTL_PUBLIC_HOST>` served by Caddy
 
-Internet traffic enters via a floating Virtual IP (keepalived), hits Traefik on the active gateway node, and is routed either locally (Docker bridge) or across WireGuard to apps running on other nodes.
+Agents bootstrap by calling `https://<HOMECTL_PUBLIC_HOST>/api/join` with
+`HOMECTL_JOIN_TOKEN` and their WireGuard public key. The manager allocates a
+stable overlay IP, stores the peer, rewrites its WireGuard config, and returns
+the manager peer information. After that, steady-state agent control traffic
+uses `http://10.44.0.1:1338` and the TCP link on `10.44.0.1:1339`.
 
----
+## Container Architecture
 
-## Network Topology
+### Manager
 
-```
-[Internet] HTTP/HTTPS (80/443)
-    |
-    ▼
-[VIP 192.168.50.250]  ← keepalived VRRP, floats between nodes
-    |
-    ▼
-[Active Gateway Node]
- ├─ Traefik container  (routes HTTP/HTTPS)
- │   ├─ Local apps  → 172.17.0.1:<port>  (Docker bridge)
- │   └─ Remote apps → 10.42.1.10x:<port> (WireGuard)
- │
- └─ Agent (port 1337)
-     ├─ Heartbeat  → Manager 10.42.1.100:1338  (every 10s)
-     ├─ Desired-state fetch  ← Manager (every 10s)
-     ├─ Traefik config fetch ← Manager (every 10s)
-     └─ Docker config sync   ← Manager (on change)
+A single `homectl-manager` container runs three components:
+1. **Manager binary** — HTTP API on :1338, TCP agent link on :1339
+2. **Caddy** — reverse proxy, auto-TLS on ports 80/443
+3. **WireGuard** — wg0 interface on UDP port 51844
 
-[WireGuard mesh — 10.42.1.0/24, UDP 51824]
- VPS hub  10.42.1.100  (203.0.113.10)   ← Manager runs here
- main     10.42.1.101  (192.168.50.101)
- rpi      10.42.1.102  (192.168.50.102)
- node-3 10.42.1.103 (192.168.50.103)
- local    10.42.1.104  (developer machine)
-```
+Exposed ports: 80, 443 (TCP), 51844 (UDP).
+Requires `NET_ADMIN` capability and `net.ipv4.conf.all.src_valid_mark=1`.
 
----
+### Agent
 
-## Components
+A single `homectl-agent` container runs four components:
+1. **Agent binary** — heartbeat, reconcile, ready server on :1337
+2. **Caddy** — local reverse proxy for all apps on ports 80/443
+3. **WireGuard** — wg0 interface on UDP port 51844
+4. **Ready server** — health/backup/sync APIs on :1337
 
-### Manager (VPS, `10.42.1.100:1338`)
+Exposed ports: 80, 443 (TCP), 51844 (UDP).
+Requires `NET_ADMIN` capability and `net.ipv4.conf.all.src_valid_mark=1`.
 
-Runs on the VPS hub. Exposes an HTTP API on port **1338** that all agents call over WireGuard. Responsibilities:
+A separate `homectl-keepalived` container runs in `--network host` for
+VRRP-based high availability (optional, configured via `HOMECTL_LOCAL_HA_IP`).
 
-- Stores desired state for all apps
-- Generates per-node Traefik dynamic configs
-- Serves docker-compose archives to agents
-- Elects the gateway node (which node runs Traefik as the active ingress)
-- Runs the reconciliation loop (assigns, migrates, rebalances apps across nodes)
+Managed app containers are connected to the `homectl-docker-network` bridge
+network. They do not need host-published ports — Caddy routes traffic to them
+via Docker network DNS aliases (e.g., `homectl-adguard`).
 
-### Agent (each node, port `1337`)
+## Traffic Modes
 
-Runs on every node. Polls the manager and executes locally. Exposes a **ReadyServer on port 1337** used by keepalived health checks and by the manager to trigger app restarts.
+### Mode 1: Local traffic
+`passwords.internal.example.com -> 192.168.50.250 (VRRP VIP) -> agent caddy -> homectl-docker-network -> app`
 
-Agent timing:
-| Interval | Action |
-|---|---|
-| 10s | Heartbeat to manager (reports app states, node metrics) |
-| 10s | Fetch desired app state from manager |
-| 10s | Fetch Traefik config from manager |
-| 5s | Reconnect retry if disconnected |
+### Mode 2: Public traffic
+`passwords.example.com -> 203.0.113.10 (manager) -> manager caddy -> WG overlay -> gateway agent caddy -> homectl-docker-network -> app`
 
-### Traefik
+### Mode 3: Public local manager traffic
+`uptime.example.com -> 203.0.113.10 (manager) -> manager caddy -> host-gateway -> local app`
 
-One Traefik instance runs on the active gateway node. The manager generates its dynamic config: local apps are routed via `172.17.0.1:<port>` (Docker bridge gateway), remote apps via `10.42.1.10x:<port>` (WireGuard). The config is written to `/appdata/traefik/config/traefik.yml` by the agent only when it differs from disk, avoiding unnecessary reloads.
+## Required Manager Configuration
 
-Public domain: `{app}.example.net`
-Internal domain: `{app}.internal.example.net`
-
-### Gateway Election
-
-The manager continuously monitors which node is the active Traefik gateway (`reconcile.go`):
-
-1. If a manual gateway override is set and healthy → use it
-2. If the current gateway still has Traefik running and healthy → keep it
-3. Otherwise scan all online agents and elect the first healthy Traefik instance
-4. On gateway change, the manager restarts **newt** on all involved nodes (newt depends on gateway identity)
-
----
-
-## Keepalived — VIP Failover
-
-Configured via `setup-keepalived` in the homelab repo.
-
-- **Virtual IP:** `192.168.50.250` (floats to whichever node is healthy)
-- **VRRP Router ID:** 44
-- **Mode:** All nodes start as `BACKUP` with `nopreempt` — the VIP doesn't bounce back to a higher-priority node when it recovers; it only moves on failure
-
-Node priorities (higher wins on failover):
-
-| Node | LAN IP | Priority |
-|---|---|---|
-| main | 192.168.50.101 | 120 |
-| rpi | 192.168.50.102 | 110 |
-| node-3 | 192.168.50.103 | 100 |
-
-**Health check:** Every 2 seconds keepalived runs:
-```sh
-curl -fsS http://127.0.0.1:1337/ready
-```
-This hits the agent's ReadyServer (port 1337), which returns healthy only when the agent is connected to the manager and Traefik is running and healthy. Three consecutive failures trigger VIP failover; two consecutive passes restore readiness.
-
-**Failover sequence:**
-
-1. Agent on current VIP holder fails its health check (3×)
-2. keepalived withdraws the VIP from that node
-3. Node with next-highest priority that is passing health checks acquires the VIP
-4. Concurrently, the manager's gateway election detects Traefik is unhealthy on the old gateway and elects a new one
-5. Traffic resumes — the VIP and the elected Traefik gateway converge on the same healthy node
-
----
-
-## WireGuard VPN Mesh
-
-Configured via `setup-wireguard` in the homelab repo.
-
-**Topology:** Star with the VPS as hub. Nodes do not peer directly with each other; inter-node traffic is routed through the VPS hub.
-
-```
-           VPS Hub
-       10.42.1.100
-      /     |      \
-  .101    .102    .103
-  main    rpi   node-3
+```env
+HOMECTL_JOIN_TOKEN=replace-with-a-long-random-token
+HOMECTL_WG_ENDPOINT_IP=203.0.113.10
+HOMECTL_GIT_REPO=https://github.com/your-org/homelab.git
+HOMECTL_REPO_DIR=/opt/homectl/repo
+HOMECTL_DOMAIN_SUFFIX=your-domain.example
+HOMECTL_PUBLIC_HOST=homectl.your-domain.example
 ```
 
-**Parameters:**
+Expose UDP `51844` on the manager host for WireGuard and TCP `80`/`443` for
+Caddy. The manager's Caddy config serves `HOMECTL_PUBLIC_HOST`, proxies the UI
+to the internal manager HTTP server, and exposes `/api/join` for new agents.
+After join, steady-state control traffic uses `http://10.44.0.1:1338` over WireGuard.
 
-| Setting | Value |
-|---|---|
-| Interface | `wg0` |
-| Network | `10.42.1.0/24` |
-| Port | `51824` UDP |
-| VPS endpoint | `203.0.113.10:51824` |
+The manager uses stock Caddy. Public hosts that resolve to the manager, such as
+`*.example.com -> <manager-public-ip>`, can use Caddy's normal ACME HTTP-01 or
+TLS-ALPN-01 challenges.
 
-**Key management:** Private keys are generated on each node and stored at `/etc/wireguard/.privkey` (mode 600). Public keys are exchanged manually between nodes during setup. Keys are never transmitted in plaintext.
+## Required Agent Configuration
 
-**Node AllowedIPs:** Each node allows all `10.42.1.0/24` traffic through the VPS peer, enabling node-to-node routing without direct peering.
-
-**Startup order:** VPS WireGuard must be up before nodes connect (nodes initiate outbound connections; VPS listens).
-
-All management traffic (agent heartbeats, desired-state fetches, docker syncs) travels over this encrypted tunnel. The manager on the VPS communicates back to agents using their WireGuard IPs (`10.42.1.10x`), not their LAN IPs.
-
----
-
-## Port Reference
-
-| Port | Protocol | Direction | Purpose |
-|---|---|---|---|
-| 1338 | TCP | Agent → Manager | Manager HTTP API (heartbeat, desired state, configs, file sync) |
-| 1337 | TCP | keepalived → Agent, Manager → Agent | Agent ReadyServer (health, app restart triggers) |
-| 80 | TCP | Internet → VIP | Traefik HTTP ingress |
-| 443 | TCP | Internet → VIP | Traefik HTTPS ingress |
-| 51824 | UDP | All nodes ↔ VPS | WireGuard VPN tunnel |
-
----
-
-## Traffic Flow: Inbound HTTP Request
-
-```
-Browser → 192.168.50.250:443 (VIP, held by active node)
-  → Traefik on active node
-  → If app is LOCAL:  172.17.0.1:<app-port>  (Docker bridge)
-  → If app is REMOTE: 10.42.1.10x:<app-port> (WireGuard to peer node)
-  → App container responds → Traefik → Browser
+```env
+HOMECTL_AGENT_NAME=node-1
+HOMECTL_JOIN_TOKEN=replace-with-the-manager-token
+HOMECTL_MANAGER_URL=https://homectl.your-domain.example
+HOMECTL_DOCKER_ROOT_DIR=/opt/homectl/docker
+HOMECTL_APPDATA_DIR=/opt/homectl/appdata
+RESTIC_REPOSITORY=s3:https://s3.example.com/bucket/path
 ```
 
-## Traffic Flow: Agent Heartbeat
+Gateway agents use the DNS-enabled Caddy build when `CADDY_DNS_PROVIDER` is set
+on the manager. The generated agent Caddyfile includes DNS-01 TLS config and the
+agent environment must contain the provider token, for example
+`CLOUDFLARE_API_TOKEN`. This is required for wildcard certificates and for
+hostnames that resolve to a private VIP, such as
+`*.internal.example.com -> 192.168.50.250`.
 
-```
-Agent on 10.42.1.10x → Manager on 10.42.1.100:1338 (WireGuard tunnel)
-  POST /agents/heartbeat  { name, ip, app_reports, node_metrics }
-  ← 200 OK
+## VRRP / Keepalived
 
-Agent → GET /agents/{id}/desired
-  ← { apps: [...], is_gateway: bool }
+The keepalived health check uses Caddy's HTTP listener on port 80:
+`wget -qO- --timeout=2 http://127.0.0.1/is-gateway >/dev/null`
 
-Agent → GET /agents/{id}/traefik-config
-  ← Traefik dynamic config YAML
-
-Agent → GET /docker/sync
-  ← tar.gz of docker-compose files
-```
+Caddy forwards `/is-gateway` to the ready server on port 1337, which
+checks whether this agent is the designated gateway node.

@@ -1,5 +1,6 @@
 FROM golang:1.25-alpine
+RUN apk add --no-cache wireguard-tools caddy
 RUN go install github.com/air-verse/air@latest
 WORKDIR /src
-EXPOSE 1338 1339
+EXPOSE 1338
 ENTRYPOINT ["air", "-c", "dev/.air.manager.toml"]

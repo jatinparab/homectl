@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /manager ./manager/cmd
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wireguard-tools caddy
 COPY --from=builder /manager /usr/local/bin/manager
-EXPOSE 1338 1339
+EXPOSE 1338
 ENTRYPOINT ["/usr/local/bin/manager"]
