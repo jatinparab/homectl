@@ -153,7 +153,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 		lastConnectedAt:   time.Now(),
 	}
-	a.restic = NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true", a.configValue)
+	a.restic = NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true", a.configValue, a.runtimeConfigSnapshot)
 	a.managerClient.SetIdentity(name, ip)
 	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
 	a.managerClient.SetRequestHandler(a.handleManagerLinkRequest)
@@ -436,6 +436,11 @@ func (a *Agent) seedAgentConfigFromEnv() error {
 			seed[key] = val
 		}
 	}
+	for _, key := range common.EditableAgentEnvConfigKeys {
+		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+			seed[key] = val
+		}
+	}
 	if val := strings.TrimSpace(os.Getenv(common.ConfigKeyAgentName)); val != "" {
 		seed[common.ConfigKeyAgentName] = val
 	}
@@ -471,16 +476,39 @@ func (a *Agent) setRuntimeConfig(version int64, cfg map[string]string) bool {
 	a.runtimeConfigMu.Lock()
 	defer a.runtimeConfigMu.Unlock()
 	changed := false
-	for _, key := range append(common.SharedAgentConfigKeys, common.AgentSpecificConfigKeys...) {
-		newVal := strings.TrimSpace(cfg[key])
-		if a.runtimeConfig[key] != newVal {
+	next := make(map[string]string, len(cfg)+1)
+	for key, value := range cfg {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		next[key] = value
+	}
+	for key, currentVal := range a.runtimeConfig {
+		if strings.HasPrefix(key, "__") {
+			continue
+		}
+		if next[key] != currentVal {
 			changed = true
+			break
 		}
-		if newVal == "" {
+	}
+	if !changed {
+		for key, nextVal := range next {
+			if a.runtimeConfig[key] != nextVal {
+				changed = true
+				break
+			}
+		}
+	}
+	for key := range a.runtimeConfig {
+		if !strings.HasPrefix(key, "__") {
 			delete(a.runtimeConfig, key)
-		} else {
-			a.runtimeConfig[key] = newVal
 		}
+	}
+	for key, value := range next {
+		a.runtimeConfig[key] = value
 	}
 	a.runtimeConfig["__version"] = strconv.FormatInt(version, 10)
 	return changed
@@ -513,6 +541,9 @@ func sanitizedAgentEnviron() []string {
 	for _, key := range common.SharedAgentConfigKeys {
 		managed[key] = true
 	}
+	for _, key := range common.EditableAgentEnvConfigKeys {
+		managed[key] = true
+	}
 	for _, key := range common.AgentSpecificConfigKeys {
 		managed[key] = true
 	}
@@ -529,7 +560,7 @@ func sanitizedAgentEnviron() []string {
 func (a *Agent) caddyRuntimeEnv() map[string]string {
 	cfg := a.runtimeConfigSnapshot()
 	out := map[string]string{}
-	for _, key := range []string{common.ConfigKeyCFDNSAPIToken} {
+	for key := range cfg {
 		if val := strings.TrimSpace(cfg[key]); val != "" {
 			out[key] = val
 		}

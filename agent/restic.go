@@ -69,14 +69,20 @@ type RepoRestic struct {
 	appDataDir string
 	useSudo    bool
 	valueFunc  func(string) string
+	envFunc    func() map[string]string
 }
 
 // NewRepoRestic creates a new RepoRestic instance.
-func NewRepoRestic(appDataDir string, useSudo bool, valueFunc func(string) string) *RepoRestic {
+func NewRepoRestic(appDataDir string, useSudo bool, valueFunc func(string) string, envFunc ...func() map[string]string) *RepoRestic {
+	var snapshotFunc func() map[string]string
+	if len(envFunc) > 0 {
+		snapshotFunc = envFunc[0]
+	}
 	return &RepoRestic{
 		appDataDir: appDataDir,
 		useSudo:    useSudo,
 		valueFunc:  valueFunc,
+		envFunc:    snapshotFunc,
 	}
 }
 
@@ -96,8 +102,20 @@ func (r *RepoRestic) repoURL() string {
 
 func (r *RepoRestic) resticRuntimeEnv() []string {
 	env := []string{"RESTIC_PROGRESS_FPS=2"}
+	seen := map[string]bool{"RESTIC_PROGRESS_FPS": true}
+	if r.envFunc != nil {
+		for key, val := range r.envFunc() {
+			key = strings.TrimSpace(key)
+			val = strings.TrimSpace(val)
+			if key == "" || val == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			env = append(env, fmt.Sprintf("%s=%s", key, val))
+		}
+	}
 	for _, key := range []string{common.ConfigKeyB2AccountID, common.ConfigKeyB2AccountKey, common.ConfigKeyResticPassword} {
-		if val := r.configValue(key); val != "" {
+		if val := r.configValue(key); val != "" && !seen[key] {
 			env = append(env, fmt.Sprintf("%s=%s", key, val))
 		}
 	}
@@ -109,8 +127,15 @@ func (r *RepoRestic) resticRuntimeEnv() []string {
 func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd {
 	runtimeEnv := r.resticRuntimeEnv()
 	if r.useSudo {
+		preserveKeys := []string{}
+		for _, entry := range runtimeEnv {
+			key, _, _ := strings.Cut(entry, "=")
+			if key != "" {
+				preserveKeys = append(preserveKeys, key)
+			}
+		}
 		cmdArgs := []string{
-			"--preserve-env=B2_ACCOUNT_ID,B2_ACCOUNT_KEY,RESTIC_PASSWORD,RESTIC_PROGRESS_FPS",
+			"--preserve-env=" + strings.Join(preserveKeys, ","),
 			"env",
 			"RESTIC_PROGRESS_FPS=2",
 			"restic",

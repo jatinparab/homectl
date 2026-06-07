@@ -63,8 +63,8 @@ func (s *AgentConfigService) UpsertNodeConfig(ctx context.Context, agentName str
 	if strings.TrimSpace(agentName) == "" {
 		return common.NodeConfigUIResponse{}, fmt.Errorf("agent name required")
 	}
-	shared := filterConfig(req.Shared, common.SharedAgentConfigKeys)
-	agent := filterConfig(req.Agent, common.AgentSpecificConfigKeys)
+	shared := sanitizeConfig(req.Shared)
+	agent := sanitizeConfig(req.Agent)
 	if agent[common.ConfigKeyAgentName] == "" {
 		agent[common.ConfigKeyAgentName] = agentName
 	}
@@ -168,6 +168,11 @@ func (s *AgentConfigService) SeedFromEnv(ctx context.Context) error {
 			shared[key] = val
 		}
 	}
+	for _, key := range common.EditableAgentEnvConfigKeys {
+		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+			shared[key] = val
+		}
+	}
 	if len(shared) == 0 {
 		return nil
 	}
@@ -188,6 +193,15 @@ func (s *AgentConfigService) SeedAgentValues(ctx context.Context, agentName stri
 	}
 	sharedChanged := false
 	for _, key := range common.SharedAgentConfigKeys {
+		if _, exists := shared[key]; exists {
+			continue
+		}
+		if val := strings.TrimSpace(values[key]); val != "" {
+			shared[key] = val
+			sharedChanged = true
+		}
+	}
+	for _, key := range common.EditableAgentEnvConfigKeys {
 		if _, exists := shared[key]; exists {
 			continue
 		}
@@ -308,12 +322,26 @@ func filterConfig(in common.NodeConfigDocument, allowed []string) common.NodeCon
 	return out
 }
 
+func sanitizeConfig(in common.NodeConfigDocument) common.NodeConfigDocument {
+	out := common.NodeConfigDocument{}
+	for key, value := range in {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = strings.TrimSpace(value)
+	}
+	return out
+}
+
 func fillConfigKeys(in common.NodeConfigDocument, keys []string) common.NodeConfigDocument {
 	out := common.NodeConfigDocument{}
+	for key, value := range in {
+		out[key] = value
+	}
 	for _, key := range keys {
-		out[key] = ""
-		if in != nil {
-			out[key] = in[key]
+		if _, ok := out[key]; !ok {
+			out[key] = ""
 		}
 	}
 	return out

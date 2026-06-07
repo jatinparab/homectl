@@ -138,9 +138,12 @@ var SharedAgentConfigKeys = []string{
 	ConfigKeyCaddyDNSProvider,
 	ConfigKeyCaddyACMEEmail,
 	ConfigKeyCaddyACMECA,
+	ConfigKeyResticRepository,
+}
+
+var EditableAgentEnvConfigKeys = []string{
 	ConfigKeyCaddyDNSTokenEnv,
 	ConfigKeyCFDNSAPIToken,
-	ConfigKeyResticRepository,
 	ConfigKeyB2AccountID,
 	ConfigKeyB2AccountKey,
 	ConfigKeyResticPassword,
