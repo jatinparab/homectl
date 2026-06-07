@@ -1,22 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 :root {
   --bg: #f5f3ef;
   --surface: #ffffff;
-  --surface-2: #f0ede8;
-  --border: #e2ddd7;
   --border-strong: #c9c4bc;
-  --text: #1c1917;
-  --text-2: #57534e;
-  --text-3: #a8a29e;
-  --teal: #0d9488;
-  --teal-light: #ccfbf1;
-  --green: #059669;
-  --amber: #d97706;
-  --red: #dc2626;
-  --blue: #2563eb;
 }
 
 * {
@@ -26,66 +11,11 @@
 
 body {
   background-color: var(--bg);
-  color: var(--text);
+  color: #1c1917;
+  margin: 0;
 }
 
-/* Health dot glow — static */
-.health-glow {
-  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15), 0 0 6px 1px rgba(5, 150, 105, 0.25);
-}
-
-/* Toggle switch */
-.toggle-track {
-  transition: background-color 150ms ease;
-}
-
-.toggle-thumb {
-  transition: transform 150ms ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-}
-
-/* Scrollbar styling for log panel */
-.log-scroll::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-.log-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.log-scroll::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 2px;
-}
-
-/* Sticky log panel transition */
-.log-panel {
-  transition: height 200ms ease;
-}
-
-/* Row hover */
-.app-row:hover td {
-  background-color: #faf9f7;
-}
-
-/* Tooltip */
-.tooltip-container {
-  position: relative;
-}
-.tooltip-container .tooltip-content {
-  display: none;
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: #1c1917;
-  color: #fafaf9;
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  white-space: nowrap;
-  z-index: 100;
-  pointer-events: none;
-}
-.tooltip-container:hover .tooltip-content {
-  display: block;
-}
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }

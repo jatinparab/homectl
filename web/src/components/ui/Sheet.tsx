@@ -1,0 +1,92 @@
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import styled from '@emotion/styled';
+
+const Overlay = styled(DialogPrimitive.Overlay)`
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.2);
+  animation: overlayShow 0.15s ease;
+  @keyframes overlayShow { from { opacity: 0; } to { opacity: 1; } }
+`;
+
+const Content = styled(DialogPrimitive.Content)`
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 101;
+  width: min(480px, 90vw);
+  background: ${({ theme }) => theme.colors.neutralSurface};
+  border-left: 1px solid ${({ theme }) => theme.colors.neutralBorder};
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.2s ease;
+  @keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+`;
+
+const Header = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.neutralBorder};
+
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: ${({ theme }) => theme.colors.textPrimary};
+    margin: 0;
+  }
+`;
+
+const Body = styled.div`
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+`;
+
+const CloseButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  transition: all 150ms ease;
+  &:hover {
+    background: ${({ theme }) => theme.colors.neutralSurfaceAlt};
+    color: ${({ theme }) => theme.colors.textPrimary};
+  }
+`;
+
+interface SheetProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title?: string;
+  children: React.ReactNode;
+}
+
+export function Sheet({ open, onOpenChange, title, children }: SheetProps) {
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        <Overlay />
+        <Content>
+          <Header>
+            <h2>{title}</h2>
+            <DialogPrimitive.Close asChild>
+              <CloseButton aria-label="Close">✕</CloseButton>
+            </DialogPrimitive.Close>
+          </Header>
+          <Body>{children}</Body>
+        </Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}

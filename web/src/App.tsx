@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useApps, useAgents, useUpcomingBackup, useUpcomingPrune, useSync, useRebalance, useGatewayInfo } from './api/hooks'
-import { Header, type Tab, tabFromPath, pathFromTab } from './components/Header'
-import { AppsTable } from './components/AppsTable'
-import { NodeCards } from './components/NodeCards'
-import { SystemLogViewer } from './components/SystemLogViewer'
-import { ContainersPage } from './components/ContainersPage'
-import { ContainerLogPanel } from './components/ContainerLogPanel'
-import { BackupsPage } from './components/BackupsPage'
-import { StoragePage } from './components/StoragePage'
-import { RoutingPage } from './components/RoutingPage'
-import { CrowdSecPage } from './components/CrowdSecPage'
-import { LogsPage } from './components/LogsPage'
-import { LogPanel } from './components/LogPanel'
-import { AppDetailPage } from './components/AppDetailPage'
+import { useEffect, useState } from 'react'
+import type { Tab } from './app/navigation'
+import { tabFromPath, pathFromTab } from './app/navigation'
+import { AppShell } from './components/layout'
+import { DashboardPage } from './features/dashboard/DashboardPage'
+import { SystemLogViewer } from './features/system-logs/SystemLogViewer'
+import { ContainersPage } from './features/containers/ContainersPage'
+import { ContainerLogPanel } from './features/logs/components/ContainerLogPanel'
+import { BackupsPage } from './features/backups/BackupsPage'
+import { StoragePage } from './features/storage/StoragePage'
+import { RoutingPage } from './features/routing/RoutingPage'
+import { CrowdSecPage } from './features/crowdsec/CrowdSecPage'
+import { LogsPage } from './features/logs/LogsPage'
+import { LogPanel } from './features/logs/components/LogPanel'
+import { AppDetailPage } from './features/apps/detail/AppDetailPage'
 
 type LogPanelState =
   | { type: 'app'; node: string; appId: string }
@@ -20,13 +20,6 @@ type LogPanelState =
   | null
 
 function App() {
-  const { data: apps, isLoading } = useApps()
-  const { data: agents } = useAgents()
-  const { data: gatewayInfo } = useGatewayInfo()
-  const { data: upcomingBackup } = useUpcomingBackup()
-  const { data: upcomingPrune } = useUpcomingPrune()
-  const syncMutation = useSync()
-  const rebalanceMutation = useRebalance()
   const [logPanel, setLogPanel] = useState<LogPanelState>(null)
   const [path, setPath] = useState(() => window.location.pathname)
   const [logPanelExpanded, setLogPanelExpanded] = useState(false)
@@ -45,22 +38,11 @@ function App() {
     navigate(pathFromTab(tab))
   }
 
-  // Handle browser back/forward
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname)
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-
-  const sortedApps = useMemo(() => {
-    if (!apps) return []
-    return [...apps].sort((a, b) => {
-      const desiredA = a.desired_state === 'running' ? 0 : 1
-      const desiredB = b.desired_state === 'running' ? 0 : 1
-      if (desiredA !== desiredB) return desiredA - desiredB
-      return a.app_id.localeCompare(b.app_id)
-    })
-  }, [apps])
 
   const handleShowAppLogs = (node: string, appId: string) => {
     setLogPanel({ type: 'app', node, appId })
@@ -71,74 +53,24 @@ function App() {
   }
 
   const handleClosePanel = () => setLogPanel(null)
-
   const LOG_PANEL_HEIGHT = logPanelExpanded ? 360 : 40
 
   return (
-    <div className="min-h-screen" style={{ paddingBottom: `${LOG_PANEL_HEIGHT}px` }}>
-      <Header activeTab={activeTab} onTabChange={handleTabChange} />
-
-      {!appDetailId && activeTab === "dashboard" && (
-        <div className="min-h-screen bg-[#faf9f7]">
-          <div className="border-b border-[#e2ddd7] bg-white px-4 py-4">
-            <div className="max-w-6xl mx-auto flex items-center justify-between">
-              <div>
-                <h1 className="text-sm font-semibold text-[#1c1917]">Dashboard</h1>
-                <p className="text-[11px] text-stone-400 mt-0.5">
-                  {sortedApps.length} app{sortedApps.length !== 1 ? 's' : ''}
-                  {agents && agents.length > 0 && ` · ${agents.length} node${agents.length !== 1 ? 's' : ''}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => syncMutation.mutate()}
-                  disabled={syncMutation.isPending}
-                  className="px-3 py-1 text-[11px] border border-[#e2ddd7] text-stone-500 hover:border-stone-400 hover:text-stone-700 rounded disabled:opacity-50 transition-colors"
-                  title="Git pull and sync updated configs to all agents"
-                >
-                  {syncMutation.isPending ? 'Syncing...' : 'Sync'}
-                </button>
-                <button
-                  onClick={() => rebalanceMutation.mutate()}
-                  disabled={rebalanceMutation.isPending}
-                  className="px-3 py-1 text-[11px] border border-[#e2ddd7] text-stone-500 hover:border-stone-400 hover:text-stone-700 rounded disabled:opacity-50 transition-colors"
-                  title="Rebalance all apps across nodes (may restart running apps)"
-                >
-                  {rebalanceMutation.isPending ? 'Rebalancing...' : 'Rebalance'}
-                </button>
-              </div>
-            </div>
-          </div>
-          <main className="max-w-6xl mx-auto px-4 py-6">
-            <NodeCards agents={agents} gatewayInfo={gatewayInfo} />
-            <AppsTable
-              apps={sortedApps}
-              isLoading={isLoading}
-              upcomingBackup={upcomingBackup}
-              upcomingPrune={upcomingPrune}
-              onShowLogs={handleShowAppLogs}
-              onNavigate={navigate}
-              agents={agents}
-            />
-          </main>
-        </div>
+    <AppShell activeTab={activeTab} onTabChange={handleTabChange} bottomPadding={LOG_PANEL_HEIGHT}>
+      {!appDetailId && activeTab === 'dashboard' && (
+        <DashboardPage onShowLogs={handleShowAppLogs} onNavigate={navigate} />
       )}
 
       {appDetailId && <AppDetailPage appId={appDetailId} onBack={() => navigate('/')} />}
-      {!appDetailId && activeTab === "backups" && <BackupsPage apps={apps} />}
-      {!appDetailId && activeTab === "storage" && <StoragePage />}
-      {!appDetailId && activeTab === "containers" && <ContainersPage onShowLogs={handleShowContainerLogs} />}
-      {!appDetailId && activeTab === "routing" && <RoutingPage />}
-      {!appDetailId && activeTab === "crowdsec" && <CrowdSecPage />}
-      {!appDetailId && activeTab === "logs" && <LogsPage />}
+      {!appDetailId && activeTab === 'backups' && <BackupsPage />}
+      {!appDetailId && activeTab === 'storage' && <StoragePage />}
+      {!appDetailId && activeTab === 'containers' && <ContainersPage onShowLogs={handleShowContainerLogs} />}
+      {!appDetailId && activeTab === 'routing' && <RoutingPage />}
+      {!appDetailId && activeTab === 'crowdsec' && <CrowdSecPage />}
+      {!appDetailId && activeTab === 'logs' && <LogsPage />}
 
-      {/* Sticky system log panel */}
-      <SystemLogViewer
-        expanded={logPanelExpanded}
-        onToggle={() => setLogPanelExpanded((v) => !v)}
-      />
+      <SystemLogViewer expanded={logPanelExpanded} onToggle={() => setLogPanelExpanded((v) => !v)} />
 
-      {/* App log side panel */}
       <LogPanel
         isOpen={logPanel?.type === 'app'}
         onClose={handleClosePanel}
@@ -146,7 +78,6 @@ function App() {
         appId={logPanel?.type === 'app' ? logPanel.appId : ''}
       />
 
-      {/* Container log side panel */}
       <ContainerLogPanel
         isOpen={logPanel?.type === 'container'}
         onClose={handleClosePanel}
@@ -154,7 +85,7 @@ function App() {
         containerId={logPanel?.type === 'container' ? logPanel.containerId : ''}
         containerName={logPanel?.type === 'container' ? logPanel.containerName : ''}
       />
-    </div>
+    </AppShell>
   )
 }
 
