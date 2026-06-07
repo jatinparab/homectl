@@ -1,9 +1,11 @@
 package docker
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -124,7 +126,7 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 
 func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
 	rootDir := filepath.Join("..", "testdata", "docker")
-	d := NewDocker(rootDir, "/appdata", "root")
+	d := NewDocker(rootDir, "/srv/homectl/app-data")
 	d.SetComposeExtraArgs([]string{"-f", "docker-compose.gpu.yml", "--profile", "gpu"})
 
 	cmd := d.ComposeCommand("adguard", "up", "-d")
@@ -147,5 +149,34 @@ func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
 	wantDir := filepath.Join(rootDir, "adguard")
 	if cmd.Dir != wantDir {
 		t.Fatalf("cmd.Dir = %q, want %q", cmd.Dir, wantDir)
+	}
+
+	wantEnv := "APPDATA=/srv/homectl/app-data"
+	if !envContains(cmd.Env, wantEnv) {
+		t.Fatalf("cmd.Env missing %q in %v", wantEnv, cmd.Env)
+	}
+}
+
+func envContains(env []string, want string) bool {
+	for _, item := range env {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestComposeEnvOverridesInheritedAPPDATA(t *testing.T) {
+	t.Setenv("APPDATA", "/wrong")
+	d := NewDocker("/tmp/docker", "/srv/homectl/app-data")
+
+	env := d.ComposeEnv()
+	if !envContains(env, "APPDATA=/srv/homectl/app-data") {
+		t.Fatalf("ComposeEnv missing resolved host APPDATA in %v", env)
+	}
+	for _, item := range env {
+		if strings.HasPrefix(item, "APPDATA=") && item != "APPDATA=/srv/homectl/app-data" {
+			t.Fatalf("ComposeEnv kept stale APPDATA entry %q; full env has %d entries, process env has %d", item, len(env), len(os.Environ()))
+		}
 	}
 }

@@ -242,7 +242,7 @@ func (a *Agent) getOrCreateRuntimeLocked(appID common.AppID) *AppRuntime {
 	rt := NewAppRuntime(appID)
 
 	// Restore persisted backup timestamp so it survives agent restarts
-	if meta, err := loadBackupMeta(a.appdataDir, appID); err != nil {
+	if meta, err := loadBackupMeta(a.stateDir, appID); err != nil {
 		sensorLog.Warn("Failed to load backup meta", "app", appID, "err", err)
 	} else if meta != nil {
 		rt.Backup.LastBackupAt = meta.LastBackupAt

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jatinparab/homectl/config"
 )
 
 var caddyContainerLog = slog.With("area", "caddy")
@@ -24,23 +26,14 @@ var (
 )
 
 func caddyHostDir() string {
-	if dir := os.Getenv("HOMECTL_CADDY_DIR"); dir != "" {
-		return dir
-	}
-	return "/opt/homectl/caddy"
+	return config.CaddyDir
 }
 
 func managerCaddyfilePath() string {
-	if path := os.Getenv("HOMECTL_CADDYFILE"); path != "" {
-		return path
-	}
 	return filepath.Join(caddyHostDir(), "Caddyfile")
 }
 
 func managerCaddyAccessLogPath() string {
-	if path := os.Getenv("HOMECTL_CADDY_ACCESS_LOG"); path != "" {
-		return path
-	}
 	return filepath.Join(caddyHostDir(), "data", "logs", "access.log")
 }
 
@@ -67,7 +60,7 @@ func ensureCaddy() error {
 	}
 
 	cmd := exec.Command(caddyBinary, "run", "--config", managerCaddyfilePath(), "--adapter", "caddyfile")
-	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+filepath.Join(caddyHostDir(), "data"))
+	cmd.Env = caddyEnv()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -104,7 +97,7 @@ func reloadCaddy() error {
 
 func ensureCaddyLocked() error {
 	cmd := exec.Command(caddyBinary, "run", "--config", managerCaddyfilePath(), "--adapter", "caddyfile")
-	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+filepath.Join(caddyHostDir(), "data"))
+	cmd.Env = caddyEnv()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -112,6 +105,13 @@ func ensureCaddyLocked() error {
 	}
 	caddyCmd = cmd
 	return nil
+}
+
+func caddyEnv() []string {
+	return append(os.Environ(),
+		"XDG_DATA_HOME="+filepath.Join(caddyHostDir(), "data"),
+		"XDG_CONFIG_HOME="+filepath.Join(caddyHostDir(), "config"),
+	)
 }
 
 func stopCaddyLocked() {

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/manager/client"
 )
 
@@ -31,8 +32,8 @@ type CaddySync struct {
 	agentID       string
 }
 
-func NewCaddySync(appdataDir, agentID string, c *client.Client) *CaddySync {
-	configPath := filepath.Join(appdataDir, "caddy", "Caddyfile")
+func NewCaddySync(configDir, agentID string, c *client.Client) *CaddySync {
+	configPath := filepath.Join(configDir, "Caddyfile")
 	cs := &CaddySync{
 		configPath: configPath,
 		configDir:  filepath.Dir(configPath),
@@ -91,15 +92,17 @@ func EnsureCaddy() error {
 func startCaddyLocked() error {
 	caddyDir := resolveCaddyConfigDir()
 	caddyfilePath := filepath.Join(caddyDir, "Caddyfile")
-	if err := os.MkdirAll(caddyDir, 0755); err != nil {
-		return fmt.Errorf("create caddy config dir: %w", err)
+	for _, dir := range []string{caddyDir, filepath.Join(caddyDir, "data"), filepath.Join(caddyDir, "config")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create caddy dir %s: %w", dir, err)
+		}
 	}
-	fmt.Println("caddyDir: ", caddyDir)
 	if _, err := os.Stat(caddyfilePath); os.IsNotExist(err) {
 		os.WriteFile(caddyfilePath, []byte("# placeholder\n"), 0644)
 	}
 
 	cmd := exec.Command(caddyBinary, "run", "--config", caddyfilePath, "--adapter", "caddyfile")
+	cmd.Env = caddyEnv()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -108,6 +111,14 @@ func startCaddyLocked() error {
 	agentCaddyCmd = cmd
 	caddyLog.Info("Caddy started", "pid", cmd.Process.Pid)
 	return nil
+}
+
+func caddyEnv() []string {
+	caddyDir := resolveCaddyConfigDir()
+	return append(os.Environ(),
+		"XDG_DATA_HOME="+filepath.Join(caddyDir, "data"),
+		"XDG_CONFIG_HOME="+filepath.Join(caddyDir, "config"),
+	)
 }
 
 func StopCaddy() {
@@ -165,12 +176,5 @@ func stopCaddyLocked() {
 }
 
 func resolveCaddyConfigDir() string {
-	if dir := os.Getenv("HOMECTL_CADDY_DIR"); dir != "" {
-		return dir
-	}
-	appdataDir := os.Getenv("HOMECTL_APPDATA_DIR")
-	if appdataDir == "" {
-		appdataDir = "/opt/homectl/appdata"
-	}
-	return filepath.Join(appdataDir, "caddy")
+	return config.CaddyDir
 }

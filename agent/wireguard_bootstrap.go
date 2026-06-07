@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/wireguard"
 )
 
@@ -18,6 +19,13 @@ type wireGuardBootstrapResult struct {
 	AgentName  string
 	AgentIP    string
 	ManagerURL string
+}
+
+func forceBootstrapWireGuard(agentName, bootstrapManagerURL string) (wireGuardBootstrapResult, error) {
+	configDir := config.WireGuardDir
+	keyDir := filepath.Join(configDir, "keys")
+	os.RemoveAll(keyDir)
+	return bootstrapWireGuard(agentName, bootstrapManagerURL)
 }
 
 func bootstrapWireGuard(agentName, bootstrapManagerURL string) (wireGuardBootstrapResult, error) {
@@ -29,10 +37,7 @@ func bootstrapWireGuard(agentName, bootstrapManagerURL string) (wireGuardBootstr
 		return wireGuardBootstrapResult{}, fmt.Errorf("HOMECTL_MANAGER_URL is required")
 	}
 
-	configDir := os.Getenv("HOMECTL_WG_CONFIG_DIR")
-	if configDir == "" {
-		configDir = "/opt/homectl/wireguard"
-	}
+	configDir := config.WireGuardDir
 	keyDir := filepath.Join(configDir, "keys")
 	privateKey, publicKey, err := wireguard.EnsureKeyPair(keyDir)
 	if err != nil {

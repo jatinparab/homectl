@@ -214,21 +214,30 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	if email := strings.TrimSpace(os.Getenv("CADDY_ACME_EMAIL")); email != "" {
 		fmt.Fprintf(&b, "\temail %s\n", email)
 	}
-	b.WriteString("}\n\n")
-	tlsImport := caddyTLSSnippet(&b)
-	if tlsImport != "" {
-		fmt.Fprintf(&b, "*.%s, *.internal.%s {\n", suffix, suffix)
-		fmt.Fprintf(&b, "\timport %s\n", tlsImport)
-		for i, route := range routes {
-			matcher := fmt.Sprintf("route%d", i)
-			fmt.Fprintf(&b, "\t@%s host %s %s\n", matcher, route.publicHost, route.internalHost)
-			fmt.Fprintf(&b, "\thandle @%s {\n", matcher)
-			fmt.Fprintf(&b, "\t\treverse_proxy %s\n", route.target)
-			b.WriteString("\t}\n")
+	provider := strings.TrimSpace(os.Getenv("CADDY_DNS_PROVIDER"))
+	hasDNS := provider != ""
+	if hasDNS {
+		if acmeCA := strings.TrimSpace(os.Getenv("CADDY_ACME_CA")); acmeCA != "" {
+			fmt.Fprintf(&b, "\tacme_ca %s\n", acmeCA)
 		}
-		b.WriteString("}\n\n")
-	} else {
-		for _, route := range routes {
+	}
+	b.WriteString("}\n\n")
+	dnsTokenEnv := strings.TrimSpace(os.Getenv("CADDY_DNS_TOKEN_ENV"))
+	for _, route := range routes {
+		if hasDNS {
+			fmt.Fprintf(&b, "%s {\n", route.publicHost)
+			if dnsTokenEnv != "" {
+				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
+			}
+			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			b.WriteString("}\n\n")
+			fmt.Fprintf(&b, "%s {\n", route.internalHost)
+			if dnsTokenEnv != "" {
+				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
+			}
+			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			b.WriteString("}\n\n")
+		} else {
 			fmt.Fprintf(&b, "%s, %s {\n", route.publicHost, route.internalHost)
 			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
 			b.WriteString("}\n\n")
@@ -243,21 +252,6 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	b.WriteString("}\n\n")
 
 	return b.String(), nil
-}
-
-func caddyTLSSnippet(b *strings.Builder) string {
-	provider := strings.TrimSpace(os.Getenv("CADDY_DNS_PROVIDER"))
-	if provider == "" {
-		return ""
-	}
-	tokenEnv := strings.TrimSpace(os.Getenv("CADDY_DNS_TOKEN_ENV"))
-	if tokenEnv == "" {
-		tokenEnv = "CLOUDFLARE_API_TOKEN"
-	}
-	b.WriteString("(homectl_tls) {\n")
-	fmt.Fprintf(b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, tokenEnv)
-	b.WriteString("}\n\n")
-	return "homectl_tls"
 }
 
 // GenerateTraefikConfig is kept for mixed-version compatibility. It now emits

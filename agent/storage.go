@@ -155,8 +155,6 @@ func (a *Agent) runStoragePrune() {
 			deletedDirs = append(deletedDirs, target)
 			deletedBytes += sz
 
-			_ = removePathWithSudoFallback(backupMetaPath(a.appdataDir, common.AppID(name)), filepath.Join(a.appdataDir, ".homectl-meta"))
-
 			a.runtimeMu.Lock()
 			delete(a.runtime, common.AppID(name))
 			delete(a.assignedApps, common.AppID(name))

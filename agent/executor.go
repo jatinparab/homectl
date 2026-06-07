@@ -305,7 +305,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	}
 
 	if needsRestore {
-		meta, metaErr := loadBackupMeta(e.agent.appdataDir, appID)
+		meta, metaErr := loadBackupMeta(e.agent.stateDir, appID)
 		if metaErr != nil {
 			executorLog.Info("Failed to load backup meta (will restore)", "app", appID, "err", metaErr)
 		} else if meta == nil {
@@ -352,7 +352,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 				SnapshotID:   snapID,
 				Node:         e.agent.name,
 			}
-			if err := writeBackupMeta(e.agent.appdataDir, appID, newMeta); err != nil {
+			if err := writeBackupMeta(e.agent.stateDir, appID, newMeta); err != nil {
 				executorLog.Info("Failed to write backup meta after restore", "app", appID, "err", err)
 			}
 			e.agent.runtimeMu.Lock()
@@ -467,7 +467,7 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 			LastBackupAt: now,
 			Node:         e.agent.name,
 		}
-		if err := writeBackupMeta(e.agent.appdataDir, appID, meta); err != nil {
+		if err := writeBackupMeta(e.agent.stateDir, appID, meta); err != nil {
 			executorLog.Info("Failed to write backup meta", "app", appID, "err", err)
 		}
 		e.agent.runtimeMu.Lock()

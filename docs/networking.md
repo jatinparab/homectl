@@ -65,7 +65,6 @@ via Docker network DNS aliases (e.g., `homectl-adguard`).
 HOMECTL_JOIN_TOKEN=replace-with-a-long-random-token
 HOMECTL_WG_ENDPOINT_IP=203.0.113.10
 HOMECTL_GIT_REPO=https://github.com/your-org/homelab.git
-HOMECTL_REPO_DIR=/opt/homectl/repo
 HOMECTL_DOMAIN_SUFFIX=your-domain.example
 HOMECTL_PUBLIC_HOST=homectl.your-domain.example
 ```
@@ -82,13 +81,16 @@ TLS-ALPN-01 challenges.
 ## Required Agent Configuration
 
 ```env
-HOMECTL_AGENT_NAME=node-1
 HOMECTL_JOIN_TOKEN=replace-with-the-manager-token
 HOMECTL_MANAGER_URL=https://homectl.your-domain.example
-HOMECTL_DOCKER_ROOT_DIR=/opt/homectl/docker
-HOMECTL_APPDATA_DIR=/opt/homectl/appdata
 RESTIC_REPOSITORY=s3:https://s3.example.com/bucket/path
 ```
+
+Set a stable container `hostname:` for each agent. That hostname is the node
+identity shown in the manager and used for placement, leases, and WireGuard peer
+state. Mount `/config` into every Homectl container. On agents, mount a host
+directory at `/app-data` using a bind mount. Homectl resolves that host path and
+passes it to managed app Compose files as `APPDATA`.
 
 Gateway agents use the DNS-enabled Caddy build when `CADDY_DNS_PROVIDER` is set
 on the manager. The generated agent Caddyfile includes DNS-01 TLS config and the

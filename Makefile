@@ -2,6 +2,7 @@
 
 IMAGE_REPO ?= homectl
 IMAGE_TAG ?= local
+CROWDSEC_VERSION ?= v1.7.8
 
 DEV_DEPLOY_HOST ?= 192.168.1.101
 DEV_DEPLOY_USER ?= jatin
@@ -49,7 +50,7 @@ test:
 	go test ./...
 
 docker-manager:
-	docker build -f Dockerfile.manager -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 
 docker-agent:
 	docker build -f Dockerfile.agent -t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
@@ -74,7 +75,7 @@ dev-deploy:
 	ssh $(DEV_DEPLOY_USER)@$(DEV_DEPLOY_HOST) 'cd $(DEV_COMPOSE_DIR) && docker compose down && docker compose up -d'
 
 dev-deploy-manager:
-	docker build --platform linux/amd64 -f Dockerfile.manager -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 	docker save $(IMAGE_REPO)/manager:$(IMAGE_TAG) | ssh $(DEV_MANAGER_USER)@$(DEV_MANAGER_HOST) 'docker load'
 	ssh $(DEV_MANAGER_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && docker compose down && docker compose up -d'
 

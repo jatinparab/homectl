@@ -60,6 +60,16 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/repo/force-unlock", m.handleAPIRepoForceUnlock)
 	mux.HandleFunc("/api/v1/repo/unlock-logs", m.handleAPIRepoUnlockLogs)
 	mux.HandleFunc("/api/v1/gateway", m.handleAPIGateway)
+	mux.HandleFunc("/api/v1/crowdsec/status", m.handleAPICrowdSecStatus)
+	mux.HandleFunc("/api/v1/crowdsec/metrics", m.handleAPICrowdSecMetrics)
+	mux.HandleFunc("/api/v1/crowdsec/logs", m.handleAPICrowdSecLogs)
+	mux.HandleFunc("/api/v1/crowdsec/bans", m.handleAPICrowdSecBans)
+	mux.HandleFunc("/api/v1/crowdsec/bans/", m.handleAPICrowdSecBan)
+	mux.HandleFunc("/api/v1/crowdsec/hub", m.handleAPICrowdSecHub)
+	mux.HandleFunc("/api/v1/crowdsec/version", m.handleAPICrowdSecVersion)
+	mux.HandleFunc("/api/v1/crowdsec/update", m.handleAPICrowdSecUpdate)
+	mux.HandleFunc("/api/v1/public-route-logs", m.handleAPIPublicRouteLogs)
+	mux.HandleFunc("/api/v1/ssh-logs", m.handleAPISSHLogs)
 	mux.HandleFunc("/api/v1/public-routes", m.handleAPIPublicRoutes)
 	mux.HandleFunc("/api/v1/public-routes/", m.handleAPIPublicRoute)
 	mux.HandleFunc("/api/v1/storage", m.handleAPIStorage)
@@ -112,11 +122,6 @@ func (m *Manager) handleListAgents(w http.ResponseWriter, r *http.Request) {
 func (m *Manager) handleSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if err := m.GitSync(); err != nil {
-		http.Error(w, fmt.Sprintf("Sync failed: %s", err), http.StatusInternalServerError)
 		return
 	}
 
