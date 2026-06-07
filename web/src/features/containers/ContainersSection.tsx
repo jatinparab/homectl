@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useContainers } from '../../api/hooks'
 import { ContainerStateBadge } from '../../features/shared/components/StatusBadge'
 import type { NodeContainers } from '../../api/types'
+import { Button } from '../../components/ui'
 
 interface ContainersSectionProps {
   onShowLogs: (node: string, containerId: string, containerName: string) => void
@@ -18,11 +19,8 @@ function NodeGroup({
 
   return (
     <div className="mb-4">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 text-sm font-medium text-white mb-2 hover:text-gray-300"
-      >
-        <span className={`transform transition-transform ${expanded ? 'rotate-90' : ''}`}>
+      <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
+        <span style={{ display: 'inline-block', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>
           &#9654;
         </span>
         {nodeData.node}
@@ -30,7 +28,7 @@ function NodeGroup({
         <span className="text-gray-400 text-xs">
           ({nodeData.containers.length} containers)
         </span>
-      </button>
+      </Button>
 
       {expanded && (
         <>
@@ -62,12 +60,7 @@ function NodeGroup({
                       </td>
                       <td className="py-2 px-3 text-gray-400 text-xs">{c.status}</td>
                       <td className="py-2 px-3">
-                        <button
-                          onClick={() => onShowLogs(nodeData.node, c.id, c.name)}
-                          className="text-blue-400 hover:text-blue-300 text-xs"
-                        >
-                          Logs
-                        </button>
+                        <Button variant="ghost" size="sm" onClick={() => onShowLogs(nodeData.node, c.id, c.name)}>Logs</Button>
                       </td>
                     </tr>
                   ))}

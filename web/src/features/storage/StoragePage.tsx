@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import styled from '@emotion/styled';
 import { useStorageStatus, useTriggerStoragePrune } from '../../api/hooks';
+import { Button } from '../../components/ui';
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -60,18 +61,6 @@ const Subtitle = styled.p`
   font-size: 11px;
   color: #a8a29e;
   margin: 2px 0 0;
-`;
-
-const DangerBtn = styled.button`
-  padding: 6px 12px;
-  font-size: 11px;
-  border: 1px solid #fecaca;
-  color: #dc2626;
-  background: none;
-  border-radius: ${(p) => p.theme.radii.sm};
-  cursor: pointer;
-  &:hover:not(:disabled) { border-color: #f87171; background: #fef2f2; }
-  &:disabled { opacity: 0.5; cursor: default; }
 `;
 
 const Main = styled.main`
@@ -229,18 +218,6 @@ const LastState = styled.span`
   color: #a8a29e;
 `;
 
-const SmallBtn = styled.button`
-  padding: 4px 8px;
-  font-size: 11px;
-  border: 1px solid ${(p) => p.theme.colors.border};
-  color: #78716c;
-  background: none;
-  border-radius: ${(p) => p.theme.radii.sm};
-  cursor: pointer;
-  &:hover:not(:disabled) { border-color: #a8a29e; color: #44403c; }
-  &:disabled { opacity: 0.4; cursor: not-allowed; }
-`;
-
 function barColor(value: number): string {
   if (value >= 90) return '#f87171';
   if (value >= 60) return '#fbbf24';
@@ -282,9 +259,9 @@ export function StoragePage() {
               {isLoading ? 'Loading...' : `${sortedNodes.length} node${sortedNodes.length !== 1 ? 's' : ''}`}
             </Subtitle>
           </div>
-          <DangerBtn onClick={() => triggerPrune('all')} disabled={pruneMutation.isPending || pruningAny}>
+          <Button variant="destructive" size="sm" onClick={() => triggerPrune('all')} disabled={pruneMutation.isPending || pruningAny}>
             {pruningAny ? 'Pruning...' : 'Prune all nodes'}
-          </DangerBtn>
+          </Button>
         </HeaderInner>
       </HeaderBar>
 
@@ -359,12 +336,14 @@ export function StoragePage() {
                         )}
                       </Td>
                       <Td>
-                        <SmallBtn
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => triggerPrune(node.node)}
                           disabled={!node.online || node.prune.busy || pruneMutation.isPending}
                         >
                           {node.prune.busy ? 'Pruning...' : 'Prune'}
-                        </SmallBtn>
+                        </Button>
                       </Td>
                     </Tr>
                   ))}

@@ -1,4 +1,5 @@
 import styled from '@emotion/styled';
+import { Button } from '../../../components/ui';
 import type { LogFilterParams } from '../../../api/types';
 
 export interface LogFilterProps {
@@ -28,8 +29,6 @@ const Width36 = styled.div`width: 9rem;`;
 const Width32 = styled.div`width: 8rem;`;
 const Width24 = styled.div`width: 6rem;`;
 const Width40 = styled.div`width: 10rem;`;
-const SubmitBtn = styled.button`height: 30px; padding: 0 12px; font-size: 11px; background: #0d9488; color: #fff; border: none; border-radius: 3px; cursor: pointer; display: flex; align-items: center; gap: 6px; &:hover:not(:disabled) { background: #0f766e; } &:disabled { opacity: 0.5; }`;
-const ClearBtn = styled.button`height: 30px; padding: 0 12px; font-size: 11px; border: 1px solid #e2ddd7; color: #78716c; background: none; border-radius: 3px; cursor: pointer; &:hover { border-color: #a8a29e; color: #44403c; }`;
 
 export function LogFilterBar({ filters, onChange, onApply, onClear, extraControls, hostOptions = [], ipOptions = [], statusOptions = [], showHost, showURI, showStatus, showSearch = true }: LogFilterProps) {
   return (
@@ -40,8 +39,8 @@ export function LogFilterBar({ filters, onChange, onApply, onClear, extraControl
         {showURI && <Width36><LabelEl><LabelText>URL</LabelText><StyledInput value={filters.uri ?? ''} placeholder="Filter URL" onChange={(e) => onChange({ ...filters, uri: e.target.value || undefined })} /></LabelEl></Width36>}
         {showStatus && <Width24><LabelEl><LabelText>Status</LabelText><StyledSelect value={filters.status ?? ''} onChange={(e) => onChange({ ...filters, status: e.target.value || undefined })}><option value="">All</option>{[...new Set(filters.status && !statusOptions.includes(filters.status) ? [filters.status, ...statusOptions] : statusOptions)].map((o) => <option key={o} value={o}>{o}</option>)}</StyledSelect></LabelEl></Width24>}
         {showSearch && <Width40><LabelEl><LabelText>Search</LabelText><StyledInput value={filters.search ?? ''} placeholder="Search all fields" onChange={(e) => onChange({ ...filters, search: e.target.value || undefined })} /></LabelEl></Width40>}
-        <SubmitBtn type="button" onClick={() => onApply({ ...filters })}>Apply filter</SubmitBtn>
-        <ClearBtn type="button" onClick={onClear}>Clear</ClearBtn>
+        <Button type="button" variant="primary" size="sm" onClick={() => onApply({ ...filters })}>Apply filter</Button>
+        <Button type="button" variant="secondary" size="sm" onClick={onClear}>Clear</Button>
       </Row>
       {extraControls && <ExtraRow>{extraControls}</ExtraRow>}
     </Wrap>

@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import styled from '@emotion/styled';
+import { Settings } from 'lucide-react';
 import type { Agent, GatewayInfo } from '../../../api/types';
 import { useSetManualGateway, useClearManualGateway } from '../../../api/hooks';
+import { Button, IconButton } from '../../../components/ui';
+import { NodeConfigDialog } from './NodeConfigDialog';
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return '--';
@@ -87,6 +91,12 @@ const Chip = styled.span<{ variant: 'gateway' | 'manual' }>`
       : `color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe;`}
 `;
 
+const HeaderActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
 const OnlineText = styled.span<{ online: boolean }>`
   font-size: 11px;
   font-weight: 500;
@@ -117,29 +127,6 @@ const Actions = styled.div`
   border-top: 1px solid ${(p) => p.theme.colors.border};
   display: flex;
   gap: 8px;
-`;
-
-const ActionBtn = styled.button<{ $accent?: boolean }>`
-  flex: 1;
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: ${(p) => p.theme.radii.sm};
-  border: 1px solid ${(p) => p.theme.colors.border};
-  color: ${(p) => p.theme.colors.textMuted};
-  background: transparent;
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover:not(:disabled) {
-    border-color: ${(p) => (p.$accent ? '#5eead4' : '#a8a29e')};
-    color: ${(p) => (p.$accent ? '#0f766e' : '#44403c')};
-    background: ${(p) => (p.$accent ? '#f0fdfa' : 'transparent')};
-  }
-
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
 `;
 
 // ── MetricRow ─────────────────────────────
@@ -206,6 +193,7 @@ export function NodeCards({ agents, gatewayInfo }: NodeCardsProps) {
 function NodeCard({ agent, gatewayInfo }: { agent: Agent; gatewayInfo: GatewayInfo | undefined }) {
   const setManualGateway = useSetManualGateway();
   const clearManualGateway = useClearManualGateway();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const isManual = gatewayInfo?.is_manual ?? false;
   const isThisManual = isManual && gatewayInfo?.manual_node === agent.name;
@@ -219,7 +207,12 @@ function NodeCard({ agent, gatewayInfo }: { agent: Agent; gatewayInfo: GatewayIn
           {agent.is_gateway && <Chip variant="gateway">gateway</Chip>}
           {isThisManual && <Chip variant="manual">manual</Chip>}
         </NameGroup>
-        <OnlineText online={agent.online}>{agent.online ? 'online' : 'offline'}</OnlineText>
+        <HeaderActions>
+          <IconButton label={`Configure ${agent.name}`} size="1" variant="ghost" color="gray" onClick={() => setSettingsOpen(true)}>
+            <Settings size={14} />
+          </IconButton>
+          <OnlineText online={agent.online}>{agent.online ? 'online' : 'offline'}</OnlineText>
+        </HeaderActions>
       </CardHeader>
 
       <IpAddress>{agent.ip}</IpAddress>
@@ -244,19 +237,21 @@ function NodeCard({ agent, gatewayInfo }: { agent: Agent; gatewayInfo: GatewayIn
 
       <Actions>
         {!isThisManual ? (
-          <ActionBtn
-            $accent
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => setManualGateway.mutate(agent.name)}
             disabled={!agent.online || setManualGateway.isPending}
           >
             Set gateway
-          </ActionBtn>
+          </Button>
         ) : (
-          <ActionBtn onClick={() => clearManualGateway.mutate()} disabled={clearManualGateway.isPending}>
+          <Button variant="secondary" size="sm" onClick={() => clearManualGateway.mutate()} disabled={clearManualGateway.isPending}>
             Revert to auto
-          </ActionBtn>
+          </Button>
         )}
       </Actions>
+      <NodeConfigDialog node={agent.name} open={settingsOpen} onOpenChange={setSettingsOpen} />
     </CardWrap>
   );
 }

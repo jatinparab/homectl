@@ -12,6 +12,8 @@ import {
   useTriggerPrune,
 } from "../../api/hooks";
 import { useStreamSubscription } from "../../api/live";
+import { Button } from '../../components/ui';
+import { Button as RadixButton } from '@radix-ui/themes';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -218,22 +220,7 @@ const AppCard = styled.div`
   border-radius: ${(p) => p.theme.radii.lg};
 `;
 
-const AppRowBtn = styled.button`
-  width: 100%;
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  text-align: left;
-  background: ${(p) => p.theme.colors.neutralSurface};
-  border: none;
-  cursor: pointer;
-  border-radius: ${(p) => p.theme.radii.lg};
 
-  &:hover {
-    background: #faf9f7;
-  }
-`;
 
 const AppRowLeft = styled.div`
   display: flex;
@@ -358,17 +345,7 @@ const Breadcrumbs = styled.div`
   margin-bottom: 8px;
 `;
 
-const BreadcrumbBtn = styled.button`
-  color: #0d9488;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
 
-  &:hover {
-    text-decoration: underline;
-  }
-`;
 
 const FbTable = styled.table`
   width: 100%;
@@ -388,33 +365,7 @@ const FbTd = styled.td`
 
 // ══ Shared buttons ══════════════════════════
 
-const Btn = styled.button<{ $danger?: boolean; $violet?: boolean; $link?: boolean }>`
-  padding: 4px 8px;
-  font-size: 11px;
-  border: 1px solid ${(p) => (p.$danger ? "#fecaca" : p.$violet ? "#ddd6fe" : p.theme.colors.border)};
-  color: ${(p) => (p.$danger ? "#dc2626" : p.$violet ? "#7c3aed" : "#78716c")};
-  background: none;
-  border-radius: ${(p) => p.theme.radii.sm};
-  cursor: pointer;
 
-  &:hover:not(:disabled) {
-    ${(p) => (p.$danger ? "border-color: #f87171; background: #fef2f2;" : p.$violet ? "border-color: #c4b5fd; background: #f5f3ff;" : "border-color: #a8a29e;")}
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  ${(p) =>
-    p.$link &&
-    `
-    border: none;
-    padding: 0;
-    color: #0d9488;
-    &:hover { text-decoration: underline; }
-  `}
-`;
 
 // ══ Progress mini ═══════════════════════════
 
@@ -565,15 +516,15 @@ function RepoMaintenancePanel() {
           {error && <RepoError>{(error as Error).message}</RepoError>}
         </div>
         <RepoActions>
-          <Btn onClick={() => triggerCheck.mutate()} disabled={!gatewayOnline || checkBusy || unlockBusy || triggerCheck.isPending}>
+          <Button variant="secondary" size="sm" onClick={() => triggerCheck.mutate()} disabled={!gatewayOnline || checkBusy || unlockBusy || triggerCheck.isPending}>
             {checkBusy ? "Checking..." : "Run check"}
-          </Btn>
-          <Btn onClick={() => triggerUnlock.mutate()} disabled={!gatewayOnline || checkBusy || unlockBusy || triggerUnlock.isPending}>
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => triggerUnlock.mutate()} disabled={!gatewayOnline || checkBusy || unlockBusy || triggerUnlock.isPending}>
             {unlockBusy ? "Unlocking..." : "Unlock repo"}
-          </Btn>
-          <Btn $danger onClick={() => forceUnlock.mutate()} disabled={!gatewayOnline || unlockBusy || forceUnlock.isPending} title="Force unlock — runs restic unlock --remove-all">
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => forceUnlock.mutate()} disabled={!gatewayOnline || unlockBusy || forceUnlock.isPending} title="Force unlock — runs restic unlock --remove-all">
             Force unlock
-          </Btn>
+          </Button>
         </RepoActions>
       </RepoHeader>
 
@@ -581,9 +532,9 @@ function RepoMaintenancePanel() {
         <RepoCard>
           <RepoCardHeader>
             <RepoCardLabel>Check</RepoCardLabel>
-            <Btn $link onClick={() => setShowCheckLogs((v) => !v)} disabled={!gatewayOnline}>
+            <Button variant="ghost" size="sm" onClick={() => setShowCheckLogs((v) => !v)} disabled={!gatewayOnline}>
               {showCheckLogs ? "Hide logs" : "Show logs"}
-            </Btn>
+            </Button>
           </RepoCardHeader>
           <RepoCardLast>
             Last: {lastCheckAt ? <span title={formatFullDate(lastCheckAt)}>{timeAgo(lastCheckAt)}</span> : "never"}
@@ -603,9 +554,9 @@ function RepoMaintenancePanel() {
         <RepoCard>
           <RepoCardHeader>
             <RepoCardLabel>Unlock</RepoCardLabel>
-            <Btn $link onClick={() => setShowUnlockLogs((v) => !v)} disabled={!gatewayOnline}>
+            <Button variant="ghost" size="sm" onClick={() => setShowUnlockLogs((v) => !v)} disabled={!gatewayOnline}>
               {showUnlockLogs ? "Hide logs" : "Show logs"}
-            </Btn>
+            </Button>
           </RepoCardHeader>
           <RepoCardLast>
             Last: {lastUnlockAt ? <span title={formatFullDate(lastUnlockAt)}>{timeAgo(lastUnlockAt)}</span> : "never"}
@@ -634,7 +585,7 @@ function AppBackupRow({ app, expanded, onToggle }: { app: AppStatus; expanded: b
 
   return (
     <AppCard>
-      <AppRowBtn onClick={onToggle} style={expanded ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : undefined}>
+      <button onClick={onToggle} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left', background: 'var(--color-panel)', border: 'none', cursor: 'pointer', borderRadius: expanded ? 'var(--radius-5) var(--radius-5) 0 0' : 'var(--radius-5)' }}>
         <AppRowLeft>
           <Chevron>{expanded ? "▼" : "▶"}</Chevron>
           <AppName>{app.app_id}</AppName>
@@ -664,7 +615,7 @@ function AppBackupRow({ app, expanded, onToggle }: { app: AppStatus; expanded: b
           <span>every {app.backup_interval}</span>
           {!onlineNode && <span style={{ color: "#ef4444" }}>no online node</span>}
         </AppRowRight>
-      </AppRowBtn>
+      </button>
 
       {expanded && onlineNode && (
         <ExpandedBody>
@@ -721,13 +672,13 @@ function SnapshotList({ appId, node, app }: { appId: string; node: string; app: 
         </SnapInfo>
         <SnapActions>
           {canPrune && (
-            <Btn $violet onClick={() => pruneMutation.mutate({ appId, node })} disabled={pruneMutation.isPending}>
+            <RadixButton variant="surface" size="1" color="violet" radius="small" onClick={() => pruneMutation.mutate({ appId, node })} disabled={pruneMutation.isPending}>
               Prune
-            </Btn>
+            </RadixButton>
           )}
-          <Btn onClick={() => refreshMutation.mutate({ appId, node })} disabled={cacheLoading || refreshMutation.isPending}>
+          <Button variant="secondary" size="sm" onClick={() => refreshMutation.mutate({ appId, node })} disabled={cacheLoading || refreshMutation.isPending}>
             {cacheLoading ? "Refreshing..." : "Refresh"}
-          </Btn>
+          </Button>
         </SnapActions>
       </SnapHeader>
 
@@ -810,7 +761,7 @@ function FileBrowser({ snapshotId, node }: { snapshotId: string; node: string })
         {breadcrumbs.map((bc, i) => (
           <span key={bc.path} style={{ display: "flex", alignItems: "center", gap: 4 }}>
             {i > 0 && <span style={{ color: "#d6d3d1" }}>/</span>}
-            <BreadcrumbBtn onClick={() => setCurrentPath(bc.path)}>{bc.label}</BreadcrumbBtn>
+            <Button variant="ghost" size="sm" onClick={() => setCurrentPath(bc.path)}>{bc.label}</Button>
           </span>
         ))}
       </Breadcrumbs>
@@ -827,7 +778,7 @@ function FileBrowser({ snapshotId, node }: { snapshotId: string; node: string })
                 <FbTd style={{ color: "#a8a29e", width: 24 }}>{entry.type === "dir" ? "📁" : "📄"}</FbTd>
                 <FbTd>
                   {entry.type === "dir" ? (
-                    <BreadcrumbBtn onClick={() => setCurrentPath(entry.path + "/")}>{entry.name}/</BreadcrumbBtn>
+                    <Button variant="ghost" size="sm" onClick={() => setCurrentPath(entry.path + "/")}>{entry.name}/</Button>
                   ) : (
                     <span style={{ color: "#57534e" }}>{entry.name}</span>
                   )}

@@ -83,7 +83,6 @@ TLS-ALPN-01 challenges.
 ```env
 HOMECTL_JOIN_TOKEN=replace-with-the-manager-token
 HOMECTL_MANAGER_URL=https://homectl.your-domain.example
-RESTIC_REPOSITORY=s3:https://s3.example.com/bucket/path
 ```
 
 Set a stable container `hostname:` for each agent. That hostname is the node
@@ -93,10 +92,10 @@ directory at `/app-data` using a bind mount. Homectl resolves that host path and
 passes it to managed app Compose files as `APPDATA`.
 
 Gateway agents use the DNS-enabled Caddy build when `CADDY_DNS_PROVIDER` is set
-on the manager. The generated agent Caddyfile includes DNS-01 TLS config and the
-agent environment must contain the provider token, for example
-`CLOUDFLARE_API_TOKEN`. This is required for wildcard certificates and for
-hostnames that resolve to a private VIP, such as
+in manager-stored node config. The generated agent Caddyfile includes DNS-01 TLS
+config and the provider token, for example `CF_DNS_API_TOKEN`, is synced from the
+manager's encrypted shared config into agent memory. This is required for
+wildcard certificates and for hostnames that resolve to a private VIP, such as
 `*.internal.example.com -> 192.168.50.250`.
 
 ## VRRP / Keepalived

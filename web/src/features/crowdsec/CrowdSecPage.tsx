@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import styled from '@emotion/styled';
 import { useAddCrowdSecDecision, useCrowdSecDecisions, useCrowdSecHub, useCrowdSecLogs, useCrowdSecMetrics, useCrowdSecStatus, useCrowdSecVersion, useDeleteCrowdSecDecision, useInstallCrowdSecHubItem, useRemoveCrowdSecHubItem, useUpdateCrowdSec } from '../../api/hooks';
 import type { CrowdSecDecision, CrowdSecHubItem, CrowdSecLogEntry } from '../../api/types';
+import { Button } from '../../components/ui';
 
 function formatDateTime(v?: string) { if (!v) return '--'; const d = new Date(v); return Number.isNaN(d.getTime()) ? v : d.toLocaleString(); }
 function formatDuration(v?: string) { if (!v) return '--'; return v.replace(/m\d+s$/, 'm').replace(/h\d+m$/, 'h'); }
@@ -37,13 +38,11 @@ const FormRow = styled.form`padding: 12px 16px; border-bottom: 1px solid ${(p) =
 const Label = styled.label`display: block;`;
 const LabelText = styled.span`font-size: 10px; font-weight: 600; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.1em;`;
 const Field = styled.input`margin-top: 4px; width: 100%; padding: 6px 8px; font-size: ${(p) => p.theme.fontSizes.xs}; border: 1px solid ${(p) => p.theme.colors.border}; border-radius: ${(p) => p.theme.radii.sm}; background: ${(p) => p.theme.colors.neutralSurface}; color: ${(p) => p.theme.colors.textPrimary}; &:focus { outline: none; border-color: #14b8a6; }`;
-const SubmitBtn = styled.button`padding: 6px 12px; font-size: 11px; background: #0d9488; color: white; border: none; border-radius: ${(p) => p.theme.radii.sm}; cursor: pointer; &:hover:not(:disabled) { background: #0f766e; } &:disabled { opacity: 0.5; }`;
-const ActionBtn = styled.button<{ $danger?: boolean }>`padding: 4px 8px; font-size: 11px; border: 1px solid ${(p) => (p.$danger ? '#fecaca' : p.theme.colors.border)}; color: ${(p) => (p.$danger ? '#dc2626' : '#78716c')}; background: none; border-radius: ${(p) => p.theme.radii.sm}; cursor: pointer; &:hover:not(:disabled) { border-color: ${(p) => (p.$danger ? '#f87171' : '#a8a29e')}; } &:disabled { opacity: 0.5; }`;
+
+
 
 const Badge = styled.span<{ $bg: string; $color: string }>`display: inline-block; padding: 2px 6px; border-radius: ${(p) => p.theme.radii.sm}; font-size: 10px; font-weight: 600; background: ${(p) => p.$bg}; color: ${(p) => p.$color};`;
-const Pill = styled.button<{ $active?: boolean }>`padding: 4px 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-radius: ${(p) => p.theme.radii.sm}; border: none; cursor: pointer; background: ${(p) => (p.$active ? '#ccfbf1' : 'transparent')}; color: ${(p) => (p.$active ? '#0f766e' : '#a8a29e')}; &:hover { color: ${(p) => (p.$active ? '#0f766e' : '#57534e')}; }`;
 
-const ExpandBtn = styled.button<{ $expanded: boolean }>`font-size: 11px; border: none; background: none; cursor: pointer; padding: 0; transform: ${(p) => (p.$expanded ? 'rotate(90deg)' : 'none')}; transition: transform 0.15s;`;
 const CountryCell = styled.div`font-size: 11px;`;
 const CountryName = styled.div`font-size: 10px; color: #a8a29e; margin-top: 2px; max-width: 160px; overflow: hidden; text-overflow: ellipsis;`;
 const ExpGrid = styled.div`display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 11px; @media (min-width: 640px) { grid-template-columns: repeat(4, 1fr); }`;
@@ -158,7 +157,7 @@ export function CrowdSecPage() {
               <VersionRow>
                 <VerBlock><VerLabel>Installed</VerLabel><VerValue>v{version.current}</VerValue></VerBlock>
                 {version.latest && <VerBlock><VerLabel>Latest</VerLabel><VerValue style={{ color: '#78716c' }}>v{version.latest}</VerValue></VerBlock>}
-                {version.update_available && <SubmitBtn onClick={() => { if (!window.confirm(`Update CrowdSec from v${version.current} to v${version.latest}?`)) return; updateCs.mutateAsync().catch((err) => setHubError(err instanceof Error ? err.message.trim() : 'Update failed')); }} disabled={updateCs.isPending} style={{ marginLeft: 'auto' }}>{updateCs.isPending ? 'Updating...' : 'Update CrowdSec'}</SubmitBtn>}
+                {version.update_available && <Button variant="primary" size="sm" onClick={() => { if (!window.confirm(`Update CrowdSec from v${version.current} to v${version.latest}?`)) return; updateCs.mutateAsync().catch((err) => setHubError(err instanceof Error ? err.message.trim() : 'Update failed')); }} disabled={updateCs.isPending} style={{ marginLeft: 'auto' }}>{updateCs.isPending ? 'Updating...' : 'Update CrowdSec'}</Button>}
               </VersionRow>
               {hubError && <ErrorText>{hubError}</ErrorText>}
             </SecBody>
@@ -172,7 +171,7 @@ export function CrowdSecPage() {
             <Label><LabelText>IP address</LabelText><Field value={ip} onChange={(e) => setIP(e.target.value)} placeholder="203.0.113.10" /></Label>
             <Label><LabelText>Duration</LabelText><Field value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="4h" /></Label>
             <Label><LabelText>Reason</LabelText><Field value={reason} onChange={(e) => setReason(e.target.value)} /></Label>
-            <SubmitBtn type="submit" disabled={addDecision.isPending || !ip.trim()}>{addDecision.isPending ? 'Adding...' : 'Add ban'}</SubmitBtn>
+            <Button variant="primary" size="sm" type="submit" disabled={addDecision.isPending || !ip.trim()}>{addDecision.isPending ? 'Adding...' : 'Add ban'}</Button>
           </FormRow>
           {error && <ErrorBar>{error}</ErrorBar>}
         </Section>
@@ -190,7 +189,7 @@ export function CrowdSecPage() {
                   return (
                     <>
                       <Tr key={decisionKey(d)}>
-                        <Td><ExpandBtn $expanded={isExp} onClick={() => toggleExpand(d)} title={isExp ? 'Collapse' : 'Expand'}>&#9654;</ExpandBtn></Td>
+                        <Td><button onClick={() => toggleExpand(d)} title={isExp ? 'Collapse' : 'Expand'} style={{ fontSize: 11, border: 'none', background: 'none', cursor: 'pointer', padding: 0, transform: isExp ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>&#9654;</button></Td>
                         <Td><Mono style={{ fontSize: 11, color: '#57534e' }}>{d.value}</Mono></Td>
                         <Td>
                           <CountryCell>{countryFlag(d.country)} <span style={{ color: '#57534e' }}>{d.country}</span>{d.as_name && <CountryName>{d.as_name}</CountryName>}</CountryCell>
@@ -199,7 +198,7 @@ export function CrowdSecPage() {
                         <Td><Badge $bg={bag.bg} $color={bag.c}>{bag.text}</Badge></Td>
                         <Td style={{ color: '#78716c' }}>{d.event_count > 0 ? d.event_count : '--'}</Td>
                         <Td style={{ color: '#78716c' }}>{formatDuration(d.duration)}{d.until && <div style={{ fontSize: 10, color: '#a8a29e' }}>{formatDateTime(d.until)}</div>}</Td>
-                        <Td style={{ textAlign: 'right' }}><ActionBtn $danger onClick={() => removeBan(d)} disabled={deleteDecision.isPending || d.scope.toLowerCase() !== 'ip'}>Delete</ActionBtn></Td>
+                        <Td style={{ textAlign: 'right' }}><Button variant="destructive" size="sm" onClick={() => removeBan(d)} disabled={deleteDecision.isPending || d.scope.toLowerCase() !== 'ip'}>Delete</Button></Td>
                       </Tr>
                       {isExp && (
                         <ExpandedTr key={`${decisionKey(d)}-x`}>
@@ -247,7 +246,7 @@ export function CrowdSecPage() {
           <SecHeader>
             <SectionH2>Hub</SectionH2>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {(['collection', 'scenario', 'parser'] as const).map((t) => <Pill key={t} $active={hubType === t} onClick={() => setHubType(t)}>{t === 'collection' ? 'Collections' : t === 'scenario' ? 'Scenarios' : 'Parsers'}</Pill>)}
+              {(['collection', 'scenario', 'parser'] as const).map((t) => <Button key={t} variant={hubType === t ? 'primary' : 'ghost'} size="sm" onClick={() => setHubType(t)}>{t === 'collection' ? 'Collections' : t === 'scenario' ? 'Scenarios' : 'Parsers'}</Button>)}
             </div>
           </SecHeader>
           <SecBody>
@@ -265,7 +264,7 @@ export function CrowdSecPage() {
                     <Td style={{ color: '#78716c' }}>{item.version || '--'}</Td>
                     <Td><Badge $bg={item.update_available ? '#fef3c7' : '#ecfdf5'} $color={item.update_available ? '#b45309' : '#059669'}>{item.update_available ? 'Update available' : 'Installed'}</Badge></Td>
                     <Td><Truncate title={item.description} style={{ maxWidth: 300 }}>{item.description || '--'}</Truncate></Td>
-                    <Td style={{ textAlign: 'right' }}><ActionBtn $danger onClick={() => submitHubRemove(item)} disabled={removeHub.isPending}>Remove</ActionBtn></Td>
+                    <Td style={{ textAlign: 'right' }}><Button variant="destructive" size="sm" onClick={() => submitHubRemove(item)} disabled={removeHub.isPending}>Remove</Button></Td>
                   </Tr>
                 ))}
                 {(installedByType[hubType] ?? []).length === 0 && !hl && <tr><td colSpan={5} style={{ padding: '16px', textAlign: 'center', fontSize: 11, color: '#a8a29e' }}>No installed {hubType}s.</td></tr>}
@@ -278,7 +277,7 @@ export function CrowdSecPage() {
                 <LabelText>Install {hubType === 'collection' ? 'collection' : hubType === 'scenario' ? 'scenario' : 'parser'}</LabelText>
                 <Field value={hubInstallName} onChange={(e) => setHubInstallName(e.target.value)} placeholder={hubType === 'collection' ? 'crowdsecurity/nginx' : hubType === 'scenario' ? 'crowdsecurity/ssh-bf' : 'crowdsecurity/nginx-logs'} />
               </Label>
-              <SubmitBtn type="submit" disabled={installHub.isPending || !hubInstallName.trim()} style={{ whiteSpace: 'nowrap' }}>{installHub.isPending ? 'Installing...' : 'Install'}</SubmitBtn>
+              <Button variant="primary" size="sm" type="submit" disabled={installHub.isPending || !hubInstallName.trim()} style={{ whiteSpace: 'nowrap' }}>{installHub.isPending ? 'Installing...' : 'Install'}</Button>
             </InstallRow>
             {hubError && <ErrorText>{hubError}</ErrorText>}
           </div>

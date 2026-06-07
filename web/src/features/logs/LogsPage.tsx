@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import styled from '@emotion/styled';
 import type { LogFilterParams, PublicRouteAccessLogEntry, SSHLogEntry } from '../../api/types';
 import { usePublicRouteLogs, useSSHLogs } from '../../api/hooks';
+import { Button } from '../../components/ui';
 import { LogFilterBar } from '../../features/shared/components/LogFilterBar';
 import { LogTable, type Column } from '../../features/shared/components/LogTable';
 
@@ -29,7 +30,6 @@ const SecHeader = styled.div`padding: 12px 16px; border-bottom: 1px solid ${(p)=
 const SecHeaderRow = styled.div`display: flex; align-items: center; justify-content: space-between;`;
 const SecTitle = styled.h2`font-size: ${(p)=>p.theme.fontSizes.xs}; font-weight: 600; color: ${(p)=>p.theme.colors.textPrimary}; text-transform: uppercase; letter-spacing: 0.1em;`;
 const Count = styled.span`font-size: 11px; color: #a8a29e;`;
-const FilterChip = styled.button<{ $active: boolean }>`height: 28px; padding: 0 10px; font-size: 11px; border: 1px solid ${(p)=>(p.$active?'#99f6e4':'#e2ddd7')}; border-radius: 3px; background: ${(p)=>(p.$active?'#f0fdfa':'#fff')}; color: ${(p)=>(p.$active?'#0f766e':'#78716c')}; cursor: pointer; display: flex; align-items: center; gap: 6px; &:disabled { opacity: 0.4; cursor: not-allowed; }`;
 
 // ── Col renderers ──────────────────────────
 const Mono = styled.span`font-family: monospace; font-size: 11px;`;
@@ -88,9 +88,9 @@ export function LogsPage() {
             <SecHeaderRow><SecTitle>Request logs</SecTitle><Count>{rl ? 'Loading...' : `${filteredRequest.length} entries`}</Count></SecHeaderRow>
             <LogFilterBar filters={requestDraft} onChange={setRequestDraft} onApply={setRequestFilter} onClear={() => { setRequestDraft({ ...emptyFilter }); setRequestFilter({ ...emptyFilter }); }} hostOptions={hostOpts} ipOptions={ripOpts} statusOptions={statusOpts} showHost showURI showStatus showSearch
               extraControls={<>
-                <FilterChip $active={intelligentFiltering} onClick={()=>setIntelligentFiltering(v=>!v)}>Intelligent filtering</FilterChip>
-                <FilterChip $active={intelligentFiltering && excludeFilters.uptimePush} disabled={!intelligentFiltering} onClick={()=>setExcludeFilters(v=>({...v,uptimePush:!v.uptimePush}))}>uptime. /api/push</FilterChip>
-                <FilterChip $active={intelligentFiltering && excludeFilters.uptimeKumaAgent} disabled={!intelligentFiltering} onClick={()=>setExcludeFilters(v=>({...v,uptimeKumaAgent:!v.uptimeKumaAgent}))}>Uptime-Kuma agent</FilterChip>
+                <Button variant={intelligentFiltering ? 'primary' : 'outline'} size="sm" onClick={()=>setIntelligentFiltering(v=>!v)}>Intelligent filtering</Button>
+                <Button variant={intelligentFiltering && excludeFilters.uptimePush ? 'primary' : 'outline'} size="sm" disabled={!intelligentFiltering} onClick={()=>setExcludeFilters(v=>({...v,uptimePush:!v.uptimePush}))}>uptime. /api/push</Button>
+                <Button variant={intelligentFiltering && excludeFilters.uptimeKumaAgent ? 'primary' : 'outline'} size="sm" disabled={!intelligentFiltering} onClick={()=>setExcludeFilters(v=>({...v,uptimeKumaAgent:!v.uptimeKumaAgent}))}>Uptime-Kuma agent</Button>
               </>}
             />
           </SecHeader>

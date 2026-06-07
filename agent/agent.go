@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,6 +114,10 @@ type Agent struct {
 	storagePruneMu    sync.Mutex
 	storagePruneState StoragePruneState
 
+	// Runtime config synced from manager
+	runtimeConfig   map[string]string
+	runtimeConfigMu sync.RWMutex
+
 	// Domain suffix for health check Host header
 	domainSuffix string
 }
@@ -135,7 +141,8 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		managerClient:     client.NewClient(managerURL),
 		runtime:           make(map[common.AppID]*AppRuntime),
 		assignedApps:      make(map[common.AppID]bool),
-		restic:            NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true"),
+		runtimeConfig:     make(map[string]string),
+		restic:            nil,
 		stopChan:          make(chan struct{}),
 		sensorCtx:         sensorCtx,
 		sensorCancel:      sensorCancel,
@@ -146,6 +153,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 		lastConnectedAt:   time.Now(),
 	}
+	a.restic = NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true", a.configValue)
 	a.managerClient.SetIdentity(name, ip)
 	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
 	a.managerClient.SetRequestHandler(a.handleManagerLinkRequest)
@@ -192,22 +200,6 @@ func InitWithConfig(agentCfg Config) (*Agent, error) {
 		}
 	}
 
-	// Bootstrap keepalived VIP if configured
-	if haIP := os.Getenv("HOMECTL_LOCAL_HA_IP"); haIP != "" {
-		hostConfigRoot, err := resolveSelfBindMountSource(config.ConfigDir)
-		if err != nil {
-			agentLog.Error("Failed to resolve /config host path for keepalived", "err", err)
-		} else {
-			configDir := config.KeepalivedDir
-			hostConfigDir := filepath.Join(hostConfigRoot, "keepalived")
-			if err := keepalived.Ensure(configDir, hostConfigDir, haIP); err != nil {
-				agentLog.Error("Failed to start keepalived container", "err", err)
-			} else {
-				agentLog.Info("Keepalived container ensured", "vip", haIP)
-			}
-		}
-	}
-
 	agent := NewAgent(agentName, ip, cfg, agentCfg, managerURL, bootstrapURL, wireGuardReady, appdataHostDir, hostCfg.ComposeExtraArgs)
 
 	agentLog.Info("Agent initialized", "name", agentName, "ip", ip, "dockerRootDir", config.AgentDockerRootDir, "appdataDir", config.AppDataDir, "appdataHostDir", appdataHostDir, "composeExtraArgs", hostCfg.ComposeExtraArgs)
@@ -235,6 +227,18 @@ func (a *Agent) tryConnect() {
 
 	if err := a.managerClient.Health(); err != nil {
 		agentLog.Info("Manager not available (will retry)", "url", a.managerURL, "err", err)
+		a.setConnected(false)
+		a.setAppsReady(false)
+		return
+	}
+
+	if err := a.seedAgentConfigFromEnv(); err != nil {
+		agentLog.Info("Agent config env seed failed (will retry)", "err", err)
+	}
+	if err := a.syncAgentConfig(); err != nil {
+		agentLog.Info("Initial agent config sync failed (will retry)", "err", err)
+	}
+	if !a.managerClient.IsConnected() {
 		a.setConnected(false)
 		a.setAppsReady(false)
 		return
@@ -340,7 +344,7 @@ func (a *Agent) SyncConfigs() error {
 
 	// Initialize Caddy sync if not already done
 	if a.caddySync == nil {
-		a.caddySync = NewCaddySync(config.CaddyDir, a.name, a.managerClient)
+		a.caddySync = NewCaddySync(config.CaddyDir, a.name, a.managerClient, a.caddyRuntimeEnv)
 	}
 
 	return nil
@@ -379,7 +383,7 @@ func (a *Agent) IsAppsReady() bool {
 
 // Start starts all background loops.
 func (a *Agent) Start() {
-	a.wg.Add(6)
+	a.wg.Add(7)
 
 	if a.readyServer == nil {
 		a.readyServer = NewReadyServer(a)
@@ -388,6 +392,7 @@ func (a *Agent) Start() {
 	go a.heartbeatLoop()
 	go a.reconnectLoop()
 	go a.reconcileLoop()
+	go a.agentConfigSyncLoop()
 	go a.sensorLoop(a.sensorCtx)
 	go a.snapshotCacheLoop()
 	go func() {
@@ -398,6 +403,177 @@ func (a *Agent) Start() {
 	}()
 
 	agentLog.Info("Agent started", "heartbeat", a.agentConfig.RenewalInterval, "retry", a.agentConfig.RetryInterval, "reconcile", a.agentConfig.ReconcileInterval)
+}
+
+func (a *Agent) agentConfigSyncLoop() {
+	defer a.wg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if a.IsConnected() {
+				if err := a.syncAgentConfig(); err != nil {
+					agentLog.Info("Agent config sync failed", "err", err)
+				}
+			}
+		case <-a.stopChan:
+			return
+		}
+	}
+}
+
+func (a *Agent) seedAgentConfigFromEnv() error {
+	seed := common.NodeConfigDocument{}
+	for _, key := range common.SharedAgentConfigKeys {
+		envKey := key
+		if key == common.ConfigKeyLocalHAIP {
+			envKey = "HOMECTL_LOCAL_HA_IP"
+		}
+		if val := strings.TrimSpace(os.Getenv(envKey)); val != "" {
+			seed[key] = val
+		}
+	}
+	if val := strings.TrimSpace(os.Getenv(common.ConfigKeyAgentName)); val != "" {
+		seed[common.ConfigKeyAgentName] = val
+	}
+	return a.managerClient.SeedAgentConfig(seed)
+}
+
+func (a *Agent) syncAgentConfig() error {
+	resp, err := a.managerClient.FetchAgentConfig()
+	if err != nil {
+		return err
+	}
+	if resp.Version == 0 || len(resp.Config) == 0 {
+		return nil
+	}
+	a.runtimeConfigMu.RLock()
+	existingVersion, _ := strconv.ParseInt(a.runtimeConfig["__version"], 10, 64)
+	a.runtimeConfigMu.RUnlock()
+	if existingVersion >= resp.Version {
+		return nil
+	}
+	var cfg map[string]string
+	if err := json.Unmarshal(resp.Config, &cfg); err != nil {
+		return err
+	}
+	changed := a.setRuntimeConfig(resp.Version, cfg)
+	if changed {
+		a.applyRuntimeConfig()
+	}
+	return nil
+}
+
+func (a *Agent) setRuntimeConfig(version int64, cfg map[string]string) bool {
+	a.runtimeConfigMu.Lock()
+	defer a.runtimeConfigMu.Unlock()
+	changed := false
+	for _, key := range append(common.SharedAgentConfigKeys, common.AgentSpecificConfigKeys...) {
+		newVal := strings.TrimSpace(cfg[key])
+		if a.runtimeConfig[key] != newVal {
+			changed = true
+		}
+		if newVal == "" {
+			delete(a.runtimeConfig, key)
+		} else {
+			a.runtimeConfig[key] = newVal
+		}
+	}
+	a.runtimeConfig["__version"] = strconv.FormatInt(version, 10)
+	return changed
+}
+
+func (a *Agent) configValue(key string) string {
+	a.runtimeConfigMu.RLock()
+	value := strings.TrimSpace(a.runtimeConfig[key])
+	a.runtimeConfigMu.RUnlock()
+	if value != "" {
+		return value
+	}
+	return ""
+}
+
+func (a *Agent) runtimeConfigSnapshot() map[string]string {
+	a.runtimeConfigMu.RLock()
+	defer a.runtimeConfigMu.RUnlock()
+	out := make(map[string]string, len(a.runtimeConfig))
+	for k, v := range a.runtimeConfig {
+		if !strings.HasPrefix(k, "__") {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func sanitizedAgentEnviron() []string {
+	managed := map[string]bool{"HOMECTL_LOCAL_HA_IP": true}
+	for _, key := range common.SharedAgentConfigKeys {
+		managed[key] = true
+	}
+	for _, key := range common.AgentSpecificConfigKeys {
+		managed[key] = true
+	}
+	out := []string{}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !managed[key] {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func (a *Agent) caddyRuntimeEnv() map[string]string {
+	cfg := a.runtimeConfigSnapshot()
+	out := map[string]string{}
+	for _, key := range []string{common.ConfigKeyCFDNSAPIToken} {
+		if val := strings.TrimSpace(cfg[key]); val != "" {
+			out[key] = val
+		}
+	}
+	return out
+}
+
+func (a *Agent) applyRuntimeConfig() {
+	if configuredName := a.configValue(common.ConfigKeyAgentName); configuredName != "" && configuredName != a.name {
+		oldName := a.name
+		a.name = configuredName
+		a.managerClient.SetIdentity(a.name, a.ip)
+		a.managerClient.SetBaseURL(a.managerURL)
+		a.setConnected(false)
+		a.setAppsReady(false)
+		if a.caddySync != nil {
+			a.caddySync.agentID = a.name
+		}
+		agentLog.Info("Agent name updated from manager config; reconnecting with new identity", "old", oldName, "new", a.name)
+	}
+	if haIP := a.configValue(common.ConfigKeyLocalHAIP); haIP != "" {
+		a.ensureKeepalived(haIP)
+	}
+	if IsCaddyRunning() {
+		StopCaddy()
+		if err := EnsureCaddy(a.caddyRuntimeEnv); err != nil {
+			agentLog.Warn("Failed to restart Caddy after config sync", "err", err)
+		}
+	}
+}
+
+func (a *Agent) ensureKeepalived(haIP string) {
+	hostConfigRoot, err := resolveSelfBindMountSource(config.ConfigDir)
+	if err != nil {
+		agentLog.Error("Failed to resolve /config host path for keepalived", "err", err)
+		return
+	}
+	configDir := config.KeepalivedDir
+	hostConfigDir := filepath.Join(hostConfigRoot, "keepalived")
+	if err := keepalived.Ensure(configDir, hostConfigDir, haIP); err != nil {
+		agentLog.Error("Failed to start keepalived container", "err", err)
+	} else {
+		agentLog.Info("Keepalived container ensured", "vip", haIP)
+	}
 }
 
 // heartbeatLoop sends periodic heartbeats to the manager.
@@ -507,7 +683,7 @@ func (a *Agent) reconcileOnce() {
 	// Ensure caddy is running as a process (not a Docker container).
 	// Gracefully skip if caddy is not installed (e.g., e2e environment).
 	if _, cerr := exec.LookPath("caddy"); cerr == nil {
-		if err := EnsureCaddy(); err != nil {
+		if err := EnsureCaddy(a.caddyRuntimeEnv); err != nil {
 			agentLog.Warn("Reconcile: caddy process not running", "err", err)
 		}
 	}

@@ -78,10 +78,17 @@ HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
 HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
 HOMECTL_DOMAIN_SUFFIX: your-domain.example
 HOMECTL_PUBLIC_HOST: homectl.your-domain.example
-CADDY_ACME_EMAIL: you@example.com
-CADDY_DNS_PROVIDER: cloudflare
 ADMIN_USER: admin
 ADMIN_PASSWORD: replace-me
+
+# Initial encrypted shared node config seed values:
+HOMECTL_LOCAL_HA_IP: 192.168.50.250
+CADDY_ACME_EMAIL: you@example.com
+CADDY_DNS_PROVIDER: cloudflare
+CADDY_DNS_TOKEN_ENV: CF_DNS_API_TOKEN
+CF_DNS_API_TOKEN: replace-with-cloudflare-token
+RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
+RESTIC_PASSWORD: replace-with-restic-password
 ```
 
 3. Start the manager:
@@ -91,15 +98,16 @@ docker compose -f docker-compose.example.yml up -d
 ```
 
 4. On each agent host, copy `docker-compose.agent.example.yml`, set a stable
-   `hostname:` for that node, and edit:
+   `hostname:` for that node, and edit only the bootstrap values:
 
 ```yaml
 HOMECTL_JOIN_TOKEN: replace-with-the-manager-token
 HOMECTL_MANAGER_URL: https://homectl.your-domain.example
-CADDY_ACME_EMAIL: you@example.com
-CLOUDFLARE_API_TOKEN: replace-with-cloudflare-token
-RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
 ```
+
+Shared Caddy, DNS, HA IP, and Restic values are stored encrypted on the manager
+and edited from each node's settings dialog in the web UI. They are synced to
+agents in memory; do not duplicate those secrets in agent compose files.
 
 5. Start the agent:
 
@@ -120,11 +128,12 @@ authenticated by `HOMECTL_JOIN_TOKEN`. After join, steady-state control traffic
 uses `http://10.44.0.1:1338` over WireGuard.
 
 The manager image uses stock Caddy and issues certificates for public manager
-hosts through normal ACME HTTP/TLS-ALPN challenges. `CADDY_DNS_PROVIDER` only
-controls the Caddyfile generated for gateway agents. Agents use the DNS-enabled
-Caddy build and need `CLOUDFLARE_API_TOKEN` when wildcard or private-VIP
-hostnames such as `*.internal.your-domain.example` must have public CA
-certificates.
+hosts through normal ACME HTTP/TLS-ALPN challenges. `CADDY_DNS_PROVIDER` and
+`CADDY_DNS_TOKEN_ENV` control the Caddyfile generated for gateway agents. Agents
+use the DNS-enabled Caddy build and receive the configured token, for example
+`CF_DNS_API_TOKEN`, from encrypted manager-stored node config when wildcard or
+private-VIP hostnames such as `*.internal.your-domain.example` must have public
+CA certificates.
 
 ## Configuration
 
@@ -139,10 +148,17 @@ Manager environment variables:
 | `HOMECTL_GIT_USERNAME` | No | HTTPS Git username when using `HOMECTL_GIT_TOKEN`; defaults to `x-access-token` for GitHub PATs. |
 | `HOMECTL_DOMAIN_SUFFIX` | Yes | Base domain for generated app routes. |
 | `HOMECTL_PUBLIC_HOST` | Yes | Public hostname reserved for the manager UI. |
-| `CADDY_ACME_EMAIL` | Recommended | Contact email used by Caddy's ACME account. |
-| `CADDY_DNS_PROVIDER` | If gateway wildcard TLS is needed | DNS provider name for generated agent Caddyfiles, for example `cloudflare`. |
 | `ADMIN_USER` | Recommended | Basic-auth username for the public manager UI host. |
 | `ADMIN_PASSWORD` | Recommended | Basic-auth password for the public manager UI host. |
+| `CADDY_ACME_EMAIL` | Recommended | Seed value for Caddy's ACME account email in encrypted shared node config. |
+| `CADDY_DNS_PROVIDER` | If gateway wildcard TLS is needed | DNS provider name for generated agent Caddyfiles, for example `cloudflare`. |
+| `HOMECTL_CONFIG_ENCRYPTION_KEY` | No | Optional base64-encoded 32-byte key used to encrypt manager-owned agent config at rest. If omitted, the manager generates and persists one under `/config/state/agent-config-encryption.key`. |
+
+On first startup with no local users, the manager logs a temporary onboarding
+token. Open the manager UI, create the first admin user with that token, then
+log in again with the new username and password. Until the first user exists,
+the manager serves only onboarding, health, and agent join endpoints; other
+manager runtime services start after onboarding completes.
 
 Agent environment variables:
 
@@ -151,11 +167,15 @@ Agent environment variables:
 | `HOMECTL_JOIN_TOKEN` | Yes | Must match the manager join token. |
 | `HOMECTL_MANAGER_URL` | Yes | Public manager origin served by Caddy, for example `https://homectl.your-domain.example`. |
 | `HOMECTL_COMPOSE_EXTRA_ARGS` | No | Extra Docker Compose options for this agent, inserted before `up`, `down`, `pull`, `ps`, `stop`, and `logs`; for example `-f docker-compose.gpu.yml --profile gpu`. Relative `-f` paths are resolved from each app directory. |
-| `CADDY_ACME_EMAIL` | Recommended | Contact email used by the gateway agent's Caddy instance. |
-| `CLOUDFLARE_API_TOKEN` | If `CADDY_DNS_PROVIDER=cloudflare` | Token used by the agent Caddy DNS plugin for DNS-01 challenges. |
-| `RESTIC_REPOSITORY` | Recommended | Restic repository URL for backups. |
-| `RESTIC_PASSWORD` | If using backups | Restic repository password. |
-| `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY` | If using B2 | Backblaze B2 credentials passed to Restic. |
+| `HOMECTL_AGENT_NAME` | No | Optional initial agent identity seed. Prefer a stable compose `hostname:` and manage later overrides from the manager UI. |
+| `HOMECTL_RESTIC_USE_SUDO` | No | Run restic through `sudo` on the agent host when required. |
+
+Shared runtime config such as `HOMECTL_LOCAL_HA_IP`, `CADDY_ACME_EMAIL`,
+`CADDY_DNS_PROVIDER`, `CADDY_DNS_TOKEN_ENV`, `CF_DNS_API_TOKEN`,
+`RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `B2_ACCOUNT_ID`, and `B2_ACCOUNT_KEY`
+belongs in manager-stored encrypted node config, not agent environment. The
+manager compose file may include these values once to seed the encrypted config;
+afterward, edit them from the web UI node settings dialog.
 
 ## App Repository Layout
 

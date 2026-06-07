@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeConfig, NodeConfigInput, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -20,6 +20,23 @@ export async function fetchAgents(): Promise<Agent[]> {
 
 export async function fetchStorageStatus(): Promise<StorageStatus> {
   return fetchJSON<StorageStatus>(`${API_BASE}/storage`);
+}
+
+export async function fetchNodeConfig(node: string): Promise<NodeConfig> {
+  return fetchJSON<NodeConfig>(`${API_BASE}/agent-configs/${encodeURIComponent(node)}`);
+}
+
+export async function updateNodeConfig(node: string, input: NodeConfigInput): Promise<NodeConfig> {
+  const response = await fetch(`${API_BASE}/agent-configs/${encodeURIComponent(node)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function triggerStoragePrune(node: string): Promise<StoragePruneResponse> {

@@ -25,11 +25,13 @@ type AgentInfo struct {
 
 // LeaseManager manages agent leases
 type LeaseManager struct {
-	agents        map[string]*AgentInfo
-	mu            sync.RWMutex
-	leaseTTL      time.Duration
-	cleanupTicker *time.Ticker
-	stopCleanup   chan struct{}
+	agents         map[string]*AgentInfo
+	mu             sync.RWMutex
+	leaseTTL       time.Duration
+	cleanupEvery   time.Duration
+	cleanupTicker  *time.Ticker
+	stopCleanup    chan struct{}
+	cleanupStarted bool
 }
 
 // LeaseConfig holds lease configuration
@@ -49,16 +51,24 @@ func DefaultLeaseConfig() LeaseConfig {
 // NewLeaseManager creates a new LeaseManager
 func NewLeaseManager(config LeaseConfig) *LeaseManager {
 	lm := &LeaseManager{
-		agents:      make(map[string]*AgentInfo),
-		leaseTTL:    config.LeaseTTL,
-		stopCleanup: make(chan struct{}),
+		agents:       make(map[string]*AgentInfo),
+		leaseTTL:     config.LeaseTTL,
+		cleanupEvery: config.CleanupInterval,
+		stopCleanup:  make(chan struct{}),
 	}
 
-	// Start background cleanup goroutine
-	lm.cleanupTicker = time.NewTicker(config.CleanupInterval)
-	go lm.cleanupLoop()
-
 	return lm
+}
+
+func (lm *LeaseManager) Start() {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	if lm.cleanupStarted {
+		return
+	}
+	lm.cleanupStarted = true
+	lm.cleanupTicker = time.NewTicker(lm.cleanupEvery)
+	go lm.cleanupLoop()
 }
 
 // cleanupLoop periodically removes expired agents
@@ -159,7 +169,13 @@ func (lm *LeaseManager) ListAgents() []AgentInfo {
 
 // Stop stops the lease manager cleanup goroutine
 func (lm *LeaseManager) Stop() {
-	close(lm.stopCleanup)
+	lm.mu.Lock()
+	started := lm.cleanupStarted
+	lm.cleanupStarted = false
+	lm.mu.Unlock()
+	if started {
+		close(lm.stopCleanup)
+	}
 }
 
 // LeaseTTL returns the configured lease TTL used to determine agent liveness.

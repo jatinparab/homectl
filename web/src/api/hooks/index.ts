@@ -4,7 +4,7 @@ export { useLiveSlice, useApps, useApp, useAgents, useSystemLogSources, useConta
 
 export { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment, useSnapshots, useRefreshSnapshots, useSnapshotFiles } from './apps';
 
-export { useSync, useRebalance, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useSetManualGateway, useClearManualGateway, useTriggerStoragePrune } from './system';
+export { useSync, useRebalance, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useSetManualGateway, useClearManualGateway, useTriggerStoragePrune, useNodeConfig, useUpdateNodeConfig } from './system';
 
 export { useCrowdSecLogs, useCrowdSecStatus, useCrowdSecMetrics, useCrowdSecDecisions, useAddCrowdSecDecision, useDeleteCrowdSecDecision, useCrowdSecHub, useInstallCrowdSecHubItem, useRemoveCrowdSecHubItem, useCrowdSecVersion, useUpdateCrowdSec } from './crowdsec';
 

@@ -4,6 +4,7 @@ import { useApp, useContainers, useUpdateAppDesiredState, useRestartApp, useTrig
 import { HealthBadge, PhaseBadge, DesiredToggle, ContainerStateBadge } from '../../../features/shared/components/StatusBadge';
 import { useStreamSubscription } from '../../../api/live';
 import type { NodeReport } from '../../../api/types';
+import { Button } from '../../../components/ui';
 
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return '—';
@@ -49,18 +50,6 @@ const HeaderInner = styled.div`
   gap: 12px;
 `;
 
-const BackBtn = styled.button`
-  color: #a8a29e;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  &:hover { color: #44403c; }
-`;
-
 const Divider = styled.span`
   width: 1px;
   height: 16px;
@@ -100,21 +89,6 @@ const HeaderActions = styled.div`
   display: flex;
   align-items: center;
   gap: 8px;
-`;
-
-const ActionBtn = styled.button<{ $teal?: boolean }>`
-  padding: 4px 10px;
-  font-size: 11px;
-  border: 1px solid ${(p) => (p.$teal ? '#99f6e4' : p.theme.colors.border)};
-  color: ${(p) => (p.$teal ? '#0f766e' : '#78716c')};
-  background: none;
-  border-radius: ${(p) => p.theme.radii.sm};
-  cursor: pointer;
-  &:hover:not(:disabled) {
-    border-color: ${(p) => (p.$teal ? '#2dd4bf' : '#a8a29e')};
-    color: ${(p) => (p.$teal ? '#0f766e' : '#44403c')};
-  }
-  &:disabled { opacity: 0.5; cursor: default; }
 `;
 
 const Content = styled.div`
@@ -203,20 +177,6 @@ const LogSelectorRow = styled.div`
   color: #a8a29e;
 `;
 
-const NodePill = styled.button<{ $active: boolean }>`
-  padding: 2px 8px;
-  border-radius: ${(p) => p.theme.radii.sm};
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
-  background: ${(p) => (p.$active ? '#ccfbf1' : 'transparent')};
-  color: ${(p) => (p.$active ? '#0f766e' : '#a8a29e')};
-  &:hover {
-    color: #44403c;
-    background: ${(p) => (p.$active ? '#ccfbf1' : p.theme.colors.neutralSurfaceAlt)};
-  }
-`;
-
 const OfflineHint = styled.span`
   color: #d6d3d1;
 `;
@@ -230,20 +190,6 @@ const LogPanelWrap = styled.div`
 `;
 
 // ── NodeReportCard ───────────────────────────
-
-const NRC = styled.button<{ $selected: boolean }>`
-  width: 100%;
-  text-align: left;
-  border-radius: ${(p) => p.theme.radii.md};
-  padding: 8px;
-  border: 1px solid ${(p) => (p.$selected ? '#5eead4' : p.theme.colors.borderLight)};
-  background: ${(p) => (p.$selected ? '#f0fdfa' : 'transparent')};
-  cursor: pointer;
-  &:hover {
-    border-color: ${(p) => (p.$selected ? '#5eead4' : p.theme.colors.border)};
-    background: ${(p) => (p.$selected ? '#f0fdfa' : '#faf9f7')};
-  }
-`;
 
 const NRCHeader = styled.div`
   display: flex;
@@ -450,20 +396,6 @@ const LPLogLine = styled.div`
   word-break: break-all;
 `;
 
-const LPFollowBtn = styled.button`
-  position: sticky;
-  bottom: 8px;
-  left: calc(100% - 60px);
-  margin-right: 8px;
-  background: #44403c;
-  color: #e7e5e4;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: ${(p) => p.theme.radii.sm};
-  border: none;
-  cursor: pointer;
-`;
-
 function LogPanel({ lines, label, autoScroll }: { lines: LogLine[]; label: string; autoScroll?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -491,14 +423,17 @@ function LogPanel({ lines, label, autoScroll }: { lines: LogLine[]; label: strin
           lines.map((l) => <LPLogLine key={l.id}>{l.text}</LPLogLine>)
         )}
         {!pinned && (
-          <LPFollowBtn
+          <Button
+            variant="secondary"
+            size="sm"
+            style={{ position: 'sticky', bottom: 8 }}
             onClick={() => {
               if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
               setPinned(true);
             }}
           >
             ↓ follow
-          </LPFollowBtn>
+          </Button>
         )}
       </LPContent>
     </div>
@@ -571,7 +506,7 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
     <HC>
       <HeaderBar>
         <HeaderInner>
-          <BackBtn onClick={onBack}>← back</BackBtn>
+          <Button variant="ghost" size="sm" onClick={onBack}>← back</Button>
           <Divider />
           <AppTitle>{appId}</AppTitle>
           <StateLabel $state={app.observed_state}>{app.observed_state}</StateLabel>
@@ -590,20 +525,23 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
             />
             {onlineReport && (
               <>
-                <ActionBtn
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => restartMutation.mutate({ appId, node: onlineReport.node })}
                   disabled={restartMutation.isPending}
                 >
                   Restart
-                </ActionBtn>
+                </Button>
                 {app.backup_enabled && (
-                  <ActionBtn
-                    $teal
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => backupMutation.mutate({ appId, node: onlineReport.node })}
                     disabled={backupMutation.isPending}
                   >
                     Backup now
-                  </ActionBtn>
+                  </Button>
                 )}
               </>
             )}
@@ -701,14 +639,15 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
               <LogSelectorRow>
                 <span>node:</span>
                 {allReports.map((nr) => (
-                  <NodePill
+                  <Button
                     key={nr.node}
-                    $active={logNode === nr.node}
+                    variant={logNode === nr.node ? 'primary' : 'ghost'}
+                    size="sm"
                     onClick={() => setLogNode(nr.node)}
                   >
                     {nr.node}
                     {!nr.node_online && <OfflineHint> (offline)</OfflineHint>}
-                  </NodePill>
+                  </Button>
                 ))}
               </LogSelectorRow>
             )}
@@ -726,7 +665,7 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
 
 function NodeReportCard({ nr, selected, onSelect }: { nr: NodeReport; selected: boolean; onSelect: () => void }) {
   return (
-    <NRC $selected={selected} onClick={onSelect}>
+    <button onClick={onSelect} style={{ width: '100%', textAlign: 'left', borderRadius: 'var(--radius-3)', padding: 8, border: `1px solid ${selected ? '#5eead4' : 'var(--gray-a5)'}`, background: selected ? '#f0fdfa' : 'transparent', cursor: 'pointer' }}>
       <NRCHeader>
         <NRCNodeGroup>
           <NRCDot $online={nr.node_online} />
@@ -771,6 +710,6 @@ function NodeReportCard({ nr, selected, onSelect }: { nr: NodeReport; selected: 
         )}
         {nr.last_error && <NRCError>{nr.last_error}</NRCError>}
       </NRCGrid>
-    </NRC>
+    </button>
   );
 }

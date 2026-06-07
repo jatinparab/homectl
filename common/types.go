@@ -118,3 +118,49 @@ type DesiredAppsResponse struct {
 	Apps      []DesiredApp `json:"apps"`
 	IsGateway bool         `json:"is_gateway,omitempty"`
 }
+
+const (
+	ConfigKeyLocalHAIP        = "LOCAL_HA_IP"
+	ConfigKeyCaddyDNSProvider = "CADDY_DNS_PROVIDER"
+	ConfigKeyCaddyACMEEmail   = "CADDY_ACME_EMAIL"
+	ConfigKeyCaddyACMECA      = "CADDY_ACME_CA"
+	ConfigKeyCaddyDNSTokenEnv = "CADDY_DNS_TOKEN_ENV"
+	ConfigKeyCFDNSAPIToken    = "CF_DNS_API_TOKEN"
+	ConfigKeyResticRepository = "RESTIC_REPOSITORY"
+	ConfigKeyB2AccountID      = "B2_ACCOUNT_ID"
+	ConfigKeyB2AccountKey     = "B2_ACCOUNT_KEY"
+	ConfigKeyResticPassword   = "RESTIC_PASSWORD"
+	ConfigKeyAgentName        = "HOMECTL_AGENT_NAME"
+)
+
+var SharedAgentConfigKeys = []string{
+	ConfigKeyLocalHAIP,
+	ConfigKeyCaddyDNSProvider,
+	ConfigKeyCaddyACMEEmail,
+	ConfigKeyCaddyACMECA,
+	ConfigKeyCaddyDNSTokenEnv,
+	ConfigKeyCFDNSAPIToken,
+	ConfigKeyResticRepository,
+	ConfigKeyB2AccountID,
+	ConfigKeyB2AccountKey,
+	ConfigKeyResticPassword,
+}
+
+var AgentSpecificConfigKeys = []string{
+	ConfigKeyAgentName,
+}
+
+type NodeConfigDocument map[string]string
+
+type NodeConfigUIResponse struct {
+	AgentName string             `json:"agent_name"`
+	Version   int64              `json:"version"`
+	Shared    NodeConfigDocument `json:"shared"`
+	Agent     NodeConfigDocument `json:"agent"`
+	UpdatedAt string             `json:"updated_at,omitempty"`
+}
+
+type NodeConfigUIRequest struct {
+	Shared NodeConfigDocument `json:"shared"`
+	Agent  NodeConfigDocument `json:"agent"`
+}

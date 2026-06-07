@@ -101,6 +101,19 @@ export interface NodeMetrics {
   disk_percent: number;
 }
 
+export interface NodeConfig {
+  agent_name: string;
+  version: number;
+  shared: Record<string, string>;
+  agent: Record<string, string>;
+  updated_at?: string;
+}
+
+export interface NodeConfigInput {
+  shared: Record<string, string>;
+  agent: Record<string, string>;
+}
+
 export interface StoragePruneState {
   busy: boolean;
   started_at?: string;
