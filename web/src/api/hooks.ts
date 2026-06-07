@@ -3,10 +3,16 @@ import {
   addCrowdSecDecision,
   fetchSnapshotFiles,
   fetchCrowdSecDecisions,
+  fetchCrowdSecHub,
   fetchCrowdSecLogs,
   fetchCrowdSecMetrics,
   fetchCrowdSecStatus,
+  fetchCrowdSecVersion,
+  updateCrowdSec,
   fetchPublicRouteLogs,
+  fetchSSHLogs,
+  installCrowdSecHubItem,
+  removeCrowdSecHubItem,
   fetchSnapshots,
   refreshSnapshots,
   restartApp,
@@ -29,6 +35,7 @@ import {
   updatePublicRoute,
   clearReassignment,
 } from "./client";
+import type { LogFilterParams } from "./types";
 import { useLiveState } from "./live";
 
 type LiveResult<T> = {
@@ -90,10 +97,18 @@ export function usePublicRoutes() {
   return useLiveSlice((payload) => payload.public_routes);
 }
 
-export function usePublicRouteLogs() {
+export function usePublicRouteLogs(filters: LogFilterParams = {}) {
   return useQuery({
-    queryKey: ["public-route-logs"],
-    queryFn: () => fetchPublicRouteLogs({ limit: 500 }),
+    queryKey: ["public-route-logs", filters],
+    queryFn: () => fetchPublicRouteLogs({ ...filters, limit: filters.limit ?? 500 }),
+    refetchInterval: 5000,
+  });
+}
+
+export function useSSHLogs(filters: LogFilterParams = {}) {
+  return useQuery({
+    queryKey: ["ssh-logs", filters],
+    queryFn: () => fetchSSHLogs({ ...filters, limit: filters.limit ?? 500 }),
     refetchInterval: 5000,
   });
 }
@@ -118,7 +133,7 @@ export function useCrowdSecMetrics() {
   return useQuery({
     queryKey: ["crowdsec-metrics"],
     queryFn: fetchCrowdSecMetrics,
-    refetchInterval: 10000,
+    refetchInterval: 15000,
   });
 }
 
@@ -126,7 +141,7 @@ export function useCrowdSecDecisions() {
   return useQuery({
     queryKey: ["crowdsec-decisions"],
     queryFn: fetchCrowdSecDecisions,
-    refetchInterval: 5000,
+    refetchInterval: 30000,
   });
 }
 
@@ -146,6 +161,54 @@ export function useDeleteCrowdSecDecision() {
     mutationFn: deleteCrowdSecDecision,
     onSuccess: (data) => {
       queryClient.setQueryData(["crowdsec-decisions"], data);
+    },
+  });
+}
+
+export function useCrowdSecHub(all?: boolean) {
+  return useQuery({
+    queryKey: ["crowdsec-hub", all ?? false],
+    queryFn: () => fetchCrowdSecHub(all),
+    refetchInterval: 15000,
+  });
+}
+
+export function useInstallCrowdSecHubItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: installCrowdSecHubItem,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crowdsec-hub"] });
+    },
+  });
+}
+
+export function useRemoveCrowdSecHubItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: removeCrowdSecHubItem,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crowdsec-hub"] });
+    },
+  });
+}
+
+export function useCrowdSecVersion() {
+  return useQuery({
+    queryKey: ["crowdsec-version"],
+    queryFn: fetchCrowdSecVersion,
+    refetchInterval: 60000,
+  });
+}
+
+export function useUpdateCrowdSec() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateCrowdSec,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["crowdsec-version"], data);
+      queryClient.invalidateQueries({ queryKey: ["crowdsec-status"] });
+      queryClient.invalidateQueries({ queryKey: ["crowdsec-hub"] });
     },
   });
 }

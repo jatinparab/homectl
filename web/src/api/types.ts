@@ -236,6 +236,29 @@ export interface PublicRoute {
   health: PublicRouteHealth;
 }
 
+export interface LogFilterParams {
+  host?: string;
+  ip?: string;
+  uri?: string;
+  status?: string;
+  search?: string;
+  limit?: number;
+  before?: string;
+  after?: string;
+}
+
+export interface SSHLogEntry {
+  timestamp: string;
+  host: string;
+  client_ip: string;
+  port: string;
+  user: string;
+  auth_method?: string;
+  status: string;
+  message: string;
+  raw: string;
+}
+
 export interface PublicRouteAccessLogEntry {
   timestamp: string;
   host: string;
@@ -279,6 +302,25 @@ export interface CrowdSecMetrics {
   parser_parsed_total: number;
 }
 
+export interface CrowdSecHubItem {
+  name: string;
+  type: string;
+  description: string;
+  version: string;
+  status?: string;
+  installed: boolean;
+  update_available: boolean;
+}
+
+export interface CrowdSecHubResponse {
+  items: CrowdSecHubItem[];
+}
+
+export interface CrowdSecHubInstallInput {
+  type: string;
+  name: string;
+}
+
 export interface CrowdSecLogEntry {
   timestamp?: string;
   source: string;
@@ -298,4 +340,11 @@ export interface CrowdSecStatus {
   bouncer_ready: boolean;
   caddy_integrated: boolean;
   updated_at: string;
+}
+
+export interface CrowdSecVersionInfo {
+  current: string;
+  latest: string;
+  update_available: boolean;
+  error?: string;
 }

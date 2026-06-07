@@ -3,12 +3,17 @@ import type { FormEvent } from 'react'
 import {
   useAddCrowdSecDecision,
   useCrowdSecDecisions,
+  useCrowdSecHub,
   useCrowdSecLogs,
   useCrowdSecMetrics,
   useCrowdSecStatus,
+  useCrowdSecVersion,
   useDeleteCrowdSecDecision,
+  useInstallCrowdSecHubItem,
+  useRemoveCrowdSecHubItem,
+  useUpdateCrowdSec,
 } from '../api/hooks'
-import type { CrowdSecDecision, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus } from '../api/types'
+import type { CrowdSecDecision, CrowdSecHubItem, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus } from '../api/types'
 
 function formatDateTime(value?: string): string {
   if (!value) return '--'
@@ -140,6 +145,65 @@ function CrowdSecStatusPanel({ status }: { status?: CrowdSecStatus }) {
   )
 }
 
+function CrowdSecVersionSection({
+  version,
+  updateCrowdSec,
+}: {
+  version?: { current: string; latest: string; update_available: boolean }
+  updateCrowdSec: ReturnType<typeof useUpdateCrowdSec>
+}) {
+  const [updateError, setUpdateError] = useState<string | null>(null)
+
+  if (!version?.current) return null
+
+  function handleUpdate() {
+    if (!window.confirm(`Update CrowdSec from v${version!.current} to v${version!.latest}? Engine will restart.`)) return
+    setUpdateError(null)
+    updateCrowdSec.mutateAsync().catch((err) =>
+      setUpdateError(err instanceof Error ? err.message.trim() : 'Update failed'),
+    )
+  }
+
+  return (
+    <section className="bg-white border border-[#e2ddd7] rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#e2ddd7] flex items-center justify-between">
+        <h2 className="text-xs font-semibold text-[#1c1917] uppercase tracking-widest">Version</h2>
+        <span
+          className={`text-[10px] font-semibold uppercase tracking-widest px-1.5 py-0.5 rounded ${
+            version.update_available ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+          }`}
+        >
+          {version.update_available ? 'Update available' : 'Up to date'}
+        </span>
+      </div>
+      <div className="px-4 py-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <div>
+            <div className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Installed</div>
+            <div className="mt-0.5 text-sm font-mono text-stone-800">v{version.current}</div>
+          </div>
+          {version.latest && (
+            <div>
+              <div className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Latest</div>
+              <div className="mt-0.5 text-sm font-mono text-stone-500">v{version.latest}</div>
+            </div>
+          )}
+          {version.update_available && (
+            <button
+              onClick={handleUpdate}
+              disabled={updateCrowdSec.isPending}
+              className="ml-auto px-3 py-1.5 text-[11px] bg-[#0d9488] text-white rounded hover:bg-[#0f766e] disabled:opacity-50"
+            >
+              {updateCrowdSec.isPending ? 'Updating...' : 'Update CrowdSec'}
+            </button>
+          )}
+        </div>
+        {updateError && <div className="mt-2 text-[11px] text-red-600">{updateError}</div>}
+      </div>
+    </section>
+  )
+}
+
 function MetricsBar({ metrics }: { metrics?: CrowdSecMetrics }) {
   if (!metrics) return null
   const stats = [
@@ -192,11 +256,30 @@ export function CrowdSecPage() {
   const { data: logs, isLoading: logsLoading, error: logsError } = useCrowdSecLogs()
   const addDecision = useAddCrowdSecDecision()
   const deleteDecision = useDeleteCrowdSecDecision()
+  const { data: hubData, isLoading: hubLoading } = useCrowdSecHub()
+  const { data: version } = useCrowdSecVersion()
+  const updateCrowdSec = useUpdateCrowdSec()
+  const installHubItem = useInstallCrowdSecHubItem()
+  const removeHubItem = useRemoveCrowdSecHubItem()
   const [ip, setIP] = useState('')
   const [duration, setDuration] = useState('4h')
   const [reason, setReason] = useState('manual ban from homectl')
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [hubType, setHubType] = useState('collection')
+  const [hubInstallName, setHubInstallName] = useState('')
+  const [hubError, setHubError] = useState<string | null>(null)
+
+  const hubItems = useMemo(() => hubData?.items ?? [], [hubData])
+  const installedItems = useMemo(() => hubItems.filter((h) => h.installed), [hubItems])
+  const installedByType = useMemo(() => {
+    const groups: Record<string, CrowdSecHubItem[]> = {}
+    for (const item of installedItems) {
+      if (!groups[item.type]) groups[item.type] = []
+      groups[item.type].push(item)
+    }
+    return groups
+  }, [installedItems])
 
   const sortedDecisions = useMemo(() => [...(decisions ?? [])], [decisions])
   const logEntries = useMemo(() => logs ?? [], [logs])
@@ -207,6 +290,20 @@ export function CrowdSecPage() {
     if (!err) return
     setError(err instanceof Error ? err.message.trim() : 'CrowdSec request failed')
   }, [addDecision.error, decisionsError, deleteDecision.error, logsError])
+
+  function submitHubInstall(event: FormEvent) {
+    event.preventDefault()
+    if (!hubInstallName.trim()) return
+    setHubError(null)
+    installHubItem.mutateAsync({ type: hubType, name: hubInstallName.trim() })
+      .then(() => setHubInstallName(''))
+      .catch((err) => setHubError(err instanceof Error ? err.message.trim() : 'Install failed'))
+  }
+
+  function submitHubRemove(item: CrowdSecHubItem) {
+    if (!window.confirm(`Remove ${item.name}?`)) return
+    removeHubItem.mutate({ type: item.type, name: item.name })
+  }
 
   function submitBan(event: FormEvent) {
     event.preventDefault()
@@ -246,6 +343,8 @@ export function CrowdSecPage() {
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-4">
         <CrowdSecStatusPanel status={status} />
+
+        <CrowdSecVersionSection version={version} updateCrowdSec={updateCrowdSec} />
 
         <section className="bg-white border border-[#e2ddd7] rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-[#e2ddd7]">
@@ -424,6 +523,103 @@ export function CrowdSecPage() {
         </section>
 
         <MetricsBar metrics={metrics} />
+
+        <section className="bg-white border border-[#e2ddd7] rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#e2ddd7] flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-xs font-semibold text-[#1c1917] uppercase tracking-widest">Hub</h2>
+            <div className="flex items-center gap-2">
+              {(['collection', 'scenario', 'parser'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setHubType(t)}
+                  className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-widest rounded ${hubType === t ? 'bg-teal-100 text-teal-700' : 'text-stone-400 hover:text-stone-600'}`}
+                >
+                  {t === 'collection' ? 'Collections' : t === 'scenario' ? 'Scenarios' : 'Parsers'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end text-xs text-stone-500">
+              <div>
+                {(installedByType[hubType] ?? []).length} installed
+                {hubType === 'collection' ? ' / 6 installed' : ''}
+              </div>
+              <div></div>
+              <div className="text-right">
+                {hubLoading && <span className="text-stone-400">Loading...</span>}
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-t border-[#e2ddd7]">
+                  <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Name</th>
+                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Version</th>
+                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Status</th>
+                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-stone-400 uppercase tracking-widest">Description</th>
+                  <th className="px-3 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(installedByType[hubType] ?? []).map((item) => (
+                  <tr key={`${item.type}-${item.name}`} className="border-b border-[#f7f5f0] hover:bg-[#faf9f7]">
+                    <td className="px-4 py-2.5 font-mono text-[11px] text-stone-700">{item.name}</td>
+                    <td className="px-3 py-2.5 text-stone-500">{item.version || '--'}</td>
+                    <td className="px-3 py-2.5">
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${item.update_available ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {item.update_available ? 'Update available' : 'Installed'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-stone-500 max-w-[300px] truncate" title={item.description}>
+                      {item.description || '--'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <button
+                        onClick={() => submitHubRemove(item)}
+                        disabled={removeHubItem.isPending}
+                        className="px-2 py-1 text-[11px] border border-red-200 text-red-600 hover:border-red-400 rounded disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {(installedByType[hubType] ?? []).length === 0 && !hubLoading && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-4 text-center text-[11px] text-stone-400">
+                      No installed {hubType}s.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-3 border-t border-[#e2ddd7]">
+            <form onSubmit={submitHubInstall} className="flex items-end gap-3">
+              <label className="block flex-1">
+                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest">
+                  Install {hubType === 'collection' ? 'collection' : hubType === 'scenario' ? 'scenario' : 'parser'}
+                </span>
+                <input
+                  value={hubInstallName}
+                  onChange={(event) => setHubInstallName(event.target.value)}
+                  placeholder={hubType === 'collection' ? 'crowdsecurity/nginx' : hubType === 'scenario' ? 'crowdsecurity/ssh-bf' : 'crowdsecurity/nginx-logs'}
+                  className="mt-1 w-full px-2 py-1.5 text-xs border border-[#e2ddd7] rounded bg-white text-[#1c1917] focus:outline-none focus:border-teal-500 font-mono"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={installHubItem.isPending || !hubInstallName.trim()}
+                className="px-3 py-1.5 text-[11px] bg-[#0d9488] text-white rounded hover:bg-[#0f766e] disabled:opacity-50 whitespace-nowrap"
+              >
+                {installHubItem.isPending ? 'Installing...' : 'Install'}
+              </button>
+            </form>
+            {hubError && <div className="mt-2 text-[11px] text-red-600">{hubError}</div>}
+          </div>
+        </section>
 
         <section className="bg-white border border-[#e2ddd7] rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-[#e2ddd7]">

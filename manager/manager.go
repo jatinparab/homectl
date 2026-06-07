@@ -93,6 +93,8 @@ type Manager struct {
 
 	crowdSecMu     sync.RWMutex
 	crowdSecStatus CrowdSecStatus
+	crowdSecBans   crowdSecCachedResult[[]CrowdSecDecision]
+	crowdSecStats  crowdSecCachedResult[CrowdSecMetrics]
 
 	linkMu      sync.RWMutex
 	agentLinks  map[string]*agentLinkPeer // by agent name

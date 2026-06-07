@@ -1,4 +1,6 @@
-export type Tab = "dashboard" | "backups" | "storage" | "containers" | "routing" | "crowdsec"
+import { useLiveState } from "../api/live"
+
+export type Tab = "dashboard" | "backups" | "storage" | "containers" | "routing" | "crowdsec" | "logs"
 
 const TAB_PATHS: Record<Tab, string> = {
   dashboard: "/",
@@ -7,6 +9,7 @@ const TAB_PATHS: Record<Tab, string> = {
   containers: "/containers",
   routing: "/routing",
   crowdsec: "/crowdsec",
+  logs: "/logs",
 }
 
 const PATH_TABS: Record<string, Tab> = {
@@ -16,6 +19,7 @@ const PATH_TABS: Record<string, Tab> = {
   "/containers": "containers",
   "/routing": "routing",
   "/crowdsec": "crowdsec",
+  "/logs": "logs",
 }
 
 export function tabFromPath(path: string): Tab {
@@ -38,10 +42,13 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "storage", label: "Storage" },
   { id: "containers", label: "Containers" },
   { id: "routing", label: "Routing" },
+  { id: "logs", label: "Logs" },
   { id: "crowdsec", label: "CrowdSec" },
 ]
 
 export function Header({ activeTab, onTabChange }: HeaderProps) {
+  const { connected, error } = useLiveState()
+
   return (
     <header className="bg-white border-b border-[#e2ddd7] sticky top-0 z-40">
       <div className="max-w-6xl mx-auto px-4 h-12 flex items-center justify-between">
@@ -66,6 +73,24 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
               </a>
             ))}
           </nav>
+        </div>
+        <div className="flex items-center gap-2" role="status" aria-live="polite">
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${
+              connected ? "bg-green-600" : "bg-red-600"
+            }`} 
+            aria-label={connected ? "WebSocket connected" : "WebSocket disconnected"}
+            title={
+              connected
+                ? "WebSocket connected"
+                : error
+                  ? `WebSocket error: ${error.message}`
+                  : "WebSocket disconnected"
+            }
+          />
+          <span className="text-[11px] text-[#78716c]">
+            {connected ? "Live" : error ? "Error" : "Offline"}
+          </span>
         </div>
       </div>
     </header>

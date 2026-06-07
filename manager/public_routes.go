@@ -547,49 +547,7 @@ func (m *Manager) readPublicRouteStats() map[string]routeStats {
 	return stats
 }
 
-func (m *Manager) readPublicRouteAccessLogs(hostFilter, ipFilter string, limit int) []PublicRouteAccessLogEntry {
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
-	hostFilter = normalizePublicRouteHost(hostFilter)
-	ipFilter = strings.ToLower(strings.TrimSpace(ipFilter))
 
-	path := managerCaddyAccessLogPath()
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	entries := make([]PublicRouteAccessLogEntry, 0, limit)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		entry, ok := parsePublicRouteAccessLogLine(scanner.Bytes())
-		if !ok {
-			continue
-		}
-		if strings.HasPrefix(entry.URI, publicRouteLogsAPIPath) {
-			continue
-		}
-		if hostFilter != "" && !strings.Contains(entry.Host, hostFilter) {
-			continue
-		}
-		if ipFilter != "" && !strings.Contains(strings.ToLower(entry.ClientIP), ipFilter) {
-			continue
-		}
-		entries = append(entries, entry)
-		if len(entries) > limit {
-			copy(entries, entries[1:])
-			entries = entries[:limit]
-		}
-	}
-
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
-	}
-	return entries
-}
 
 func parsePublicRouteAccessLogLine(line []byte) (PublicRouteAccessLogEntry, bool) {
 	var raw struct {

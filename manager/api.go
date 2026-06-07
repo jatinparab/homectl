@@ -1787,18 +1787,8 @@ func (m *Manager) handleAPIPublicRouteLogs(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	limit := 200
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		var parsed int
-		if _, err := fmt.Sscanf(raw, "%d", &parsed); err == nil {
-			limit = parsed
-		}
-	}
-	logs := m.readPublicRouteAccessLogs(
-		r.URL.Query().Get("host"),
-		r.URL.Query().Get("ip"),
-		limit,
-	)
+	filter := parseLogFilters(r)
+	logs := readPublicRouteAccessLogs(filter)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
 }
@@ -1899,6 +1889,80 @@ func (m *Manager) handleAPICrowdSecBan(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(decisions)
+}
+
+func (m *Manager) handleAPICrowdSecHub(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		all := r.URL.Query().Get("all") == "true"
+		items, err := m.crowdSecHubItems(all)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(CrowdSecHubResponse{Items: items})
+	case http.MethodPost:
+		var input CrowdSecHubInstallInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := m.installCrowdSecHubItem(input); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	case http.MethodDelete:
+		var input CrowdSecHubInstallInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := m.removeCrowdSecHubItem(input); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (m *Manager) handleAPICrowdSecVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecVersion())
+}
+
+func (m *Manager) handleAPISSHLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	filter := parseLogFilters(r)
+	logs := readSSHLogs(filter)
+	if logs == nil {
+		logs = []SSHLogEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (m *Manager) handleAPICrowdSecUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := m.updateCrowdSec(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecVersion())
 }
 
 func (m *Manager) handleAPIPublicRoute(w http.ResponseWriter, r *http.Request) {
