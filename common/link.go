@@ -17,6 +17,8 @@ const (
 	LinkReqAgentTraefik     LinkRequestType = "agent_traefik_config"
 	LinkReqAgentDockerSync  LinkRequestType = "agent_docker_sync"
 	LinkReqAgentManagerSync LinkRequestType = "agent_manager_sync"
+	LinkReqAgentConfigSync  LinkRequestType = "agent_config_sync"
+	LinkReqAgentConfigSeed  LinkRequestType = "agent_config_seed"
 	LinkReqRestartApp       LinkRequestType = "restart_app"
 	LinkReqAppLogs          LinkRequestType = "app_logs"
 	LinkReqAppPhaseLogs     LinkRequestType = "app_phase_logs"
@@ -73,6 +75,17 @@ type AgentJoinResponse struct {
 	ManagerEndpointIP     string `json:"manager_endpoint_ip"`
 	ManagerEndpointPort   int    `json:"manager_endpoint_port"`
 	ManagerControlBaseURL string `json:"manager_control_base_url"`
+}
+
+type AgentConfigSyncResponse struct {
+	AgentName string          `json:"agent_name"`
+	Version   int64           `json:"version"`
+	Config    json.RawMessage `json:"config,omitempty"`
+	UpdatedAt string          `json:"updated_at,omitempty"`
+}
+
+type AgentConfigSeedRequest struct {
+	Config NodeConfigDocument `json:"config"`
 }
 
 type RestartAppPayload struct {

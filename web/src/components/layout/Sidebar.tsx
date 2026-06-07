@@ -7,12 +7,15 @@ import {
   Route,
   ScrollText,
   ShieldCheck,
+  LogOut,
 } from 'lucide-react';
+import { IconButton } from '../ui';
 import type { LucideIcon } from 'lucide-react';
 import type { Tab } from '../../app/navigation';
 import { pathFromTab } from '../../app/navigation';
-import { HomectlLogo } from './HomectlLogo';
+import { HomectlHeaderLogo } from './HomectlLogo';
 import { LiveStatusDot } from './LiveStatusDot';
+import { Tooltip } from '../ui/Tooltip';
 
 interface NavItem {
   id: Tab;
@@ -63,18 +66,15 @@ const BrandRow = styled.div`
   }
 `;
 
-const BrandGap = styled.span`
-  width: 12px;
-`;
-
-const BrandName = styled.span`
-  display: none;
-  font-size: 14px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.textPrimary};
+const SidebarLogo = styled(HomectlHeaderLogo)`
+  .homectl-logo-wordmark {
+    display: none;
+  }
 
   @media (min-width: 768px) {
-    display: block;
+    .homectl-logo-wordmark {
+      display: grid;
+    }
   }
 `;
 
@@ -161,26 +161,32 @@ const NavLabel = styled.span`
 const StatusRow = styled.div`
   border-top: 1px solid ${({ theme }) => theme.colors.neutralBorder};
   padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 
   @media (min-width: 768px) {
     padding: 12px 16px;
+    justify-content: space-between;
   }
 `;
+
+
 
 /* ── Component ── */
 
 interface SidebarProps {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
+  onLogout?: () => void;
 }
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
   return (
     <SidebarAside>
       <BrandRow>
-        <HomectlLogo size={32} />
-        <BrandGap />
-        <BrandName>Homectl</BrandName>
+        <SidebarLogo markSize={32} />
       </BrandRow>
 
       <Nav aria-label="Primary navigation">
@@ -213,6 +219,19 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
 
       <StatusRow>
         <LiveStatusDot />
+        {onLogout && (
+          <Tooltip content="Logout">
+            <IconButton
+              label="Logout"
+              variant="ghost"
+              color="gray"
+              size="2"
+              onClick={onLogout}
+            >
+              <LogOut size={18} strokeWidth={1.8} />
+            </IconButton>
+          </Tooltip>
+        )}
       </StatusRow>
     </SidebarAside>
   );

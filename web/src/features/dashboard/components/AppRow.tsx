@@ -13,6 +13,7 @@ import {
 import { useStreamSubscription } from '../../../api/live';
 import { StatusBadge, HealthBadge, PhaseBadge, DesiredToggle, PostBackupPhaseBadge } from '../../shared/components/StatusBadge';
 import { PhaseLogOverlay } from '../../shared/components/PullLogOverlay';
+import { Button } from '../../../components/ui';
 import { Tooltip } from '../../../components/ui/Tooltip';
 
 const BACKUP_PHASES = ['backup_stopping', 'backup_stopped', 'backing_up'];
@@ -126,21 +127,6 @@ const RestartCount = styled.span`
   color: ${(p) => p.theme.colors.textMuted};
 `;
 
-const MoveBtn = styled.button`
-  font-size: 10px;
-  color: ${(p) => p.theme.colors.textMuted};
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: ${(p) => p.theme.radii.sm};
-
-  &:hover {
-    color: #0d9488;
-    background: #f0fdfa;
-  }
-`;
-
 const NodeGroup = styled.div`
   display: flex;
   align-items: center;
@@ -158,26 +144,6 @@ const MoveMenu = styled.div`
   border-radius: ${(p) => p.theme.radii.md};
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   padding: 4px 0;
-`;
-
-const MoveMenuItem = styled.button<{ $danger?: boolean }>`
-  width: 100%;
-  text-align: left;
-  padding: 6px 12px;
-  font-size: ${(p) => p.theme.fontSizes.xs};
-  color: ${(p) => (p.$danger ? '#d97706' : '#57534e')};
-  background: none;
-  border: none;
-  cursor: pointer;
-
-  &:hover {
-    background: ${(p) => p.theme.colors.borderLight};
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 `;
 
 const MoveMenuWrapper = styled.div`
@@ -223,22 +189,6 @@ const ConnGroup = styled.div`
   white-space: nowrap;
 `;
 
-const KebabBtn = styled.button`
-  padding: 2px 6px;
-  color: ${(p) => p.theme.colors.textMuted};
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: ${(p) => p.theme.fontSizes.sm};
-  line-height: 1;
-  border-radius: ${(p) => p.theme.radii.sm};
-
-  &:hover {
-    color: #44403c;
-    background: ${(p) => p.theme.colors.borderLight};
-  }
-`;
-
 const KebabMenu = styled.div`
   position: absolute;
   right: 0;
@@ -250,33 +200,6 @@ const KebabMenu = styled.div`
   border-radius: ${(p) => p.theme.radii.md};
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   padding: 4px 0;
-`;
-
-const KebabMenuItem = styled.button<{ $accent?: 'amber' | 'violet' | 'muted' }>`
-  width: 100%;
-  text-align: left;
-  padding: 6px 12px;
-  font-size: ${(p) => p.theme.fontSizes.xs};
-  color: ${(p) => {
-    switch (p.$accent) {
-      case 'amber': return '#d97706';
-      case 'violet': return '#7c3aed';
-      case 'muted': return '#78716c';
-      default: return '#57534e';
-    }
-  }};
-  background: none;
-  border: none;
-  cursor: pointer;
-
-  &:hover {
-    background: ${(p) => p.theme.colors.borderLight};
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 `;
 
 const ErrorDot = styled.div`
@@ -354,21 +277,6 @@ const ScheduleBadge = styled.span<{ $variant: 'amber' | 'violet'; $strong?: bool
       : `background: ${p.$strong ? '#ede9fe' : '#f5f3ff'}; color: ${p.$strong ? '#6d28d9' : '#7c3aed'};`}
 `;
 
-const LocalBtn = styled.button`
-  font-size: 10px;
-  font-weight: 500;
-  background: #fffbeb;
-  color: #d97706;
-  border: 1px solid #fde68a;
-  padding: 2px 6px;
-  border-radius: ${(p) => p.theme.radii.sm};
-  cursor: pointer;
-
-  &:hover {
-    background: #fef3c7;
-  }
-`;
-
 const SensitiveTag = styled.span`
   font-size: 10px;
   font-weight: 500;
@@ -422,12 +330,15 @@ function AppNameCell({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, u
         </ScheduleBadge>
       )}
       {app.backup_enabled && !app.restore_enabled && restoreMutation && (
-        <LocalBtn
+        <Button
+          variant="soft"
+          size="sm"
+          color="amber"
           title="Restore disabled — using local data. Click to re-enable."
           onClick={() => restoreMutation.mutate({ appId: app.app_id, enabled: true })}
         >
           local
-        </LocalBtn>
+        </Button>
       )}
       {app.backup_sensitive && (
         <Tooltip content="Backup-sensitive: waits for no active connections">
@@ -711,34 +622,40 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                 {nr.restart_count > 0 && <RestartCount>×{nr.restart_count}</RestartCount>}
                 {!app.is_global && otherAgents.length > 0 && (
                   <MoveMenuWrapper onClick={(e) => e.stopPropagation()}>
-                    <MoveBtn onClick={() => setOpenNodeMenu(openNodeMenu === nr.node ? null : nr.node)} title="Move to another node">
+                    <Button variant="ghost" size="sm" onClick={() => setOpenNodeMenu(openNodeMenu === nr.node ? null : nr.node)} title="Move to another node">
                       ⇄
-                    </MoveBtn>
+                    </Button>
                     {openNodeMenu === nr.node && (
                       <MoveMenu>
                         {otherAgents.map((a) => (
-                          <MoveMenuItem
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             key={a.name}
                             onClick={() => {
                               reassignMutation.mutate({ appId: app.app_id, node: a.name });
                               setOpenNodeMenu(null);
                             }}
                             disabled={reassignMutation.isPending}
+                            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                           >
                             move → {a.name}
-                          </MoveMenuItem>
+                          </Button>
                         ))}
                         {app.manually_assigned && (
-                          <MoveMenuItem
-                            $danger
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            color="amber"
                             onClick={() => {
                               clearReassignMutation.mutate(app.app_id);
                               setOpenNodeMenu(null);
                             }}
                             disabled={clearReassignMutation.isPending}
+                            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                           >
                             clear assignment
-                          </MoveMenuItem>
+                          </Button>
                         )}
                       </MoveMenu>
                     )}
@@ -822,7 +739,9 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                     </TooltipWrap>
                   </Tooltip>
                 )}
-                <KebabBtn
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={(e) => {
                     e.stopPropagation();
                     setOpenKebab(openKebab === nr.node ? null : nr.node);
@@ -830,66 +749,81 @@ export function AppRow({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune,
                   title="Actions"
                 >
                   ···
-                </KebabBtn>
+                </Button>
                 {openKebab === nr.node && (
                   <KebabMenu onClick={(e) => e.stopPropagation()}>
-                    <KebabMenuItem
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => {
                         restartMutation.mutate({ appId: app.app_id, node: nr.node });
                         setOpenKebab(null);
                       }}
                       disabled={restartMutation.isPending}
+                      style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                     >
                       Restart
-                    </KebabMenuItem>
+                    </Button>
                     {onShowLogs && (
-                      <KebabMenuItem
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           onShowLogs(nr.node, app.app_id);
                           setOpenKebab(null);
                         }}
+                        style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                       >
                         App logs
-                      </KebabMenuItem>
+                      </Button>
                     )}
                     {app.backup_enabled &&
                       !BACKUP_PHASES.includes(nr.phase) &&
                       !nr.post_backup_phase &&
                       nr.observed_state === 'running' && (
                         <>
-                          <KebabMenuItem
-                            $accent="amber"
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            color="amber"
                             onClick={() => {
                               backupMutation.mutate({ appId: app.app_id, node: nr.node });
                               setOpenKebab(null);
                             }}
                             disabled={backupMutation.isPending}
+                            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                           >
                             Backup now
-                          </KebabMenuItem>
-                          <KebabMenuItem
-                            $accent="violet"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            color="violet"
                             onClick={() => {
                               pruneMutation.mutate({ appId: app.app_id, node: nr.node });
                               setOpenKebab(null);
                             }}
                             disabled={pruneMutation.isPending}
+                            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                           >
                             Prune now
-                          </KebabMenuItem>
+                          </Button>
                         </>
                       )}
                     {isFirst && app.backup_enabled && (
-                      <KebabMenuItem
-                        $accent={app.restore_enabled ? 'muted' : 'amber'}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        color={app.restore_enabled ? 'gray' : 'amber'}
                         onClick={() => {
                           restoreMutation.mutate({ appId: app.app_id, enabled: !app.restore_enabled });
                           setOpenKebab(null);
                         }}
                         disabled={restoreMutation.isPending}
+                        style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
                       >
                         {app.restore_enabled ? 'Disable restore' : 'Enable restore'}
-                      </KebabMenuItem>
+                      </Button>
                     )}
                   </KebabMenu>
                 )}

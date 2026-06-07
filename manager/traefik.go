@@ -211,18 +211,18 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	var b strings.Builder
 	b.WriteString("{\n")
 	b.WriteString("\tadmin 0.0.0.0:2019\n")
-	if email := strings.TrimSpace(os.Getenv("CADDY_ACME_EMAIL")); email != "" {
+	if email := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyACMEEmail)); email != "" {
 		fmt.Fprintf(&b, "\temail %s\n", email)
 	}
-	provider := strings.TrimSpace(os.Getenv("CADDY_DNS_PROVIDER"))
+	provider := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyDNSProvider))
 	hasDNS := provider != ""
 	if hasDNS {
-		if acmeCA := strings.TrimSpace(os.Getenv("CADDY_ACME_CA")); acmeCA != "" {
+		if acmeCA := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyACMECA)); acmeCA != "" {
 			fmt.Fprintf(&b, "\tacme_ca %s\n", acmeCA)
 		}
 	}
 	b.WriteString("}\n\n")
-	dnsTokenEnv := strings.TrimSpace(os.Getenv("CADDY_DNS_TOKEN_ENV"))
+	dnsTokenEnv := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyDNSTokenEnv))
 	for _, route := range routes {
 		if hasDNS {
 			fmt.Fprintf(&b, "%s {\n", route.publicHost)

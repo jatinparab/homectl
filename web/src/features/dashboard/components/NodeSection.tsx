@@ -1,5 +1,6 @@
 import type { AppStatus } from '../../../api/types'
 import { StatusBadge, HealthBadge } from '../../../features/shared/components/StatusBadge'
+import { Button } from '../../../components/ui'
 
 interface NodeSectionProps {
   nodeName: string
@@ -56,12 +57,7 @@ export function NodeSection({ nodeName, apps, onShowLogs }: NodeSectionProps) {
                     {nr.port > 0 ? nr.port : '-'}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <button
-                      onClick={() => onShowLogs(app.app_id)}
-                      className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
-                    >
-                      Logs
-                    </button>
+                    <Button variant="secondary" size="sm" onClick={() => onShowLogs(app.app_id)}>Logs</Button>
                   </td>
                 </tr>
               )

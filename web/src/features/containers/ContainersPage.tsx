@@ -3,6 +3,7 @@ import styled from '@emotion/styled';
 import { useContainers } from '../../api/hooks';
 import { ContainerStateBadge } from '../../features/shared/components/StatusBadge';
 import type { NodeContainers } from '../../api/types';
+import { Button } from '../../components/ui';
 
 // ── Styled ─────────────────────────────────
 
@@ -82,15 +83,6 @@ const ImageTd = styled(Td)`color: #a8a29e; max-width: 12rem; overflow: hidden; t
 
 const StatusTd = styled(Td)`color: #a8a29e;`;
 
-const LogLink = styled.button`
-  font-size: 11px;
-  color: #0d9488;
-  background: none;
-  border: none;
-  cursor: pointer;
-  &:hover { color: #0f766e; text-decoration: underline; }
-`;
-
 // ── Component ──────────────────────────────
 
 interface ContainersPageProps {
@@ -157,7 +149,7 @@ function NodeContainersCard({ nodeData, onShowLogs }: { nodeData: NodeContainers
                 <ImageTd>{c.image}</ImageTd>
                 <Td><ContainerStateBadge state={c.state} /></Td>
                 <StatusTd>{c.status}</StatusTd>
-                <Td><LogLink onClick={() => onShowLogs(nodeData.node, c.id, c.name)}>logs</LogLink></Td>
+                <Td><Button variant="ghost" size="sm" onClick={() => onShowLogs(nodeData.node, c.id, c.name)}>logs</Button></Td>
               </Tr>
             ))}
           </tbody>

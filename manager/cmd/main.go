@@ -32,23 +32,9 @@ func main() {
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
-	tokenSet := true
-	if _, err := manager.RequireJoinTokenForStartup(); err != nil {
-		slog.Warn("WireGuard not configured, running without overlay", "err", err)
-		tokenSet = false
-	}
-	if tokenSet {
-		if err := mgr.EnsureWireGuard(); err != nil {
-			slog.Warn("Failed to start WireGuard overlay (continuing anyway)", "err", err)
-		}
-	}
-	if err := mgr.StartAgentTCPServer(); err != nil {
-		slog.Error("Failed to start agent TCP server", "err", err)
-		os.Exit(1)
-	}
-
-	// Discover apps from docker and start reconcile loop
-	mgr.DiscoverApps()
+	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
+	mgr.SetRuntimeContext(reconcileCtx)
+	mgr.SetReconcileCancel(reconcileCancel)
 
 	// Start server before public route health checks. The generated Caddy config
 	// proxies the public manager host back to this listener.
@@ -62,11 +48,14 @@ func main() {
 		}
 	}()
 
-	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
-	mgr.SetReconcileCancel(reconcileCancel)
-	mgr.StartReconcileLoop(reconcileCtx)
-	mgr.StartCrowdSecBootstrap(reconcileCtx)
-	mgr.StartPublicRouteLoop(reconcileCtx)
+	if !mgr.OnboardingRequired() {
+		mgr.StartRuntimeOnce(reconcileCtx)
+	} else {
+		if err := mgr.SyncManagerHostCaddyConfig(); err != nil {
+			slog.Warn("Failed to start onboarding public host proxy", "err", err)
+		}
+		slog.Info("Manager waiting for first user onboarding before starting runtime services")
+	}
 
 	// Wait for interrupt signal
 	sigCh := make(chan os.Signal, 1)

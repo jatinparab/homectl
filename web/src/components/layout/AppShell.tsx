@@ -21,6 +21,7 @@ const Main = styled.main`
 interface AppShellProps {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
+  onLogout?: () => void;
   bottomPadding?: number;
   children: ReactNode;
 }
@@ -28,12 +29,13 @@ interface AppShellProps {
 export function AppShell({
   activeTab,
   onTabChange,
+  onLogout,
   bottomPadding = 0,
   children,
 }: AppShellProps) {
   return (
     <>
-      <Sidebar activeTab={activeTab} onTabChange={onTabChange} />
+      <Sidebar activeTab={activeTab} onTabChange={onTabChange} onLogout={onLogout} />
       <ShellRoot $paddingBottom={bottomPadding}>
         <Main>{children}</Main>
       </ShellRoot>

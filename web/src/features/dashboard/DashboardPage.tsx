@@ -3,7 +3,7 @@ import styled from '@emotion/styled';
 import { useApps, useAgents, useUpcomingBackup, useUpcomingPrune, useSync, useRebalance, useGatewayInfo } from '../../api/hooks';
 import { NodeCards } from './components/NodeCards';
 import { AppsTable } from './components/AppsTable';
-import { Button } from '../../components/ui';
+import { Button, Section } from '../../components/ui';
 
 const Wrapper = styled.div`
   min-height: 100vh;
@@ -28,8 +28,8 @@ const HeaderInner = styled.div`
 `;
 
 const HeaderTitle = styled.h1`
-  font-size: ${(p) => p.theme.fontSizes.sm};
-  font-weight: 600;
+  font-size: ${(p) => p.theme.fontSizes.xl};
+  font-weight: 700;
   color: ${(p) => p.theme.colors.textPrimary};
   margin: 0;
 `;
@@ -40,7 +40,23 @@ const HeaderSub = styled.p`
   margin: 2px 0 0;
 `;
 
-const HeaderActions = styled.div`
+const SectionHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+`;
+
+const SectionTitle = styled.h2`
+  font-size: 11px;
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.textMuted};
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+`;
+
+const SectionActions = styled.div`
   display: flex;
   align-items: center;
   gap: 8px;
@@ -90,39 +106,49 @@ export function DashboardPage({ onShowLogs, onNavigate }: DashboardPageProps) {
               {totalNodes > 0 && ` · ${totalNodes} node${totalNodes !== 1 ? 's' : ''}`}
             </HeaderSub>
           </div>
-          <HeaderActions>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              title="Git pull and sync updated configs to all agents"
-            >
-              {syncMutation.isPending ? 'Syncing...' : 'Sync'}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => rebalanceMutation.mutate()}
-              disabled={rebalanceMutation.isPending}
-              title="Rebalance all apps across nodes (may restart running apps)"
-            >
-              {rebalanceMutation.isPending ? 'Rebalancing...' : 'Rebalance'}
-            </Button>
-          </HeaderActions>
         </HeaderInner>
       </HeaderBar>
       <Main>
-        <NodeCards agents={agents} gatewayInfo={gatewayInfo} />
-        <AppsTable
-          apps={sortedApps}
-          isLoading={isLoading}
-          upcomingBackup={upcomingBackup}
-          upcomingPrune={upcomingPrune}
-          onShowLogs={onShowLogs}
-          onNavigate={onNavigate}
-          agents={agents}
-        />
+        <Section>
+          <SectionHeader>
+            <SectionTitle>Nodes</SectionTitle>
+          </SectionHeader>
+          <NodeCards agents={agents} gatewayInfo={gatewayInfo} />
+        </Section>
+        <Section>
+          <SectionHeader>
+            <SectionTitle>Apps</SectionTitle>
+            <SectionActions>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+                title="Git pull and sync updated configs to all agents"
+              >
+                {syncMutation.isPending ? 'Syncing...' : 'Sync'}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => rebalanceMutation.mutate()}
+                disabled={rebalanceMutation.isPending}
+                title="Rebalance all apps across nodes (may restart running apps)"
+              >
+                {rebalanceMutation.isPending ? 'Rebalancing...' : 'Rebalance'}
+              </Button>
+            </SectionActions>
+          </SectionHeader>
+          <AppsTable
+            apps={sortedApps}
+            isLoading={isLoading}
+            upcomingBackup={upcomingBackup}
+            upcomingPrune={upcomingPrune}
+            onShowLogs={onShowLogs}
+            onNavigate={onNavigate}
+            agents={agents}
+          />
+        </Section>
       </Main>
     </Wrapper>
   );

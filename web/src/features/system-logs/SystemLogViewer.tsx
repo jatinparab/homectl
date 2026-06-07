@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import styled from '@emotion/styled';
 import { useSystemLogSources } from '../../api/hooks';
 import { useLiveState } from '../../api/live';
+import { Button } from '../../components/ui';
 
 interface ParsedLog { time?: string; level?: string; msg?: string; component?: string; area?: string; [key: string]: string | undefined; }
 interface LogEntry { id: number; source: string; raw: string; parsed: ParsedLog; count: number; }
@@ -29,21 +30,21 @@ const Wrapper = styled.div<{ $expanded: boolean; $padBottom: number }>`
   transition: height 200ms ease;
 `;
 const TitleBar = styled.div<{ $expanded: boolean }>`height: 40px; display: flex; align-items: center; padding: 0 16px; gap: 12px; user-select: none; border-bottom: ${(p) => (p.$expanded ? '1px solid #f0ede8' : 'none')};`;
-const ToggleBtn = styled.button`display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; color: #78716c; text-transform: uppercase; letter-spacing: 0.1em; background: none; border: none; cursor: pointer; &:hover { color: #292524; }`;
-const Chevron = styled.span<{ $expanded: boolean }>`display: inline-block; color: #a8a29e; transition: transform 200ms; transform: ${(p) => (p.$expanded ? 'rotate(90deg)' : 'rotate(0deg)')};`;
+
+
 const BadgeChip = styled.span`font-size: 10px; padding: 2px 6px; border-radius: 3px;`;
 const CountChip = styled(BadgeChip)`background: #f5f5f4; color: #a8a29e;`;
 const ErrChip = styled(BadgeChip)`background: #fef2f2; color: #dc2626; font-weight: 500;`;
 const WarnChip = styled(BadgeChip)`background: #fffbeb; color: #d97706; font-weight: 500;`;
 const Search = styled.input`padding: 2px 8px; font-size: 11px; background: #f7f5f0; border: 1px solid #e2ddd7; border-radius: 3px; color: #57534e; width: 9rem; &:focus { outline: none; border-color: #2dd4bf; } &::placeholder { color: #a8a29e; }`;
-const ToolBtn = styled.button<{ $active?: boolean }>`font-size: 11px; padding: 2px 8px; border-radius: 3px; border: 1px solid ${(p) => (p.$active ? '#5eead4' : '#e2ddd7')}; background: ${(p) => (p.$active ? '#f0fdfa' : 'transparent')}; color: ${(p) => (p.$active ? '#0f766e' : '#78716c')}; cursor: pointer; &:hover { ${(p) => (p.$active ? '' : 'border-color: #a8a29e;')} }`;
-const ClearBtn = styled.button`font-size: 11px; color: #a8a29e; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; padding: 2px 8px; &:hover { color: #57534e; border-color: #e2ddd7; }`;
+
+
 const ExpandedBody = styled.div<{ $h: number }>`display: flex; flex-direction: column; height: ${(p) => p.$h}px;`;
 const FilterStrip = styled.div`border-bottom: 1px solid #f0ede8; padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px 16px; background: #faf9f7; flex-shrink: 0;`;
 const FilterGroup = styled.div`display: flex; align-items: center; gap: 6px;`;
 const FilterLabel = styled.span`font-size: 10px; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.05em;`;
-const FilterBtn = styled.button<{ $active: boolean; $color?: 'red' | 'amber' }>`font-size: 10px; padding: 2px 6px; border-radius: 3px; border: 1px solid ${(p) => (p.$active ? (p.$color === 'red' ? '#fca5a5' : p.$color === 'amber' ? '#fcd34d' : '#5eead4') : '#e2ddd7')}; background: ${(p) => (p.$active ? (p.$color === 'red' ? '#fef2f2' : p.$color === 'amber' ? '#fef3c7' : '#f0fdfa') : '#fff')}; color: ${(p) => (p.$active ? (p.$color === 'red' ? '#b91c1c' : p.$color === 'amber' ? '#b45309' : '#0f766e') : '#78716c')}; cursor: pointer; &:hover { border-color: ${(p) => (p.$active ? '' : '#a8a29e')}; }`;
-const ClearFilters = styled.button`font-size: 10px; color: #a8a29e; background: none; border: none; cursor: pointer; align-self: center; margin-left: auto; &:hover { color: #57534e; }`;
+
+
 const LogScrollDiv = styled.div`flex: 1; overflow: auto; position: relative;`;
 const Empty = styled.div`display: flex; align-items: center; justify-content: center; height: 100%; font-size: 11px; color: #a8a29e;`;
 const LogTable = styled.table`width: 100%; font-size: 11px; table-layout: fixed;`;
@@ -64,7 +65,7 @@ const PropsWrap = styled.div`display: flex; flex-wrap: wrap; gap: 4px 8px;`;
 const PropItem = styled.span`display: inline-flex; align-items: center; gap: 2px; font-size: 10px;`;
 const PropKey = styled.span`color: #a8a29e;`;
 const PropVal = styled.span`color: #57534e; font-weight: 500;`;
-const ScrollToBottomBtn = styled.button`position: absolute; right: 16px; bottom: 12px; background: #fff; border: 1px solid #e2ddd7; color: #78716c; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); &:hover { color: #292524; }`;
+
 
 interface StickyLogPanelProps { expanded: boolean; onToggle: () => void; bottomPadding?: number; }
 
@@ -123,7 +124,7 @@ export function SystemLogViewer({ expanded, onToggle, bottomPadding = 320 }: Sti
   return (
     <Wrapper $expanded={expanded} $padBottom={bottomPadding}>
       <TitleBar $expanded={expanded}>
-        <ToggleBtn onClick={onToggle}><Chevron $expanded={expanded}>▶</Chevron>System Logs</ToggleBtn>
+        <Button variant="ghost" size="sm" onClick={onToggle}><span style={{ display: 'inline-block', transition: 'transform 200ms', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span> System Logs</Button>
         {logs.length > 0 && <CountChip>{filteredLogs.length}/{logs.length}</CountChip>}
         {errorCount > 0 && <ErrChip>{errorCount} error{errorCount !== 1 ? 's' : ''}</ErrChip>}
         {warnCount > 0 && <WarnChip>{warnCount} warn{warnCount !== 1 ? 's' : ''}</WarnChip>}
@@ -131,8 +132,8 @@ export function SystemLogViewer({ expanded, onToggle, bottomPadding = 320 }: Sti
         {expanded && (
           <>
             <Search type="text" placeholder="search..." value={textFilter} onChange={(e) => setTextFilter(e.target.value)} />
-            <ToolBtn $active={showFilters || activeFilterCount > 0} onClick={() => setShowFilters(v => !v)}>Filters{activeFilterCount > 0 ? ` ·${activeFilterCount}` : ''}</ToolBtn>
-            <ClearBtn onClick={() => setLogs([])}>Clear</ClearBtn>
+            <Button variant={showFilters || activeFilterCount > 0 ? 'primary' : 'secondary'} size="sm" onClick={() => setShowFilters(v => !v)}>Filters{activeFilterCount > 0 ? ` ·${activeFilterCount}` : ''}</Button>
+            <Button variant="ghost" size="sm" onClick={() => setLogs([])}>Clear</Button>
           </>
         )}
       </TitleBar>
@@ -141,10 +142,10 @@ export function SystemLogViewer({ expanded, onToggle, bottomPadding = 320 }: Sti
         <ExpandedBody $h={bottomPadding}>
           {showFilters && (
             <FilterStrip>
-              {sources && sources.length > 0 && <FilterGroup><FilterLabel>Source</FilterLabel>{sources.map(src => <FilterBtn key={src} $active={selectedSources.has(src)} onClick={() => toggleSource(src)}>{src}</FilterBtn>)}</FilterGroup>}
-              <FilterGroup><FilterLabel>Level</FilterLabel>{LEVELS.map(lvl => <FilterBtn key={lvl} $active={selectedLevels.has(lvl)} onClick={() => toggleLevel(lvl)} $color={lvl === 'ERR' ? 'red' : lvl === 'WRN' ? 'amber' : undefined}>{lvl}</FilterBtn>)}</FilterGroup>
-              {allAreas.length > 0 && <FilterGroup><FilterLabel>Area</FilterLabel>{allAreas.map(area => <FilterBtn key={area} $active={selectedAreas.has(area)} onClick={() => toggleArea(area)}>{area}</FilterBtn>)}</FilterGroup>}
-              {activeFilterCount > 0 && <ClearFilters onClick={() => { setSelectedSources(new Set()); setSelectedLevels(new Set()); setSelectedAreas(new Set()); setTextFilter(''); }}>Clear filters</ClearFilters>}
+              {sources && sources.length > 0 && <FilterGroup><FilterLabel>Source</FilterLabel>{sources.map(src => <Button variant={selectedSources.has(src) ? 'primary' : 'secondary'} size="sm" key={src} onClick={() => toggleSource(src)}>{src}</Button>)}</FilterGroup>}
+              <FilterGroup><FilterLabel>Level</FilterLabel>{LEVELS.map(lvl => <Button variant={selectedLevels.has(lvl) ? lvl === 'ERR' ? 'destructive' : 'primary' : 'secondary'} size="sm" key={lvl} onClick={() => toggleLevel(lvl)}>{lvl}</Button>)}</FilterGroup>
+              {allAreas.length > 0 && <FilterGroup><FilterLabel>Area</FilterLabel>{allAreas.map(area => <Button variant={selectedAreas.has(area) ? 'primary' : 'secondary'} size="sm" key={area} onClick={() => toggleArea(area)}>{area}</Button>)}</FilterGroup>}
+              {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={() => { setSelectedSources(new Set()); setSelectedLevels(new Set()); setSelectedAreas(new Set()); setTextFilter(''); }}>Clear filters</Button>}
             </FilterStrip>
           )}
           <LogScrollDiv ref={scrollRef} onScroll={handleScroll}>
@@ -174,7 +175,7 @@ export function SystemLogViewer({ expanded, onToggle, bottomPadding = 320 }: Sti
                 </tbody>
               </LogTable>
             )}
-            {!isAtBottom && <ScrollToBottomBtn onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true); } }}>↓</ScrollToBottomBtn>}
+            {!isAtBottom && <Button variant="secondary" size="sm" style={{ position: 'absolute', right: 16, bottom: 12, borderRadius: '50%', width: 28, height: 28, padding: 0 }} onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true); } }}>↓</Button>}
           </LogScrollDiv>
         </ExpandedBody>
       )}

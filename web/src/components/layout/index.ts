@@ -1,4 +1,10 @@
 export { AppShell } from './AppShell';
 export { Sidebar } from './Sidebar';
-export { HomectlLogo } from './HomectlLogo';
+export {
+  HomectlFaviconLogo,
+  HomectlHeaderLogo,
+  HomectlLargeLockup,
+  HomectlLargeLogo,
+  HomectlLogo,
+} from './HomectlLogo';
 export { LiveStatusDot } from './LiveStatusDot';

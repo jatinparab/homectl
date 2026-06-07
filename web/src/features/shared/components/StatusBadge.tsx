@@ -163,24 +163,20 @@ const ToggleWrap = styled.div`
   align-items: center;
 `;
 
-const ToggleBtn = styled.button<{ $on: boolean }>`
+const ToggleSpan = styled.span<{ $on: boolean; $disabled?: boolean }>`
   position: relative;
   display: inline-flex;
   height: 16px;
   width: 28px;
   flex-shrink: 0;
-  cursor: pointer;
+  cursor: ${(p) => (p.$disabled ? 'not-allowed' : 'pointer')};
   align-items: center;
   border-radius: 9999px;
   transition: background-color 0.15s;
   background: ${(p) => (p.$on ? '#0d9488' : '#d6d3d1')};
   border: none;
   padding: 0;
-
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
+  opacity: ${(p) => (p.$disabled ? 0.4 : 1)};
 
   &:focus {
     outline: none;
@@ -202,9 +198,9 @@ export function DesiredToggle({ state, onToggle, disabled }: { state: string; on
   return (
     <Tooltip content={isRunning ? 'should be running' : 'should be stopped'}>
       <ToggleWrap>
-        <ToggleBtn role="switch" aria-checked={isRunning} onClick={onToggle} disabled={disabled} $on={isRunning}>
+        <ToggleSpan role="switch" aria-checked={isRunning} onClick={onToggle} $disabled={disabled} $on={isRunning}>
           <ToggleThumb $on={isRunning} />
-        </ToggleBtn>
+        </ToggleSpan>
       </ToggleWrap>
     </Tooltip>
   );
@@ -250,12 +246,9 @@ const MiniPct = styled.span`
   font-size: 10px;
 `;
 
-const PostBackupBtn = styled.button`
+const PostBackupSpan = styled.span`
   position: relative;
-  background: none;
-  border: none;
   cursor: pointer;
-  padding: 0;
 
   &:hover {
     opacity: 0.7;
@@ -297,10 +290,10 @@ export function PostBackupPhaseBadge({
 
   if (onClick) {
     return (
-      <PostBackupBtn onClick={onClick}>
+      <PostBackupSpan onClick={onClick}>
         {content}
         <PingDot />
-      </PostBackupBtn>
+      </PostBackupSpan>
     );
   }
 

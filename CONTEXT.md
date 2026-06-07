@@ -24,11 +24,31 @@ _Avoid_: LAN, VPN dependency
 The public IPv4 address agents use to reach the manager's WireGuard UDP listener.
 _Avoid_: hostname, VPS address
 
+**User**:
+A local manager login identity that can access the admin UI/API with a username and password.
+_Avoid_: agent, node
+
+**Session**:
+A browser login session for a User, represented by an opaque cookie and persisted server-side.
+_Avoid_: API key, join token
+
+**Onboarding Token**:
+A temporary manager-startup token logged only while no User exists, used to create the first User.
+_Avoid_: password, join token
+
+**Agent Config**:
+A manager-owned per-Agent JSON document stored encrypted at rest and periodically synced to that Agent.
+_Avoid_: app config, homectl-config.json
+
 ## Relationships
 
 - A **Manager** accepts zero or more **Agents**.
 - An **Agent** presents a **Join Token** before it receives **WireGuard Overlay** peer configuration.
 - The **WireGuard Overlay** uses one **Manager Endpoint IP** and the default UDP port `51844`.
+- A **User** authenticates to the Manager UI/API with a username and password.
+- A **Session** authorizes browser API calls after a User logs in.
+- An **Onboarding Token** can create only the first User and is invalidated after onboarding.
+- An **Agent Config** belongs to exactly one Agent.
 
 ## Example Dialogue
 
