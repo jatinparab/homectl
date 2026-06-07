@@ -12,6 +12,7 @@ services:
       CADDY_DNS_PROVIDER: cloudflare
       ADMIN_USER: admin
       ADMIN_PASSWORD: change-me
+      # HOMECTL_CROWDSEC_SSH_LOG: /var/log/host/auth.log  # uncomment to enable SSH log monitoring
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     cap_add:
@@ -27,3 +28,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/homectl/config:/config
       - /home/jatin/homelab:/homelab
+      # - /var/log:/var/log/host:ro  # mount host logs read-only (for CrowdSec SSH monitoring)
