@@ -1,13 +1,16 @@
 package docker
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
 func TestAnalyzeDockerComposeFile_Caddy(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml")
+	path := filepath.Join("..", "testdata", "docker", "caddy", "docker-compose.yml")
 	app, err := analyzeDockerComposeFile(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -23,7 +26,7 @@ func TestAnalyzeDockerComposeFile_Caddy(t *testing.T) {
 }
 
 func TestAnalyzeDockerComposeFile_Adguard(t *testing.T) {
-	path := filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml")
+	path := filepath.Join("..", "testdata", "docker", "adguard", "docker-compose.yml")
 	app, err := analyzeDockerComposeFile(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -82,7 +85,7 @@ func TestParsePort(t *testing.T) {
 }
 
 func TestDiscoverApps(t *testing.T) {
-	rootDir := filepath.Join("..", "testdata", "docker", "v2")
+	rootDir := filepath.Join("..", "testdata", "docker")
 	apps, err := DiscoverApps(rootDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -107,8 +110,8 @@ func TestDiscoverApps(t *testing.T) {
 
 func TestDiscoverAppsFromPaths(t *testing.T) {
 	paths := []string{
-		filepath.Join("..", "testdata", "docker", "v2", "caddy", "docker-compose.yml"),
-		filepath.Join("..", "testdata", "docker", "v2", "adguard", "docker-compose.yml"),
+		filepath.Join("..", "testdata", "docker", "caddy", "docker-compose.yml"),
+		filepath.Join("..", "testdata", "docker", "adguard", "docker-compose.yml"),
 	}
 
 	apps, err := DiscoverAppsFromPaths(paths)
@@ -118,5 +121,62 @@ func TestDiscoverAppsFromPaths(t *testing.T) {
 
 	if len(apps) != 2 {
 		t.Errorf("expected 2 apps, got %d", len(apps))
+	}
+}
+
+func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
+	rootDir := filepath.Join("..", "testdata", "docker")
+	d := NewDocker(rootDir, "/srv/homectl/app-data")
+	d.SetComposeExtraArgs([]string{"-f", "docker-compose.gpu.yml", "--profile", "gpu"})
+
+	cmd := d.ComposeCommand("adguard", "up", "-d")
+	wantArgs := []string{
+		"docker",
+		"compose",
+		"-f",
+		filepath.Join(rootDir, "adguard", "docker-compose.yml"),
+		"-f",
+		"docker-compose.gpu.yml",
+		"--profile",
+		"gpu",
+		"up",
+		"-d",
+	}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("cmd.Args = %#v, want %#v", cmd.Args, wantArgs)
+	}
+
+	wantDir := filepath.Join(rootDir, "adguard")
+	if cmd.Dir != wantDir {
+		t.Fatalf("cmd.Dir = %q, want %q", cmd.Dir, wantDir)
+	}
+
+	wantEnv := "APPDATA=/srv/homectl/app-data"
+	if !envContains(cmd.Env, wantEnv) {
+		t.Fatalf("cmd.Env missing %q in %v", wantEnv, cmd.Env)
+	}
+}
+
+func envContains(env []string, want string) bool {
+	for _, item := range env {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestComposeEnvOverridesInheritedAPPDATA(t *testing.T) {
+	t.Setenv("APPDATA", "/wrong")
+	d := NewDocker("/tmp/docker", "/srv/homectl/app-data")
+
+	env := d.ComposeEnv()
+	if !envContains(env, "APPDATA=/srv/homectl/app-data") {
+		t.Fatalf("ComposeEnv missing resolved host APPDATA in %v", env)
+	}
+	for _, item := range env {
+		if strings.HasPrefix(item, "APPDATA=") && item != "APPDATA=/srv/homectl/app-data" {
+			t.Fatalf("ComposeEnv kept stale APPDATA entry %q; full env has %d entries, process env has %d", item, len(env), len(os.Environ()))
+		}
 	}
 }

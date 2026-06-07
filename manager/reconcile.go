@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"time"
@@ -71,14 +70,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 // gateway is set and valid, uses it.
 func (m *Manager) resolveGateway() {
 	m.gatewayMu.Lock()
-	oldGateway := m.gatewayNode
-	defer func() {
-		newGateway := m.gatewayNode
-		m.gatewayMu.Unlock()
-		if oldGateway != newGateway {
-			m.restartNewtOnGatewayChange(oldGateway, newGateway)
-		}
-	}()
+	defer m.gatewayMu.Unlock()
 
 	// Check if manual gateway is set and still valid
 	if m.manualGatewayNode != "" {
@@ -149,67 +141,6 @@ func (m *Manager) gatewayCandidateRank(agentName string) int {
 		return 2
 	}
 	return 1
-}
-
-// restartNewtOnGatewayChange restarts newt when gateway ownership changes.
-func (m *Manager) restartNewtOnGatewayChange(oldGateway, newGateway string) {
-	reconcileLog.Info("Gateway: changed, restarting newt", "from", oldGateway, "to", newGateway)
-
-	now := time.Now()
-	targetSet := make(map[string]bool)
-	for _, agent := range m.leaseManager.ListAgents() {
-		if now.Sub(agent.LastSeen) >= 30*time.Second {
-			continue
-		}
-		for _, report := range agent.AppReports {
-			if report.AppID == "newt" {
-				targetSet[agent.Name] = true
-				break
-			}
-		}
-	}
-
-	// Fallback: if newt isn't currently reported, try restarting on the new gateway.
-	if len(targetSet) == 0 && newGateway != "" {
-		targetSet[newGateway] = true
-	}
-
-	targets := make([]string, 0, len(targetSet))
-	for name := range targetSet {
-		targets = append(targets, name)
-	}
-	sort.Strings(targets)
-
-	for _, node := range targets {
-		if err := m.restartAppOnNode("newt", node); err != nil {
-			reconcileLog.Error("Gateway: failed restarting newt", "node", node, "err", err)
-			continue
-		}
-		reconcileLog.Info("Gateway: restarted newt", "node", node)
-	}
-}
-
-func (m *Manager) restartAppOnNode(appID common.AppID, nodeName string) error {
-	agentCfg := m.config.GetAgentConfig(nodeName)
-	if agentCfg == nil {
-		return fmt.Errorf("node %s not found in config", nodeName)
-	}
-
-	agent, ok := m.leaseManager.GetAgent(nodeName)
-	if !ok || time.Since(agent.LastSeen) >= 30*time.Second {
-		return fmt.Errorf("node %s offline", nodeName)
-	}
-
-	status, body, err := m.requestAgentUnary(context.Background(), nodeName, common.LinkReqRestartApp, common.RestartAppPayload{AppID: string(appID)})
-	if err != nil {
-		return err
-	}
-
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("agent returned HTTP %d: %s", status, string(body))
-	}
-
-	return nil
 }
 
 // isGatewayProxyHealthy checks if an agent reports the gateway proxy as running+healthy.

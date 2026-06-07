@@ -28,10 +28,7 @@ func main() {
 	hostname := utils.GetHostname()
 	logger.Init("manager", hostname)
 	manager.InitLoggers()
-	repoDir := os.Getenv("HOMECTL_REPO_DIR")
-	if repoDir == "" {
-		repoDir = config.GetGitRepoDir(hostname)
-	}
+	repoDir := config.GetGitRepoDir(hostname)
 	port := 1338
 
 	mgr := manager.NewManager(repoDir, port)
@@ -50,13 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Best-effort initial git sync
-	slog.Info("Performing initial git sync")
-	if err := mgr.GitSync(); err != nil {
-		slog.Info("Warning: Initial git sync failed (continuing anyway)", "err", err)
-	}
-
-	// Discover apps from docker/v2 and start reconcile loop
+	// Discover apps from docker and start reconcile loop
 	mgr.DiscoverApps()
 
 	// Start server before public route health checks. The generated Caddy config
@@ -74,6 +65,7 @@ func main() {
 	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
 	mgr.SetReconcileCancel(reconcileCancel)
 	mgr.StartReconcileLoop(reconcileCtx)
+	mgr.StartCrowdSecBootstrap(reconcileCtx)
 	mgr.StartPublicRouteLoop(reconcileCtx)
 
 	// Wait for interrupt signal

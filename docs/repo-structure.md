@@ -1,8 +1,10 @@
 # App Repository Structure
 
 Homectl reads application definitions from a separate Git repository configured
-with `HOMECTL_GIT_REPO`. The manager clones it into `HOMECTL_REPO_DIR` on first
-startup and syncs it with `git pull --ff-only`.
+with `HOMECTL_GIT_REPO`. The manager clones it into `/config/repo` on first
+startup. On later syncs, the manager fetches the configured upstream branch,
+hard-resets the checkout to that remote state, and removes untracked and ignored
+files. The Git remote is authoritative for everything under `/config/repo`.
 
 ## Required Layout
 

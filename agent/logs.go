@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net/http"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/jatinparab/homectl/common"
@@ -55,14 +53,8 @@ func (lh *LogsHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the docker compose file path
-	composePath := filepath.Join(lh.agent.dockerRootDir, appID, "docker-compose.yml")
-
 	// Execute docker compose logs -f --tail=100
-	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", composePath, "logs", "-f", "--tail=100")
-
-	// Set environment variables including APPDATA
-	cmd.Env = lh.agent.docker.ComposeEnv()
+	cmd := lh.agent.docker.ComposeCommandContext(r.Context(), appID, "logs", "-f", "--tail=100")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

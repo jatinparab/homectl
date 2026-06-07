@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -600,7 +601,7 @@ func (m *Manager) handleAPIAppRestore(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"app_id": appID, "restore_enabled": enabled})
 }
 
-// handleAPISync performs a git pull, re-discovers apps, and tells all online agents to re-sync.
+// handleAPISync re-discovers apps and tells all online agents to re-sync.
 // POST /api/v1/sync
 func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -608,16 +609,10 @@ func (m *Manager) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 1: Git pull
-	if err := m.GitSync(); err != nil {
-		http.Error(w, fmt.Sprintf("Git sync failed: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Step 2: Re-discover apps
+	// Step 1: Re-discover apps
 	m.DiscoverApps()
 
-	// Step 3: Fan out to all online agents
+	// Step 2: Fan out to all online agents
 	agents := m.leaseManager.ListAgents()
 	now := time.Now()
 	var syncErrors []string
@@ -1785,6 +1780,189 @@ func (m *Manager) handleAPIPublicRoutes(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (m *Manager) handleAPIPublicRouteLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	filter := parseLogFilters(r)
+	logs := readPublicRouteAccessLogs(filter)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (m *Manager) handleAPICrowdSecStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecBootstrapStatus())
+}
+
+func (m *Manager) handleAPICrowdSecMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	metrics, err := m.crowdSecMetrics()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+func (m *Manager) handleAPICrowdSecLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		var parsed int
+		if _, err := fmt.Sscanf(raw, "%d", &parsed); err == nil {
+			limit = parsed
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecLogs(limit))
+}
+
+func (m *Manager) handleAPICrowdSecBans(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		decisions, err := m.crowdSecDecisions()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(decisions)
+	case http.MethodPost:
+		var input CrowdSecDecisionInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := m.addCrowdSecDecision(input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		decisions, err := m.crowdSecDecisions()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(decisions)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (m *Manager) handleAPICrowdSecBan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/crowdsec/bans/"), "/")
+	if idStr == "" {
+		http.Error(w, "Decision ID required", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid decision ID", http.StatusBadRequest)
+		return
+	}
+	if err := m.deleteCrowdSecDecision(id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	decisions, err := m.crowdSecDecisions()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(decisions)
+}
+
+func (m *Manager) handleAPICrowdSecHub(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		all := r.URL.Query().Get("all") == "true"
+		items, err := m.crowdSecHubItems(all)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(CrowdSecHubResponse{Items: items})
+	case http.MethodPost:
+		var input CrowdSecHubInstallInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := m.installCrowdSecHubItem(input); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	case http.MethodDelete:
+		var input CrowdSecHubInstallInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := m.removeCrowdSecHubItem(input); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (m *Manager) handleAPICrowdSecVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecVersion())
+}
+
+func (m *Manager) handleAPISSHLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	filter := parseLogFilters(r)
+	logs := readSSHLogs(filter)
+	if logs == nil {
+		logs = []SSHLogEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (m *Manager) handleAPICrowdSecUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := m.updateCrowdSec(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m.crowdSecVersion())
 }
 
 func (m *Manager) handleAPIPublicRoute(w http.ResponseWriter, r *http.Request) {

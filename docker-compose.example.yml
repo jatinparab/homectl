@@ -6,14 +6,13 @@ services:
     environment:
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
-      HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
-      HOMECTL_REPO_DIR: /opt/homectl/repo
       HOMECTL_DOMAIN_SUFFIX: your-domain.example
       HOMECTL_PUBLIC_HOST: homectl.your-domain.example
       CADDY_ACME_EMAIL: you@example.com
       CADDY_DNS_PROVIDER: cloudflare
       ADMIN_USER: admin
       ADMIN_PASSWORD: change-me
+      # HOMECTL_CROWDSEC_SSH_LOG: /var/log/host/auth.log  # uncomment to enable SSH log monitoring
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     cap_add:
@@ -27,4 +26,6 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/homectl:/opt/homectl
+      - /opt/homectl/config:/config
+      - /home/jatin/homelab:/homelab
+      # - /var/log:/var/log/host:ro  # mount host logs read-only (for CrowdSec SSH monitoring)
