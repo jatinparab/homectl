@@ -54,7 +54,8 @@ listener.
   certificates, serve the manager UI, and expose `/api/join`
 - A long random shared `HOMECTL_JOIN_TOKEN`
 - A Git repository containing app definitions in the required [app repository structure](./docs/repo-structure.md)
-- A directory on each host mounted at `/opt/homectl` in the container
+- A config directory mounted at `/config` in each Homectl container
+- On agents, a host directory bind-mounted at `/app-data` for managed app data
 - Optional: a configured Restic repository for backups
 
 Because Homectl controls sibling containers through `/var/run/docker.sock`, the
@@ -89,10 +90,10 @@ ADMIN_PASSWORD: replace-me
 docker compose -f docker-compose.example.yml up -d
 ```
 
-4. On each agent host, copy `docker-compose.agent.example.yml` and edit:
+4. On each agent host, copy `docker-compose.agent.example.yml`, set a stable
+   `hostname:` for that node, and edit:
 
 ```yaml
-HOMECTL_AGENT_NAME: node-1
 HOMECTL_JOIN_TOKEN: replace-with-the-manager-token
 HOMECTL_MANAGER_URL: https://homectl.your-domain.example
 CADDY_ACME_EMAIL: you@example.com
@@ -134,7 +135,8 @@ Manager environment variables:
 | `HOMECTL_JOIN_TOKEN` | Yes | Shared token agents present during join and TCP link setup. |
 | `HOMECTL_WG_ENDPOINT_IP` | Yes | Public IPv4 address agents use for WireGuard. |
 | `HOMECTL_GIT_REPO` | Yes | Git URL for the app-definition repository. |
-| `HOMECTL_REPO_DIR` | Yes | Path to the app repository inside the container. |
+| `HOMECTL_GIT_TOKEN` | If the Git repo requires auth | Token used for non-interactive HTTPS Git clone/sync. `HOMECTL_GITHUB_TOKEN` and `GITHUB_TOKEN` are also accepted. |
+| `HOMECTL_GIT_USERNAME` | No | HTTPS Git username when using `HOMECTL_GIT_TOKEN`; defaults to `x-access-token` for GitHub PATs. |
 | `HOMECTL_DOMAIN_SUFFIX` | Yes | Base domain for generated app routes. |
 | `HOMECTL_PUBLIC_HOST` | Yes | Public hostname reserved for the manager UI. |
 | `CADDY_ACME_EMAIL` | Recommended | Contact email used by Caddy's ACME account. |
@@ -146,11 +148,9 @@ Agent environment variables:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `HOMECTL_AGENT_NAME` | Yes | Stable agent name shown in the manager. |
 | `HOMECTL_JOIN_TOKEN` | Yes | Must match the manager join token. |
 | `HOMECTL_MANAGER_URL` | Yes | Public manager origin served by Caddy, for example `https://homectl.your-domain.example`. |
-| `HOMECTL_DOCKER_ROOT_DIR` | Yes | Host-visible path where synced Compose files are stored. |
-| `HOMECTL_APPDATA_DIR` | Yes | Host-visible path for app data. |
+| `HOMECTL_COMPOSE_EXTRA_ARGS` | No | Extra Docker Compose options for this agent, inserted before `up`, `down`, `pull`, `ps`, `stop`, and `logs`; for example `-f docker-compose.gpu.yml --profile gpu`. Relative `-f` paths are resolved from each app directory. |
 | `CADDY_ACME_EMAIL` | Recommended | Contact email used by the gateway agent's Caddy instance. |
 | `CLOUDFLARE_API_TOKEN` | If `CADDY_DNS_PROVIDER=cloudflare` | Token used by the agent Caddy DNS plugin for DNS-01 challenges. |
 | `RESTIC_REPOSITORY` | Recommended | Restic repository URL for backups. |
@@ -162,12 +162,31 @@ Agent environment variables:
 Homectl expects apps under:
 
 ```text
-<HOMECTL_REPO_DIR>/docker/<app-name>/docker-compose.yml
+/config/repo/docker/<app-name>/docker-compose.yml
 ```
 
 On first manager startup, Homectl clones `HOMECTL_GIT_REPO` into
-`HOMECTL_REPO_DIR`. On later syncs, it runs `git pull --ff-only` in that
-checkout.
+`/config/repo`. On later syncs, it fetches the configured upstream branch,
+resets the checkout to that remote state, and removes untracked and ignored
+files. Treat the Git remote as authoritative for everything under
+`/config/repo`.
+
+## Runtime Paths
+
+Homectl uses fixed container paths:
+
+| Path | Purpose |
+| --- | --- |
+| `/config` | Homectl config, state, generated Caddy/WireGuard files, and synced Compose files. |
+| `/config/repo` | Manager Git checkout. |
+| `/config/docker` | Agent copy of the repo's `docker/` directory. |
+| `/app-data` | Managed app persistent data on agents. |
+
+Agents require `/app-data` to be a host bind mount, not a Docker named volume.
+Homectl inspects the running agent container, resolves the host source mounted at
+`/app-data`, and passes that host path to managed Docker Compose apps as
+`APPDATA`. This is required because Homectl talks to the host Docker daemon via
+`/var/run/docker.sock`.
 
 An app may include `homectl-config.json` next to its Compose file for Homectl
 metadata such as exposed subdomains, excluded nodes, backup settings, and global
@@ -202,23 +221,6 @@ Stop the dev cluster:
 
 ```sh
 make dev-down
-```
-
-## End-to-End Tests
-
-End-to-end tests are excluded from the default `go test ./...` run by the `e2e`
-build tag.
-
-Start an e2e cluster, run tests, and tear it down:
-
-```sh
-make e2e
-```
-
-Run e2e tests against an already-running cluster:
-
-```sh
-make e2e-tests
 ```
 
 ## Project Status

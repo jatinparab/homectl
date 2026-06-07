@@ -52,13 +52,13 @@ func (l *LocalFileReader) ListDir(path string) ([]string, error) {
 }
 
 type Docker struct {
-	rootDir    string
-	appdataDir string
-	user       string
-	httpClient *http.Client
-	dockerApps map[string]DockerApp
-	fileReader FileReader
-	ctx        context.Context
+	rootDir          string
+	appdataDir       string
+	composeExtraArgs []string
+	httpClient       *http.Client
+	dockerApps       map[string]DockerApp
+	fileReader       FileReader
+	ctx              context.Context
 }
 
 type DockerApp struct {
@@ -69,11 +69,10 @@ type DockerApp struct {
 	HealthService string
 }
 
-func NewDocker(rootDir, appdataDir, user string) *Docker {
+func NewDocker(rootDir, appdataDir string) *Docker {
 	return &Docker{
 		rootDir:    rootDir,
 		appdataDir: appdataDir,
-		user:       user,
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second,
 		},
@@ -81,6 +80,12 @@ func NewDocker(rootDir, appdataDir, user string) *Docker {
 		fileReader: &LocalFileReader{},
 		ctx:        context.Background(),
 	}
+}
+
+// SetComposeExtraArgs configures extra docker compose options inserted before
+// the subcommand, after the primary docker-compose.yml file.
+func (d *Docker) SetComposeExtraArgs(args []string) {
+	d.composeExtraArgs = append([]string(nil), args...)
 }
 
 // SetContext sets the context for cancellation
@@ -491,16 +496,14 @@ func (d *Docker) connectAppNetwork(app DockerApp) error {
 	if err := EnsureHomectlDockerNetwork(); err != nil {
 		return err
 	}
-	command := exec.Command("docker", "compose", "-f", path, "ps", "-q")
-	command.Env = d.ComposeEnv()
+	command := d.ComposeCommand(app.Name, "ps", "-q")
 	output, err := command.Output()
 	if err != nil {
 		return err
 	}
 	healthContainer := ""
 	if app.HealthService != "" {
-		command = exec.Command("docker", "compose", "-f", path, "ps", "-q", app.HealthService)
-		command.Env = d.ComposeEnv()
+		command = d.ComposeCommand(app.Name, "ps", "-q", app.HealthService)
 		serviceOutput, err := command.Output()
 		if err == nil {
 			healthContainer = firstLine(serviceOutput)
@@ -531,6 +534,25 @@ func (d *Docker) ConnectLoadedAppsToHomectlNetwork() error {
 		}
 	}
 	return nil
+}
+
+// ComposeCommand creates a docker compose command for a managed app.
+func (d *Docker) ComposeCommand(appID string, subcommandArgs ...string) *exec.Cmd {
+	return d.ComposeCommandContext(context.Background(), appID, subcommandArgs...)
+}
+
+// ComposeCommandContext creates a docker compose command for a managed app with
+// cancellation support.
+func (d *Docker) ComposeCommandContext(ctx context.Context, appID string, subcommandArgs ...string) *exec.Cmd {
+	appDir := filepath.Join(d.rootDir, appID)
+	args := []string{"compose", "-f", filepath.Join(appDir, "docker-compose.yml")}
+	args = append(args, d.composeExtraArgs...)
+	args = append(args, subcommandArgs...)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = appDir
+	cmd.Env = d.ComposeEnv()
+	return cmd
 }
 
 // PruneStaleSharedNamespaceContainers removes containers whose network_mode
@@ -577,7 +599,7 @@ func firstLine(b []byte) string {
 
 // ComposeEnv returns the environment variables for docker compose commands
 func (d *Docker) ComposeEnv() []string {
-	env := os.Environ()
+	env := withoutEnvKey(os.Environ(), "APPDATA")
 	env = append(env, "APPDATA="+d.appdataDir)
 
 	// Get current user's UID
@@ -588,13 +610,24 @@ func (d *Docker) ComposeEnv() []string {
 	return env
 }
 
+func withoutEnvKey(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func (d *Docker) RunDockerComposeUp(service string) error {
 	path := filepath.Join(d.rootDir, service, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	command := exec.Command("docker", "compose", "-f", path, "up", "-d")
-	command.Env = d.ComposeEnv()
+	command := d.ComposeCommand(service, "up", "-d")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose up: %s", string(output))
@@ -677,8 +710,7 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
 	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--progress=plain", "-f", path, "pull")
-	cmd.Env = d.ComposeEnv()
+	cmd := d.ComposeCommandContext(ctx, appID, "--progress=plain", "pull")
 	if err := d.streamCommand(cmd, onLog); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("docker compose pull timed out after %s", pullTimeout)
@@ -696,9 +728,7 @@ func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
 	}
 
 	// Then run docker compose up -d with streaming
-	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
-	cmd := exec.Command("docker", "compose", "-f", path, "up", "-d")
-	cmd.Env = d.ComposeEnv()
+	cmd := d.ComposeCommand(appID, "up", "-d")
 	if err := d.streamCommand(cmd, onLog); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
@@ -724,8 +754,7 @@ func (d *Docker) Stop(appID string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	command := exec.Command("docker", "compose", "-f", path, "stop", "-t", "60")
-	command.Env = d.ComposeEnv()
+	command := d.ComposeCommand(appID, "stop", "-t", "60")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose stop: %s", string(output))
@@ -739,8 +768,7 @@ func (d *Docker) Down(appID string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	command := exec.Command("docker", "compose", "-f", path, "down", "-t", "60")
-	command.Env = d.ComposeEnv()
+	command := d.ComposeCommand(appID, "down", "-t", "60")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to run docker compose down: %s", string(output))
@@ -756,16 +784,14 @@ func (d *Docker) IsRunning(appID string) (common.RunningStatus, error) {
 	}
 
 	// Use docker compose ps to check if containers are running
-	command := exec.Command("docker", "compose", "-f", path, "ps", "--status=running", "-q")
-	command.Env = d.ComposeEnv()
+	command := d.ComposeCommand(appID, "ps", "--status=running", "-q")
 	output, err := command.Output()
 	if err != nil {
 		// If command fails, assume not running
 		return common.RunningStatusStopped, nil
 	}
 
-	command = exec.Command("docker", "compose", "-f", path, "ps", "--status=restarting", "-q")
-	command.Env = d.ComposeEnv()
+	command = d.ComposeCommand(appID, "ps", "--status=restarting", "-q")
 	outputRestarting, errRestarting := command.Output()
 	if errRestarting == nil {
 		if len(strings.TrimSpace(string(outputRestarting))) > 0 {

@@ -40,6 +40,13 @@ type AgentConfig struct {
 	EndpointPort     int
 }
 
+func RegenerateKeyPair(dir string) (privateKey, publicKey string, err error) {
+	if err := os.RemoveAll(dir); err != nil {
+		return "", "", err
+	}
+	return EnsureKeyPair(dir)
+}
+
 func EnsureKeyPair(dir string) (privateKey, publicKey string, err error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", "", err
@@ -139,6 +146,15 @@ func EnsureAgent(cfg AgentConfig) error {
 	fmt.Fprintf(&b, "Endpoint = %s:%d\n", strings.TrimSpace(cfg.EndpointIP), cfg.EndpointPort)
 	fmt.Fprintf(&b, "PersistentKeepalive = 25\n")
 	return applyConfig(cfg.ConfigDir, b.String())
+}
+
+func IsActive() bool {
+	cmd := exec.Command("wg", "show", InterfaceName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), "interface: "+InterfaceName)
 }
 
 func Teardown() {
