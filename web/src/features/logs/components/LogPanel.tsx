@@ -1,0 +1,68 @@
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import styled from '@emotion/styled';
+import { useStreamSubscription } from '../../../api/live';
+
+interface LogPanelProps { isOpen: boolean; onClose: () => void; node: string; appId: string; }
+
+const Panel = styled.div<{ $open: boolean }>`
+  position: fixed; right: 0; top: 0; height: 100%; width: 50%;
+  background: #fff; border-left: 1px solid ${(p) => p.theme.colors.border};
+  transform: ${(p) => (p.$open ? 'translateX(0)' : 'translateX(100%)')};
+  transition: transform 300ms; z-index: 50; display: flex; flex-direction: column;
+`;
+const Header = styled.div`display: flex; align-items: center; justify-content: space-between; padding: 0 16px; height: 48px; border-bottom: 1px solid ${(p) => p.theme.colors.border}; flex-shrink: 0;`;
+const Title = styled.span`font-size: ${(p) => p.theme.fontSizes.sm}; font-weight: 600; color: ${(p) => p.theme.colors.textPrimary};`;
+const NodeLabel = styled.span`color: #a8a29e; font-size: ${(p) => p.theme.fontSizes.xs};`;
+const Dot = styled.span<{ $on: boolean }>`width: 8px; height: 8px; border-radius: 50%; background: ${(p) => (p.$on ? '#10b981' : '#d6d3d1')};`;
+const CloseBtn = styled.button`color: #a8a29e; background: none; border: none; font-size: 18px; cursor: pointer; &:hover { color: #44403c; }`;
+const ErrorMsg = styled.div`padding: 8px 16px; background: #fef2f2; color: #ef4444; font-size: 11px; border-bottom: 1px solid #fecaca;`;
+const LogContent = styled.div`flex: 1; overflow: auto; padding: 16px; position: relative;`;
+const LogPre = styled.pre`font-size: 11px; font-family: ${(p) => p.theme.fonts.mono}; color: #57534e; white-space: pre-wrap; line-height: 1.6;`;
+const ScrollBtn = styled.button`position: absolute; right: 16px; bottom: 40px; background: #fff; border: 1px solid ${(p) => p.theme.colors.border}; color: #78716c; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: ${(p) => p.theme.fontSizes.xs}; box-shadow: 0 1px 3px rgba(0,0,0,0.1); &:hover { color: #292524; }`;
+const Footer = styled.div`padding: 8px 16px; border-top: 1px solid ${(p) => p.theme.colors.borderLight}; font-size: 10px; color: #a8a29e; text-align: center;`;
+
+export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
+  const [logs, setLogs] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const logsRef = useRef<string[]>([]);
+  const pendingRef = useRef<string[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
+
+  useEffect(() => { logsRef.current = logs; }, [logs]);
+  const flushPending = useCallback(() => { flushTimerRef.current = null; if (pendingRef.current.length === 0) return; const chunk = pendingRef.current; pendingRef.current = []; setLogs((prev) => { const n = [...prev, ...chunk]; return n.length > 500 ? n.slice(-500) : n; }); }, []);
+  const enqueueLine = useCallback((line: string) => { pendingRef.current.push(line); if (flushTimerRef.current != null) return; flushTimerRef.current = window.setTimeout(flushPending, 80); }, [flushPending]);
+  const streamEnabled = isOpen && !!node && !!appId;
+  const streamParams = useMemo(() => (streamEnabled ? { appId, node } : null), [streamEnabled, appId, node]);
+
+  useEffect(() => { if (!streamEnabled) { if (flushTimerRef.current != null) { window.clearTimeout(flushTimerRef.current); flushTimerRef.current = null; } pendingRef.current = []; setLogs([]); setError(null); setConnected(false); return; } setConnected(true); setError(null); }, [streamEnabled]);
+
+  const handleStream = useCallback((line: string, _source?: string, done?: boolean) => {
+    if (line) enqueueLine(line);
+    if (done) { flushPending(); setConnected(false); if (line && logsRef.current.length === 0) setError(line); if (!line && logsRef.current.length === 0) setError('log stream ended with no output'); return; }
+  }, [enqueueLine, flushPending]);
+
+  useStreamSubscription(streamEnabled ? 'app-logs' : null, streamParams, streamEnabled ? handleStream : null);
+
+  const handleScroll = useCallback(() => { const el = scrollRef.current; if (!el) return; setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40); }, []);
+  useEffect(() => { if (isAtBottom && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [logs, isAtBottom]);
+
+  return (
+    <Panel $open={isOpen}>
+      <Header>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Title>{appId}</Title><NodeLabel>({node})</NodeLabel><Dot $on={connected} />
+        </div>
+        <CloseBtn onClick={onClose}>×</CloseBtn>
+      </Header>
+      {error && <ErrorMsg>{error}</ErrorMsg>}
+      <LogContent ref={scrollRef} onScroll={handleScroll}>
+        <LogPre>{logs.length === 0 ? <span style={{ color: '#a8a29e' }}>Waiting for logs...</span> : logs.join('\n')}</LogPre>
+      </LogContent>
+      {!isAtBottom && <ScrollBtn onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true); } }}>↓</ScrollBtn>}
+      <Footer>last 500 lines</Footer>
+    </Panel>
+  );
+}
