@@ -15,12 +15,21 @@ type Config struct {
 	agents     map[string]AgentConfig
 }
 
+const (
+	ConfigDir          = "/config"
+	AppDataDir         = "/app-data"
+	RepoDir            = "/homelab"
+	StateDir           = ConfigDir + "/state"
+	AgentDockerRootDir = ConfigDir + "/docker"
+	CaddyDir           = ConfigDir + "/caddy"
+	CrowdSecDir        = ConfigDir + "/crowdsec"
+	WireGuardDir       = ConfigDir + "/wg"
+	KeepalivedDir      = ConfigDir + "/keepalived"
+)
+
 type AgentConfig struct {
 	Name             string
 	IP               string
-	User             string
-	AppdataDir       string
-	DockerRootDir    string
 	ComposeExtraArgs []string
 }
 
@@ -55,9 +64,6 @@ func (c *Config) GetAgentConfig(hostname string) *AgentConfig {
 	return &AgentConfig{
 		Name:             name,
 		IP:               ip,
-		User:             envOrDefault("HOMECTL_USER", "root"),
-		AppdataDir:       envOrDefault("HOMECTL_APPDATA_DIR", "/opt/homectl/appdata"),
-		DockerRootDir:    envOrDefault("HOMECTL_DOCKER_ROOT_DIR", "/opt/homectl/docker"),
 		ComposeExtraArgs: composeExtraArgs,
 	}
 }
@@ -121,10 +127,7 @@ func parseComposeExtraArgs(value string) ([]string, error) {
 }
 
 func GetGitRepoDir(hostname string) string {
-	if dir := os.Getenv("HOMECTL_REPO_DIR"); dir != "" {
-		return dir
-	}
-	return "/opt/homectl/repo"
+	return "/homelab"
 }
 
 func NewConfig() *Config {

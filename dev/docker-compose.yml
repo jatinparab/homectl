@@ -11,9 +11,6 @@ volumes:
   agent-1-docker:  # dockerd data per agent
   agent-2-docker:
   agent-3-docker:
-  agent-1-appdata:
-  agent-2-appdata:
-  agent-3-appdata:
   node-modules:    # npm packages (built in container, not synced from host)
 
 services:
@@ -26,11 +23,10 @@ services:
       - "1338:1338"   # exposed so the browser can connect WebSocket directly
     volumes:
       - ../:/src                          # full source for Air to watch + rebuild
-      - ../testdata/docker:/src/docker       # manager looks for {REPO_DIR}/docker
+      - ../.homectl-dev/manager/config:/config
+      - ../testdata:/config/repo
       - go-modules:/go/pkg/mod           # shared module cache
       - manager-cache:/root/.cache/go-build
-    environment:
-      - HOMECTL_REPO_DIR=/src             # apps at /src/docker
     networks: [dev]
     restart: unless-stopped
 
@@ -68,13 +64,10 @@ services:
       - go-modules:/go/pkg/mod
       - agent-1-cache:/root/.cache/go-build
       - agent-1-docker:/var/lib/docker
-      - agent-1-appdata:/appdata
+      - ../.homectl-dev/agent-1/config:/config
+      - ../.homectl-dev/agent-1/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-1
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_DOCKER_ROOT_DIR=/docker
-      - HOMECTL_APPDATA_DIR=/appdata
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager
@@ -91,13 +84,10 @@ services:
       - go-modules:/go/pkg/mod
       - agent-2-cache:/root/.cache/go-build
       - agent-2-docker:/var/lib/docker
-      - agent-2-appdata:/appdata
+      - ../.homectl-dev/agent-2/config:/config
+      - ../.homectl-dev/agent-2/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-2
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_DOCKER_ROOT_DIR=/docker
-      - HOMECTL_APPDATA_DIR=/appdata
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager
@@ -114,13 +104,10 @@ services:
       - go-modules:/go/pkg/mod
       - agent-3-cache:/root/.cache/go-build
       - agent-3-docker:/var/lib/docker
-      - agent-3-appdata:/appdata
+      - ../.homectl-dev/agent-3/config:/config
+      - ../.homectl-dev/agent-3/app-data:/app-data
     environment:
-      - HOMECTL_AGENT_NAME=dev-node-3
       - HOMECTL_MANAGER_URL=http://manager:1338
-      - HOMECTL_DOCKER_ROOT_DIR=/docker
-      - HOMECTL_APPDATA_DIR=/appdata
-      - HOMECTL_USER=root
     networks: [dev]
     depends_on:
       - manager

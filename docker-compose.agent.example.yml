@@ -2,14 +2,11 @@ services:
   agent:
     image: homectl/agent:latest
     container_name: homectl-agent
+    hostname: node-1
     restart: unless-stopped
     environment:
-      HOMECTL_AGENT_NAME: node-1
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_MANAGER_URL: https://homectl.your-domain.example
-      HOMECTL_DOCKER_ROOT_DIR: /opt/homectl/docker
-      HOMECTL_APPDATA_DIR: /opt/homectl/appdata
-      HOMECTL_USER: root
       HOMECTL_COMPOSE_EXTRA_ARGS: ""
       CADDY_ACME_EMAIL: you@example.com
       CLOUDFLARE_API_TOKEN: change-me
@@ -24,4 +21,5 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/homectl:/opt/homectl
+      - /opt/homectl/config:/config
+      - /opt/homectl/app-data:/app-data

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/wireguard"
 )
 
@@ -24,11 +25,14 @@ type wireGuardPeerState struct {
 }
 
 func (m *Manager) wireGuardDir() string {
-	return filepath.Join(m.stateDir, "wireguard")
+	if m.stateDir != config.StateDir {
+		return filepath.Join(m.stateDir, "wg")
+	}
+	return config.WireGuardDir
 }
 
 func (m *Manager) wireGuardPeersPath() string {
-	return filepath.Join(m.stateDir, wireGuardPeersFile)
+	return filepath.Join(m.wireGuardDir(), wireGuardPeersFile)
 }
 
 func joinToken() string {
@@ -178,7 +182,7 @@ func (m *Manager) loadWireGuardPeers() ([]wireGuardPeerState, error) {
 }
 
 func (m *Manager) saveWireGuardPeers(peers []wireGuardPeerState) error {
-	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
+	if err := os.MkdirAll(m.wireGuardDir(), 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(peers, "", "  ")
@@ -195,7 +199,6 @@ func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]
 			return peers, peers[i]
 		}
 	}
-	// Validate key length (44 base64 chars = 32 bytes)
 	if len(publicKey) != 44 {
 		return peers, wireGuardPeerState{}
 	}
@@ -206,4 +209,36 @@ func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]
 	}
 	peers = append(peers, peer)
 	return peers, peer
+}
+
+func (m *Manager) CleanupStaleWireGuardPeers() error {
+	peers, err := m.loadWireGuardPeers()
+	if err != nil {
+		return err
+	}
+	alive := make(map[string]bool)
+	for _, agent := range m.leaseManager.ListAgents() {
+		alive[agent.Name] = true
+	}
+	changed := false
+	filtered := make([]wireGuardPeerState, 0, len(peers))
+	for _, peer := range peers {
+		if alive[peer.Name] {
+			filtered = append(filtered, peer)
+		} else {
+			managerLog.Info("Removing stale WireGuard peer", "peer", peer.Name)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := m.saveWireGuardPeers(filtered); err != nil {
+		return err
+	}
+	privateKey, _, err := wireguard.EnsureKeyPair(m.wireGuardDir())
+	if err != nil {
+		return err
+	}
+	return m.reconcileWireGuard(privateKey, filtered)
 }

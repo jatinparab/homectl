@@ -61,6 +61,20 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+func (c *Client) SetBaseURL(baseURL string) {
+	managerHost, _ := parseManagerAddress(baseURL)
+	c.mu.Lock()
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+		c.enc = nil
+		c.dec = nil
+	}
+	c.managerHost = managerHost
+	c.connected = false
+	c.mu.Unlock()
+}
+
 func parseManagerAddress(baseURL string) (string, string) {
 	u, err := url.Parse(baseURL)
 	if err == nil && u.Host != "" {
@@ -278,12 +292,6 @@ func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics 
 // ListAgents is not used by the agent runtime.
 func (c *Client) ListAgents() ([]AgentInfo, error) {
 	return nil, fmt.Errorf("not supported over tcp")
-}
-
-// TriggerSync triggers a git sync on the manager.
-func (c *Client) TriggerSync() error {
-	_, err := c.request(common.LinkReqAgentManagerSync, nil, 10*time.Second)
-	return err
 }
 
 // FetchDesiredApps fetches desired apps for this agent.

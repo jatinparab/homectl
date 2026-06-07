@@ -20,15 +20,13 @@ type BackupMeta struct {
 }
 
 // backupMetaPath returns the path to the metadata file for an app.
-// Stored in a separate .homectl-meta/ directory (not inside the app's data dir)
-// so it isn't affected by restic restore ownership/permissions.
-func backupMetaPath(appdataDir string, appID common.AppID) string {
-	return filepath.Join(appdataDir, ".homectl-meta", string(appID)+".json")
+func backupMetaPath(stateDir string, appID common.AppID) string {
+	return filepath.Join(stateDir, "backup-meta", string(appID)+".json")
 }
 
 // loadBackupMeta reads the metadata file. Returns nil, nil if the file does not exist.
-func loadBackupMeta(appdataDir string, appID common.AppID) (*BackupMeta, error) {
-	data, err := os.ReadFile(backupMetaPath(appdataDir, appID))
+func loadBackupMeta(stateDir string, appID common.AppID) (*BackupMeta, error) {
+	data, err := os.ReadFile(backupMetaPath(stateDir, appID))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -44,8 +42,8 @@ func loadBackupMeta(appdataDir string, appID common.AppID) (*BackupMeta, error) 
 }
 
 // writeBackupMeta writes the metadata file, creating parent directories as needed.
-func writeBackupMeta(appdataDir string, appID common.AppID, meta *BackupMeta) error {
-	p := backupMetaPath(appdataDir, appID)
+func writeBackupMeta(stateDir string, appID common.AppID, meta *BackupMeta) error {
+	p := backupMetaPath(stateDir, appID)
 	dir := filepath.Dir(p)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir for backup meta: %w", err)

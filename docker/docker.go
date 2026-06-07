@@ -54,7 +54,6 @@ func (l *LocalFileReader) ListDir(path string) ([]string, error) {
 type Docker struct {
 	rootDir          string
 	appdataDir       string
-	user             string
 	composeExtraArgs []string
 	httpClient       *http.Client
 	dockerApps       map[string]DockerApp
@@ -70,11 +69,10 @@ type DockerApp struct {
 	HealthService string
 }
 
-func NewDocker(rootDir, appdataDir, user string) *Docker {
+func NewDocker(rootDir, appdataDir string) *Docker {
 	return &Docker{
 		rootDir:    rootDir,
 		appdataDir: appdataDir,
-		user:       user,
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second,
 		},
@@ -601,7 +599,7 @@ func firstLine(b []byte) string {
 
 // ComposeEnv returns the environment variables for docker compose commands
 func (d *Docker) ComposeEnv() []string {
-	env := os.Environ()
+	env := withoutEnvKey(os.Environ(), "APPDATA")
 	env = append(env, "APPDATA="+d.appdataDir)
 
 	// Get current user's UID
@@ -610,6 +608,18 @@ func (d *Docker) ComposeEnv() []string {
 	}
 
 	return env
+}
+
+func withoutEnvKey(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (d *Docker) RunDockerComposeUp(service string) error {

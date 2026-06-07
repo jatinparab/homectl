@@ -55,3 +55,14 @@ func TestParseComposeExtraArgsErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestFixedRuntimePaths(t *testing.T) {
+	if got := GetGitRepoDir("host"); got != RepoDir {
+		t.Fatalf("GetGitRepoDir() = %q, want %q", got, RepoDir)
+	}
+
+	cfg := NewConfig().GetAgentConfig("host")
+	if cfg.Name != "host" {
+		t.Fatalf("agent name = %q, want host", cfg.Name)
+	}
+}

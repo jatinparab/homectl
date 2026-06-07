@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jatinparab/homectl/config"
 )
 
 var repoLog = slog.With("area", "repo")
@@ -18,7 +20,7 @@ type repoOpsStateFile struct {
 }
 
 func (a *Agent) repoOpsStatePath() string {
-	return filepath.Join(a.appdataDir, ".homectl", "repo-ops.json")
+	return filepath.Join(config.StateDir, "repo-ops.json")
 }
 
 func (a *Agent) loadRepoOpsState() {

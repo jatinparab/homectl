@@ -1,3 +1,13 @@
+ARG CROWDSEC_VERSION=v1.7.8
+FROM golang:1.25-alpine AS caddy-builder
+RUN apk add --no-cache git && \
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest && \
+    /go/bin/xcaddy build \
+      --with github.com/hslatman/caddy-crowdsec-bouncer/http \
+      --output /usr/local/bin/caddy
+
+FROM crowdsecurity/crowdsec:${CROWDSEC_VERSION} AS crowdsec
+
 FROM node:22-alpine AS web
 WORKDIR /web
 COPY web/package*.json ./
@@ -14,9 +24,13 @@ COPY --from=web /web/dist /src/manager/ui/dist
 RUN CGO_ENABLED=0 go build -o /out/manager ./manager/cmd
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates caddy docker-cli docker-cli-compose git openssh-client wireguard-tools
-RUN git config --system --add safe.directory '*'
+RUN apk add --no-cache ca-certificates docker-cli docker-cli-compose openssh-client wireguard-tools
 COPY --from=builder /out/manager /usr/local/bin/manager
+COPY --from=caddy-builder /usr/local/bin/caddy /usr/local/bin/caddy
+COPY --from=crowdsec /usr/local/bin/crowdsec /usr/local/bin/crowdsec
+COPY --from=crowdsec /usr/local/bin/cscli /usr/local/bin/cscli
+COPY --from=crowdsec /staging/etc/crowdsec /usr/share/homectl/crowdsec/etc
+COPY --from=crowdsec /staging/var/lib/crowdsec/data /usr/share/homectl/crowdsec/data
 EXPOSE 80 443 51844/udp
-VOLUME ["/opt/homectl"]
+VOLUME ["/config"]
 ENTRYPOINT ["/usr/local/bin/manager"]

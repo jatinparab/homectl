@@ -26,5 +26,5 @@ RUN set -eux; \
     install -m 0755 /tmp/restic /usr/local/bin/restic; \
     rm -f /tmp/restic
 COPY --from=builder /out/agent /usr/local/bin/agent
-VOLUME ["/opt/homectl"]
+VOLUME ["/config", "/app-data"]
 ENTRYPOINT ["/usr/local/bin/agent"]
