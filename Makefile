@@ -6,7 +6,13 @@
         dev-up dev-down deploy-logs dev-logs
 
 IMAGE_REPO ?= homectl
-IMAGE_TAG ?= local
+IMAGE_TAG ?= $(shell head -n1 VERSION 2>/dev/null || echo local)
+GHCR_IMAGE_REPO ?= ghcr.io/jatinparab/homectl
+RELEASE_VERSION ?= $(shell head -n1 VERSION 2>/dev/null | tr -d '\r\n')
+RELEASE_TAG ?= v$(RELEASE_VERSION)
+RELEASE_PLATFORMS ?= linux/amd64,linux/arm64
+RELEASE_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+RELEASE_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CROWDSEC_VERSION ?= v1.7.8
 
 GHCR_REPO ?= ghcr.io/jatinparab/homectl
@@ -54,19 +60,28 @@ build-web:
 	cp -r web/dist manager/ui/
 
 build-manager: build-web
-	go build -o ./bin/manager ./manager/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=manager" -o ./bin/manager ./manager/cmd
 
 build-agent:
-	go build -o ./bin/agent ./agent/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=agent" -o ./bin/agent ./agent/cmd
 
 test:
 	go test ./...
 
 docker-manager:
-	docker build -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build -f Dockerfile.manager \
+		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 
 docker-agent:
-	docker build -f Dockerfile.agent -t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
+	docker build -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
 
 docker-images: docker-manager docker-agent
 

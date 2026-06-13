@@ -22,6 +22,7 @@ import (
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
 	"github.com/jatinparab/homectl/utils"
+	"github.com/jatinparab/homectl/buildinfo"
 	"github.com/jatinparab/homectl/wireguard"
 )
 
@@ -621,7 +622,7 @@ func (a *Agent) heartbeatLoop() {
 			if a.IsConnected() {
 				reports := a.GetAppReports()
 				metrics := collectNodeMetrics(a.appdataDir)
-				if err := a.managerClient.Heartbeat(a.name, a.ip, reports, metrics); err != nil {
+				if err := a.managerClient.Heartbeat(a.name, a.ip, buildinfo.Version, reports, metrics); err != nil {
 					agentLog.Info("Heartbeat failed", "err", err)
 					a.setConnected(false)
 				}

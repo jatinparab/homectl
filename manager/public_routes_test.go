@@ -13,7 +13,7 @@ import (
 func TestGenerateManagerCaddyfileRoutesHomelabToGateway(t *testing.T) {
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.test.example")
 	m := NewManager(t.TempDir(), 1338)
-	m.leaseManager.Heartbeat("akira", "10.42.1.101", nil, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("akira", "10.42.1.101", "", nil, common.NodeMetrics{})
 	if err := m.saveWireGuardPeers([]wireGuardPeerState{
 		{Name: "akira", PublicKey: "test-key", Address: "10.44.0.7"},
 	}); err != nil {
@@ -78,7 +78,7 @@ func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "sulphurgfx.com")
 	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
 	m := NewManager(t.TempDir(), 1338)
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{
 			AppID:         "photos",
 			ObservedState: common.ObservedRunning,
@@ -101,7 +101,7 @@ func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
 	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
 	t.Setenv("CADDY_DNS_TOKEN_ENV", "CF_DNS_API_TOKEN")
 	m := NewManager(t.TempDir(), 1338)
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{
 			AppID:         "photos",
 			ObservedState: common.ObservedRunning,
