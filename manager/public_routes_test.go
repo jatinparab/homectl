@@ -219,6 +219,125 @@ func TestParsePublicRouteAccessLogLine(t *testing.T) {
 	}
 }
 
+func TestGenerateAgentCaddyConfigDedupesDuplicateAppReports(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
+
+	m := NewManager(t.TempDir(), 1338)
+
+	// Register two agents both reporting the same app as running.
+	// node-3 is the gateway.
+	m.leaseManager.Heartbeat("node-3", "10.44.0.3", []common.AppReport{
+		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
+	}, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
+		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
+	}, common.NodeMetrics{})
+
+	// Set node-3 as gateway (via WireGuard peer + assignment).
+	if err := m.saveWireGuardPeers([]wireGuardPeerState{
+		{Name: "node-3", PublicKey: "gk1", Address: "10.44.0.3"},
+		{Name: "node-1", PublicKey: "gk2", Address: "10.44.0.7"},
+	}); err != nil {
+		t.Fatalf("saveWireGuardPeers: %v", err)
+	}
+	m.gatewayMu.Lock()
+	m.gatewayNode = "node-3"
+	m.gatewayMu.Unlock()
+
+	// Generate config for node-3 itself.
+	caddyfile, err := m.GenerateCaddyConfig("node-3")
+	if err != nil {
+		t.Fatalf("GenerateCaddyConfig: %v", err)
+	}
+
+	// Combined block when no DNS provider is set.
+	assertContains(t, caddyfile, "photos.test.example, photos.internal.test.example {")
+
+	// Verify no duplicate hostname block appears.
+	firstIdx := strings.Index(caddyfile, "photos.test.example")
+	if firstIdx < 0 {
+		t.Fatal("expected photos.test.example in output")
+	}
+	secondIdx := strings.Index(caddyfile[firstIdx+len("photos.test.example"):], "photos.test.example")
+	if secondIdx >= 0 {
+		t.Fatal("found duplicate photos.test.example in output, expected exactly one occurrence")
+	}
+
+	// Gateway (node-3) hosts the app and is the local node, so proxy should be local Docker alias.
+	assertContains(t, caddyfile, "reverse_proxy http://homectl-photos:2283")
+}
+
+func TestGenerateAgentCaddyConfigPrefersGatewayNode(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
+
+	m := NewManager(t.TempDir(), 1338)
+
+	// Register two agents both reporting the same app as running.
+	// node-3 is the gateway, node-1 is not.
+	m.leaseManager.Heartbeat("node-3", "10.44.0.3", []common.AppReport{
+		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
+	}, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
+		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
+	}, common.NodeMetrics{})
+
+	if err := m.saveWireGuardPeers([]wireGuardPeerState{
+		{Name: "node-3", PublicKey: "gk1", Address: "10.44.0.3"},
+		{Name: "node-1", PublicKey: "gk2", Address: "10.44.0.7"},
+	}); err != nil {
+		t.Fatalf("saveWireGuardPeers: %v", err)
+	}
+	m.gatewayMu.Lock()
+	m.gatewayNode = "node-3"
+	m.gatewayMu.Unlock()
+
+	// Generate config for node-1 (a non-gateway node).
+	caddyfile, err := m.GenerateCaddyConfig("node-1")
+	if err != nil {
+		t.Fatalf("GenerateCaddyConfig: %v", err)
+	}
+
+	// Should route to gateway (node-3) since it hosts the app.
+	// node-3 is remote from node-1's perspective, so uses HTTPS with TLS SNI.
+	assertContains(t, caddyfile, "photos.test.example, photos.internal.test.example {")
+	assertContains(t, caddyfile, "reverse_proxy https://10.44.0.3 {")
+	assertContains(t, caddyfile, "tls_server_name photos.test.example")
+}
+
+func TestGenerateAgentCaddyConfigFallsBackWhenGatewayMissingApp(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
+
+	m := NewManager(t.TempDir(), 1338)
+
+	// Only node-1 reports the app. node-3 is the gateway but doesn't run it.
+	m.leaseManager.Heartbeat("node-3", "10.44.0.3", nil, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
+		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
+	}, common.NodeMetrics{})
+
+	if err := m.saveWireGuardPeers([]wireGuardPeerState{
+		{Name: "node-3", PublicKey: "gk1", Address: "10.44.0.3"},
+		{Name: "node-1", PublicKey: "gk2", Address: "10.44.0.7"},
+	}); err != nil {
+		t.Fatalf("saveWireGuardPeers: %v", err)
+	}
+	m.gatewayMu.Lock()
+	m.gatewayNode = "node-3"
+	m.gatewayMu.Unlock()
+
+	// Generate config for node-3 (the gateway).
+	caddyfile, err := m.GenerateCaddyConfig("node-3")
+	if err != nil {
+		t.Fatalf("GenerateCaddyConfig: %v", err)
+	}
+
+	// Should route to node-1 since it's the only host running the app.
+	// Remote target uses HTTPS with TLS SNI.
+	assertContains(t, caddyfile, "photos.test.example, photos.internal.test.example {")
+	assertContains(t, caddyfile, "reverse_proxy https://10.44.0.7 {")
+	assertContains(t, caddyfile, "tls_server_name photos.test.example")
+}
+
 func assertContains(t *testing.T, s, want string) {
 	t.Helper()
 	if !strings.Contains(s, want) {
