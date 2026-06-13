@@ -1,12 +1,20 @@
-.PHONY: help build build-web build-manager build-agent test clean docker-manager docker-agent docker-images dev-up dev-down deploy-logs dev-logs dev-deploy
+.PHONY: help build build-web build-manager build-agent test clean docker-manager docker-agent docker-images release release-check release-manager release-agent dev-up dev-down deploy-logs dev-logs dev-deploy
 
 IMAGE_REPO ?= homectl
 IMAGE_TAG ?= $(shell head -n1 VERSION 2>/dev/null || echo local)
+GHCR_IMAGE_REPO ?= ghcr.io/jatinparab/homectl
+RELEASE_VERSION ?= $(shell head -n1 VERSION 2>/dev/null | tr -d '\r\n')
+RELEASE_TAG ?= v$(RELEASE_VERSION)
+RELEASE_PLATFORMS ?= linux/amd64,linux/arm64
+RELEASE_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+RELEASE_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CROWDSEC_VERSION ?= v1.7.8
 
 # Build metadata injected via ldflags.
-VERSION_PKG = github.com/jatinparab/homectl/buildinfo
-GO_LDFLAGS = -s -w \
+# shellcheck disable=SC2034
+VERSION_PKG=github.com/jatinparab/homectl/buildinfo
+# shellcheck disable=SC2037
+GO_LDFLAGS=-s -w \
 	-X $(VERSION_PKG).Version=$(IMAGE_TAG) \
 	-X $(VERSION_PKG).Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
 	-X $(VERSION_PKG).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -30,6 +38,7 @@ help:
 	@echo "  docker-manager Build manager image"
 	@echo "  docker-agent   Build agent image"
 	@echo "  docker-images  Build both images"
+	@echo "  release        Build and push manager + agent images to GHCR"
 	@echo ""
 	@echo "Local clusters:"
 	@echo "  dev-up         Start hot-reload dev cluster"
@@ -72,6 +81,29 @@ docker-agent:
 		-t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
 
 docker-images: docker-manager docker-agent
+
+release-check:
+	test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is empty; set RELEASE_VERSION or create VERSION" >&2; exit 1)
+	echo "$(RELEASE_VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || (echo "RELEASE_VERSION must be X.Y.Z, got: $(RELEASE_VERSION)" >&2; exit 1)
+
+release: release-check release-manager release-agent
+
+release-manager: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.manager \
+		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/manager:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/manager:latest .
+
+release-agent: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/agent:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/agent:latest .
 
 dev-up:
 	cd dev && docker compose up --build -d
