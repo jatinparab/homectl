@@ -17,6 +17,7 @@ var leaseLog = slog.With("area", "lease")
 type AgentInfo struct {
 	Name         string             `json:"name"`
 	IP           string             `json:"ip"`
+	Version      string             `json:"version,omitempty"`
 	LastSeen     time.Time          `json:"last_seen"`
 	RegisteredAt time.Time          `json:"registered_at"`
 	AppReports   []common.AppReport `json:"app_reports,omitempty"`
@@ -105,8 +106,8 @@ func (lm *LeaseManager) cleanupExpired() {
 	}
 }
 
-// Register registers or renews an agent's lease
-func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) {
+// Heartbeat registers or renews an agent's lease
+func (lm *LeaseManager) Heartbeat(name, ip, version string, reports []common.AppReport, metrics common.NodeMetrics) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -114,6 +115,9 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 	if existing, ok := lm.agents[name]; ok {
 		existing.LastSeen = now
 		existing.IP = ip
+		if version != "" {
+			existing.Version = version
+		}
 		existing.AppReports = reports
 		existing.Metrics = metrics
 		leaseLog.Debug("Agent renewed lease", "agent", name, "reports", len(reports))
@@ -121,6 +125,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 		lm.agents[name] = &AgentInfo{
 			Name:         name,
 			IP:           ip,
+			Version:      version,
 			LastSeen:     now,
 			RegisteredAt: now,
 			AppReports:   reports,
@@ -187,6 +192,7 @@ func (lm *LeaseManager) LeaseTTL() time.Duration {
 type HeartbeatRequest struct {
 	Name    string             `json:"name"`
 	IP      string             `json:"ip"`
+	Version string             `json:"version,omitempty"`
 	Reports []common.AppReport `json:"reports,omitempty"`
 	Metrics common.NodeMetrics `json:"metrics,omitempty"`
 }
@@ -210,7 +216,7 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports, req.Metrics)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Version, req.Reports, req.Metrics)
 
 	// Adopt running apps that have no assignment (e.g. after manager restart)
 	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)

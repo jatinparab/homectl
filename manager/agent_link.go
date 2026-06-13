@@ -169,6 +169,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 		m.applyHeartbeat(HeartbeatRequest{
 			Name:    hb.Name,
 			IP:      hb.IP,
+			Version: hb.Version,
 			Reports: hb.Reports,
 			Metrics: hb.Metrics,
 		})
@@ -246,7 +247,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 }
 
 func (m *Manager) applyHeartbeat(req HeartbeatRequest) {
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports, req.Metrics)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Version, req.Reports, req.Metrics)
 	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)
 	now := time.Now()
 	for _, report := range req.Reports {
