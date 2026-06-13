@@ -1,5 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import styled from '@emotion/styled';
+import { IconButton } from './IconButton';
 
 const Overlay = styled(DialogPrimitive.Overlay)`
   position: fixed;
@@ -50,21 +51,6 @@ const Body = styled.div`
   padding: 16px;
 `;
 
-const CloseButton = styled.button`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  color: ${({ theme }) => theme.colors.textMuted};
-  transition: all 150ms ease;
-  &:hover {
-    background: ${({ theme }) => theme.colors.neutralSurfaceAlt};
-    color: ${({ theme }) => theme.colors.textPrimary};
-  }
-`;
-
 interface SheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -81,7 +67,7 @@ export function Sheet({ open, onOpenChange, title, children }: SheetProps) {
           <Header>
             <h2>{title}</h2>
             <DialogPrimitive.Close asChild>
-              <CloseButton aria-label="Close">✕</CloseButton>
+              <IconButton label="Close" variant="ghost" color="gray" size="1"><span>✕</span></IconButton>
             </DialogPrimitive.Close>
           </Header>
           <Body>{children}</Body>

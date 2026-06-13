@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import styled from '@emotion/styled';
 import {
   LayoutDashboard,
@@ -7,12 +8,17 @@ import {
   Route,
   ScrollText,
   ShieldCheck,
+  LogOut,
 } from 'lucide-react';
+import { IconButton } from '../ui';
 import type { LucideIcon } from 'lucide-react';
 import type { Tab } from '../../app/navigation';
 import { pathFromTab } from '../../app/navigation';
-import { HomectlLogo } from './HomectlLogo';
+import { HomectlHeaderLogo } from './HomectlLogo';
 import { LiveStatusDot } from './LiveStatusDot';
+import { Tooltip } from '../ui/Tooltip';
+import { fetchVersion } from '../../api/client';
+import type { VersionInfo } from '../../api/client';
 
 interface NavItem {
   id: Tab;
@@ -51,30 +57,45 @@ const SidebarAside = styled.aside`
 
 const BrandRow = styled.div`
   display: flex;
-  height: 56px;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  padding: 8px 12px;
   border-bottom: 1px solid ${({ theme }) => theme.colors.neutralBorder};
-  padding: 0 12px;
 
   @media (min-width: 768px) {
+    flex-direction: row;
+    height: 56px;
+    align-items: center;
     justify-content: flex-start;
+    gap: 0;
     padding: 0 16px;
   }
 `;
 
-const BrandGap = styled.span`
-  width: 12px;
-`;
-
-const BrandName = styled.span`
-  display: none;
-  font-size: 14px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.textPrimary};
+const VersionText = styled.span`
+  font-size: 10px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  font-family: ${({ theme }) => theme.fonts.mono};
+  white-space: nowrap;
 
   @media (min-width: 768px) {
-    display: block;
+    margin-top: 16px;
+    align-self: flex-start;
+    font-size: 10px;
+  }
+`;
+
+const SidebarLogo = styled(HomectlHeaderLogo)`
+  .homectl-logo-wordmark {
+    display: none;
+  }
+
+  @media (min-width: 768px) {
+    .homectl-logo-wordmark {
+      display: grid;
+    }
   }
 `;
 
@@ -161,26 +182,49 @@ const NavLabel = styled.span`
 const StatusRow = styled.div`
   border-top: 1px solid ${({ theme }) => theme.colors.neutralBorder};
   padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 
   @media (min-width: 768px) {
     padding: 12px 16px;
+    justify-content: space-between;
   }
 `;
+
+
 
 /* ── Component ── */
 
 interface SidebarProps {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
+  onLogout?: () => void;
 }
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVersion()
+      .then((info) => {
+        if (!cancelled) setVersionInfo(info);
+      })
+      .catch(() => {
+        // Ignore – version fetch is best-effort.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <SidebarAside>
       <BrandRow>
-        <HomectlLogo size={32} />
-        <BrandGap />
-        <BrandName>Homectl</BrandName>
+        <SidebarLogo markSize={32} />
+        {versionInfo && <VersionText>v{versionInfo.version}</VersionText>}
       </BrandRow>
 
       <Nav aria-label="Primary navigation">
@@ -213,6 +257,19 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
 
       <StatusRow>
         <LiveStatusDot />
+        {onLogout && (
+          <Tooltip content="Logout">
+            <IconButton
+              label="Logout"
+              variant="ghost"
+              color="gray"
+              size="2"
+              onClick={onLogout}
+            >
+              <LogOut size={18} strokeWidth={1.8} />
+            </IconButton>
+          </Tooltip>
+        )}
       </StatusRow>
     </SidebarAside>
   );

@@ -30,15 +30,17 @@ type CaddySync struct {
 	currentConfig string
 	client        *client.Client
 	agentID       string
+	envProvider   func() map[string]string
 }
 
-func NewCaddySync(configDir, agentID string, c *client.Client) *CaddySync {
+func NewCaddySync(configDir, agentID string, c *client.Client, envProvider func() map[string]string) *CaddySync {
 	configPath := filepath.Join(configDir, "Caddyfile")
 	cs := &CaddySync{
-		configPath: configPath,
-		configDir:  filepath.Dir(configPath),
-		client:     c,
-		agentID:    agentID,
+		configPath:  configPath,
+		configDir:   filepath.Dir(configPath),
+		client:      c,
+		agentID:     agentID,
+		envProvider: envProvider,
 	}
 	if data, err := os.ReadFile(configPath); err == nil {
 		cs.currentConfig = string(data)
@@ -77,19 +79,19 @@ func (c *CaddySync) Sync() error {
 		return err
 	}
 	c.currentConfig = config
-	return reloadLocalCaddy()
+	return reloadLocalCaddy(c.envProvider)
 }
 
-func EnsureCaddy() error {
+func EnsureCaddy(envProvider func() map[string]string) error {
 	agentCaddyCmdMu.Lock()
 	defer agentCaddyCmdMu.Unlock()
 	if agentCaddyCmd != nil && agentCaddyCmd.Process != nil {
 		return nil
 	}
-	return startCaddyLocked()
+	return startCaddyLocked(envProvider)
 }
 
-func startCaddyLocked() error {
+func startCaddyLocked(envProvider func() map[string]string) error {
 	caddyDir := resolveCaddyConfigDir()
 	caddyfilePath := filepath.Join(caddyDir, "Caddyfile")
 	for _, dir := range []string{caddyDir, filepath.Join(caddyDir, "data"), filepath.Join(caddyDir, "config")} {
@@ -102,7 +104,7 @@ func startCaddyLocked() error {
 	}
 
 	cmd := exec.Command(caddyBinary, "run", "--config", caddyfilePath, "--adapter", "caddyfile")
-	cmd.Env = caddyEnv()
+	cmd.Env = caddyEnv(envProvider)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -113,12 +115,20 @@ func startCaddyLocked() error {
 	return nil
 }
 
-func caddyEnv() []string {
+func caddyEnv(envProvider func() map[string]string) []string {
 	caddyDir := resolveCaddyConfigDir()
-	return append(os.Environ(),
+	env := append(sanitizedAgentEnviron(),
 		"XDG_DATA_HOME="+filepath.Join(caddyDir, "data"),
 		"XDG_CONFIG_HOME="+filepath.Join(caddyDir, "config"),
 	)
+	if envProvider != nil {
+		for key, value := range envProvider() {
+			if strings.TrimSpace(value) != "" {
+				env = append(env, fmt.Sprintf("%s=%s", key, value))
+			}
+		}
+	}
+	return env
 }
 
 func StopCaddy() {
@@ -137,7 +147,7 @@ func IsCaddyRunning() bool {
 	return agentCaddyCmd != nil && agentCaddyCmd.Process != nil
 }
 
-func reloadLocalCaddy() error {
+func reloadLocalCaddy(envProvider func() map[string]string) error {
 	agentCaddyCmdMu.Lock()
 	defer agentCaddyCmdMu.Unlock()
 
@@ -160,7 +170,7 @@ func reloadLocalCaddy() error {
 	msg := strings.TrimSpace(string(output))
 
 	stopCaddyLocked()
-	if startErr := startCaddyLocked(); startErr != nil {
+	if startErr := startCaddyLocked(envProvider); startErr != nil {
 		return fmt.Errorf("caddy reload+restart failed: reload: %w: %s; restart: %w", err, msg, startErr)
 	}
 	caddyLog.Info("Caddy restarted after reload failure")

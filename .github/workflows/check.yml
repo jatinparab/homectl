@@ -1,0 +1,84 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate VERSION
+        run: |
+          V=$(head -n1 VERSION | tr -d '\n\r')
+          echo "VERSION: $V"
+          if ! echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION must be X.Y.Z (no leading v, no prerelease/build suffix), got: $V"
+            exit 1
+          fi
+
+  go-test:
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go test ./...
+
+  web-build:
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cd web && npm ci && npm run build
+
+  docker-manager:
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build manager image (smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.manager
+          build-args: |
+            CROWDSEC_VERSION=v1.7.8
+            HOMECTL_VERSION=${{ github.sha }}
+            HOMECTL_COMMIT=${{ github.sha }}
+            HOMECTL_BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.pull_request.created_at }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-agent:
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build agent image (smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.agent
+          build-args: |
+            HOMECTL_VERSION=${{ github.sha }}
+            HOMECTL_COMMIT=${{ github.sha }}
+            HOMECTL_BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.pull_request.created_at }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

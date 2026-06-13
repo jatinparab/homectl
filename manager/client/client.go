@@ -284,8 +284,8 @@ func (c *Client) IsConnected() bool {
 }
 
 // Heartbeat sends a heartbeat to the manager with app reports.
-func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
-	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Reports: reports, Metrics: metrics}, 10*time.Second)
+func (c *Client) Heartbeat(name, ip, version string, reports []common.AppReport, metrics common.NodeMetrics) error {
+	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Version: version, Reports: reports, Metrics: metrics}, 10*time.Second)
 	return err
 }
 
@@ -385,5 +385,34 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Client) FetchAgentConfig() (common.AgentConfigSyncResponse, error) {
+	resp, err := c.request(common.LinkReqAgentConfigSync, nil, 10*time.Second)
+	if err != nil {
+		return common.AgentConfigSyncResponse{}, err
+	}
+	if resp.Status != 200 {
+		return common.AgentConfigSyncResponse{}, fmt.Errorf("status %d", resp.Status)
+	}
+	var out common.AgentConfigSyncResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return common.AgentConfigSyncResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) SeedAgentConfig(cfg common.NodeConfigDocument) error {
+	if len(cfg) == 0 {
+		return nil
+	}
+	resp, err := c.request(common.LinkReqAgentConfigSeed, common.AgentConfigSeedRequest{Config: cfg}, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 200 {
+		return fmt.Errorf("status %d", resp.Status)
+	}
 	return nil
 }

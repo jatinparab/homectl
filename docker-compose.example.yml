@@ -4,14 +4,35 @@ services:
     container_name: homectl-manager
     restart: unless-stopped
     environment:
+      # Required manager/bootstrap settings
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
+      HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
       HOMECTL_DOMAIN_SUFFIX: your-domain.example
       HOMECTL_PUBLIC_HOST: homectl.your-domain.example
-      CADDY_ACME_EMAIL: you@example.com
-      CADDY_DNS_PROVIDER: cloudflare
+
+      # Admin UI bootstrap/basic-auth fallback
       ADMIN_USER: admin
       ADMIN_PASSWORD: change-me
+
+      # Shared node config seed values.
+      # These are stored encrypted by the manager and synced to agents in memory.
+      # After first startup, edit them from the node settings dialog in the web UI.
+      HOMECTL_LOCAL_HA_IP: 192.168.50.250
+      CADDY_ACME_EMAIL: you@example.com
+      CADDY_DNS_PROVIDER: cloudflare
+      CADDY_DNS_TOKEN_ENV: CF_DNS_API_TOKEN
+      CF_DNS_API_TOKEN: change-me
+      RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
+      RESTIC_PASSWORD: change-me
+      # B2_ACCOUNT_ID: change-me
+      # B2_ACCOUNT_KEY: change-me
+      # CADDY_ACME_CA: https://acme-staging-v02.api.letsencrypt.org/directory
+
+      # Optional: set your own persistent base64-encoded 32-byte key.
+      # If omitted, homectl generates one under /config/state/agent-config-encryption.key.
+      # HOMECTL_CONFIG_ENCRYPTION_KEY: base64-encoded-32-byte-key
+
       # HOMECTL_CROWDSEC_SSH_LOG: /var/log/host/auth.log  # uncomment to enable SSH log monitoring
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
@@ -27,5 +48,5 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/homectl/config:/config
-      - /home/jatin/homelab:/homelab
+      - /opt/homectl/homelab:/homelab
       # - /var/log:/var/log/host:ro  # mount host logs read-only (for CrowdSec SSH monitoring)

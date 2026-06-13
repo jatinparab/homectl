@@ -24,6 +24,10 @@ func (m *Manager) NewServer() *http.Server {
 	// Health check
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/join", m.handleAgentJoin)
+	mux.HandleFunc("/auth/login", m.handleLogin)
+	mux.HandleFunc("/auth/logout", m.handleLogout)
+	mux.HandleFunc("/auth/onboarding/status", m.handleOnboardingStatus)
+	mux.HandleFunc("/auth/onboarding/complete", m.handleOnboardingComplete)
 
 	// File serving
 	mux.HandleFunc("/files/", m.handleFiles)
@@ -37,9 +41,12 @@ func (m *Manager) NewServer() *http.Server {
 
 	// UI APIs
 	mux.HandleFunc("/api/v1/ws/state", m.handleAPIWebSocketState)
+	mux.HandleFunc("/api/v1/auth/me", m.handleAuthMe)
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
+	mux.HandleFunc("/api/v1/version", m.handleAPIVersion)
+	mux.HandleFunc("/api/v1/agent-configs/", m.handleAPIAgentConfig)
 	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
 	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppRoutes)
 	mux.HandleFunc("/api/v1/system-logs", m.handleAPISystemLogSources)
@@ -78,7 +85,7 @@ func (m *Manager) NewServer() *http.Server {
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
 
-	handler := m.requirePublicHostBasicAuth(mux)
+	handler := m.requireAuth(mux)
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", m.port),
 		Handler: handler,

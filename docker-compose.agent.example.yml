@@ -2,15 +2,22 @@ services:
   agent:
     image: homectl/agent:latest
     container_name: homectl-agent
+    # Use a stable, unique hostname for the node's initial identity.
+    # You can later override HOMECTL_AGENT_NAME from the manager UI node settings.
     hostname: node-1
     restart: unless-stopped
     environment:
+      # Required bootstrap settings. Agents only need the join token and public manager URL.
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_MANAGER_URL: https://homectl.your-domain.example
+
+      # Optional local runtime settings.
       HOMECTL_COMPOSE_EXTRA_ARGS: ""
-      CADDY_ACME_EMAIL: you@example.com
-      CLOUDFLARE_API_TOKEN: change-me
-      RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
+      # HOMECTL_RESTIC_USE_SUDO: "true"
+
+      # Do not put shared secrets here. Configure Caddy, DNS, HA IP, and Restic
+      # values in the manager UI; the manager stores them encrypted and syncs
+      # them to every agent in memory.
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     cap_add:

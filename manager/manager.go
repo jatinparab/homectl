@@ -13,6 +13,7 @@ import (
 
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
+	"github.com/jatinparab/homectl/buildinfo"
 )
 
 var managerLog = slog.With("area", "manager")
@@ -35,6 +36,7 @@ func InitLoggers() {
 	serverLog = slog.Default().With("area", "server")
 	caddyContainerLog = slog.Default().With("area", "caddy-container")
 	caddyMgrLog = slog.Default().With("area", "caddy")
+	authLog = slog.Default().With("area", "auth")
 }
 
 // Config holds manager configuration
@@ -57,11 +59,16 @@ type Manager struct {
 	repoDir         string
 	stateDir        string
 	port            int
+	store           *Store
+	auth            *AuthService
+	agentConfig     *AgentConfigService
 	leaseManager    *LeaseManager
 	httpClient      *http.Client
 	config          *config.Config
 	appRegistry     *AppRegistry
 	reconcileCancel context.CancelFunc
+	runtimeCtx      context.Context
+	runtimeOnce     sync.Once
 
 	backupMu              sync.Mutex
 	backupAssignments     map[common.AppID]*BackupAssignment
@@ -135,11 +142,66 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		routeHealth:           make(map[string]PublicRouteHealth),
 		agentLinks:            make(map[string]*agentLinkPeer),
 	}
+	store, err := OpenStore(stateDir)
+	if err != nil {
+		panic(err)
+	}
+	authSvc, err := NewAuthService(context.Background(), store.Users, store.Sessions)
+	if err != nil {
+		panic(err)
+	}
+	agentConfigKey, err := ensureAgentConfigEncryptionKey(stateDir)
+	if err != nil {
+		panic(err)
+	}
+	agentConfigSvc, err := NewAgentConfigServiceWithKey(store.AgentConfigs, agentConfigKey)
+	if err != nil {
+		panic(err)
+	}
+	if err := agentConfigSvc.SeedFromEnv(context.Background()); err != nil {
+		managerLog.Warn("Failed to seed agent config from environment", "err", err)
+	}
+	mgr.store = store
+	mgr.auth = authSvc
+	mgr.agentConfig = agentConfigSvc
 	mgr.loadRepoState()
 	mgr.loadPruneState()
 	mgr.loadPublicRoutes()
-	mgr.startWireGuardCleanup()
 	return mgr
+}
+
+func (m *Manager) SetRuntimeContext(ctx context.Context) {
+	m.runtimeCtx = ctx
+}
+
+func (m *Manager) OnboardingRequired() bool {
+	return m.auth != nil && m.auth.OnboardingRequired()
+}
+
+func (m *Manager) StartRuntimeOnce(ctx context.Context) {
+	m.runtimeOnce.Do(func() {
+		tokenSet := true
+		if _, err := RequireJoinTokenForStartup(); err != nil {
+			managerLog.Warn("WireGuard not configured, running without overlay", "err", err)
+			tokenSet = false
+		}
+		if tokenSet {
+			if err := m.EnsureWireGuard(); err != nil {
+				managerLog.Warn("Failed to start WireGuard overlay (continuing anyway)", "err", err)
+			}
+		}
+		m.leaseManager.Start()
+		m.startWireGuardCleanup()
+		if err := m.StartAgentTCPServer(); err != nil {
+			managerLog.Error("Failed to start agent TCP server", "err", err)
+			return
+		}
+		m.DiscoverApps()
+		m.StartReconcileLoop(ctx)
+		m.StartCrowdSecBootstrap(ctx)
+		m.StartPublicRouteLoop(ctx)
+		managerLog.Info("Manager runtime started")
+	})
 }
 
 func (m *Manager) startWireGuardCleanup() {
@@ -214,6 +276,9 @@ func (m *Manager) Stop() {
 	}
 	if m.tcpListener != nil {
 		_ = m.tcpListener.Close()
+	}
+	if m.store != nil {
+		_ = m.store.Close()
 	}
 	m.waitForPruneStateSaves()
 	stopCaddy()
@@ -455,4 +520,9 @@ func (m *Manager) DiscoverApps() {
 		count++
 	}
 	managerLog.Info("App discovery complete", "count", count)
+}
+
+// versionInfo returns the manager's build-time version info.
+func (m *Manager) versionInfo() buildinfo.Info {
+	return buildinfo.ForComponent("manager")
 }

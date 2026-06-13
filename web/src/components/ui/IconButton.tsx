@@ -1,34 +1,22 @@
+import { IconButton as RadixIconButton } from '@radix-ui/themes';
 import styled from '@emotion/styled';
+import type { ComponentPropsWithoutRef } from 'react';
 
-interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  size?: number;
+interface IconButtonProps extends ComponentPropsWithoutRef<typeof RadixIconButton> {
   label: string;
 }
 
-const StyledIconButton = styled.button<{ $size: number }>`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: ${({ $size }) => $size}px;
-  height: ${({ $size }) => $size}px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: ${({ theme }) => theme.colors.textMuted};
-  cursor: pointer;
-  transition: all 150ms ease;
-
-  &:hover:not(:disabled) {
-    background: ${({ theme }) => theme.colors.neutralSurfaceAlt};
-    color: ${({ theme }) => theme.colors.textPrimary};
+const StyledIconButton = styled(RadixIconButton)`
+  && {
+    cursor: pointer;
   }
 
-  &:disabled {
-    opacity: 0.4;
+  &&:disabled,
+  &&[data-disabled] {
     cursor: not-allowed;
   }
 `;
 
-export function IconButton({ size = 32, label, ...props }: IconButtonProps) {
-  return <StyledIconButton $size={size} aria-label={label} title={label} {...props} />;
+export function IconButton({ label, ...props }: IconButtonProps) {
+  return <StyledIconButton aria-label={label} title={label} radius="small" {...props} />;
 }

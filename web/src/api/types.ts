@@ -83,6 +83,7 @@ export interface UpcomingPrune {
 export interface Agent {
   name: string;
   ip: string;
+  version?: string;
   last_seen: string;
   registered_at: string;
   online: boolean;
@@ -99,6 +100,19 @@ export interface NodeMetrics {
   disk_used: number;
   disk_free: number;
   disk_percent: number;
+}
+
+export interface NodeConfig {
+  agent_name: string;
+  version: number;
+  shared: Record<string, string>;
+  agent: Record<string, string>;
+  updated_at?: string;
+}
+
+export interface NodeConfigInput {
+  shared: Record<string, string>;
+  agent: Record<string, string>;
 }
 
 export interface StoragePruneState {
