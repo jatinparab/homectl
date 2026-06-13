@@ -142,7 +142,7 @@ func EnsureAgent(cfg AgentConfig) error {
 	fmt.Fprintf(&b, "PrivateKey = %s\n\n", strings.TrimSpace(cfg.PrivateKey))
 	fmt.Fprintf(&b, "[Peer]\n")
 	fmt.Fprintf(&b, "PublicKey = %s\n", strings.TrimSpace(cfg.ManagerPublicKey))
-	fmt.Fprintf(&b, "AllowedIPs = %s/32\n", ManagerAddress)
+	fmt.Fprintf(&b, "AllowedIPs = %s\n", DefaultNetwork)
 	fmt.Fprintf(&b, "Endpoint = %s:%d\n", strings.TrimSpace(cfg.EndpointIP), cfg.EndpointPort)
 	fmt.Fprintf(&b, "PersistentKeepalive = 25\n")
 	return applyConfig(cfg.ConfigDir, b.String())
@@ -172,6 +172,9 @@ func Syncconf(configDir string) error {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("wg syncconf: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	// Update the kernel route so that agents can reach the full overlay
+	// network through the manager hub (not just the manager's own IP).
+	_ = exec.Command("ip", "route", "replace", DefaultNetwork, "dev", InterfaceName).Run()
 	return nil
 }
 
