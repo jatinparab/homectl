@@ -105,23 +105,72 @@ func hostInterface() (string, error) {
 		return iface, nil
 	}
 
-	// Detect by running ip route from inside a host-network container
-	cmd := exec.Command("docker", "run", "--rm", "--network", "host",
-		"--entrypoint", "/sbin/ip",
-		"homectl/agent:local",
-		"route", "show", "default")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("run ip route in host network: %w", err)
+	var errs []string
+	for _, image := range hostProbeImages() {
+		// Detect by running ip route from inside a host-network container.
+		cmd := exec.Command("docker", "run", "--rm", "--network", "host",
+			"--entrypoint", "/sbin/ip",
+			image,
+			"route", "show", "default")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v: %s", image, err, strings.TrimSpace(string(out))))
+			continue
+		}
+
+		if iface := defaultRouteInterface(string(out)); iface != "" {
+			return iface, nil
+		}
+		errs = append(errs, fmt.Sprintf("%s: no default route found in output %q", image, strings.TrimSpace(string(out))))
 	}
 
-	fields := strings.Fields(string(out))
-	if len(fields) >= 5 {
-		iface := strings.TrimSpace(fields[4])
-		if iface != "" {
-			return iface, nil
+	return "", fmt.Errorf("run ip route in host network: %s", strings.Join(errs, "; "))
+}
+
+func hostProbeImages() []string {
+	var images []string
+	if image := strings.TrimSpace(os.Getenv("HOMECTL_AGENT_IMAGE")); image != "" {
+		images = append(images, image)
+	}
+
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		cmd := exec.Command("docker", "inspect", "--format", "{{.Config.Image}}", hostname)
+		if out, err := cmd.Output(); err == nil {
+			if image := strings.TrimSpace(string(out)); image != "" && image != "<no value>" {
+				images = append(images, image)
+			}
 		}
 	}
 
-	return "", fmt.Errorf("no default route found from host network")
+	images = append(images, "homectl/agent:local", "homectl/agent:latest")
+	return uniqueStrings(images)
+}
+
+func defaultRouteInterface(routeOutput string) string {
+	for _, line := range strings.Split(routeOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		for i, field := range fields {
+			if field == "dev" && i+1 < len(fields) {
+				return fields[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
