@@ -101,8 +101,8 @@ func (r *RepoRestic) repoURL() string {
 }
 
 func (r *RepoRestic) resticRuntimeEnv() []string {
-	env := []string{"RESTIC_PROGRESS_FPS=2"}
-	seen := map[string]bool{"RESTIC_PROGRESS_FPS": true}
+	env := []string{"RESTIC_PROGRESS_FPS=2", "RESTIC_CACHE_DIR=/config/restic/cache"}
+	seen := map[string]bool{"RESTIC_PROGRESS_FPS": true, "RESTIC_CACHE_DIR": true}
 	if r.envFunc != nil {
 		for key, val := range r.envFunc() {
 			key = strings.TrimSpace(key)
@@ -138,6 +138,7 @@ func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd
 			"--preserve-env=" + strings.Join(preserveKeys, ","),
 			"env",
 			"RESTIC_PROGRESS_FPS=2",
+			"RESTIC_CACHE_DIR=/config/restic/cache",
 			"restic",
 		}
 		cmdArgs = append(cmdArgs, args...)

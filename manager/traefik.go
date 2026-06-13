@@ -18,6 +18,15 @@ import (
 var caddyMgrLog = slog.With("area", "caddy")
 
 // FlexPort unmarshals a port from either a JSON number or a JSON string.
+// agentRoute describes one reverse-proxy route in an agent's Caddyfile.
+type agentRoute struct {
+	publicHost   string
+	internalHost string
+	target       string // simple http://host:port for local targets
+	isLocal      bool   // true when the winning candidate runs on this node
+	remoteHost   string // WireGuard IP of the remote agent (empty if local)
+}
+
 type FlexPort int
 
 func (f *FlexPort) UnmarshalJSON(data []byte) error {
@@ -112,6 +121,9 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 }
 
 // GenerateCaddyConfig generates Caddy config for a specific node.
+// When multiple agents report the same app, only one route is emitted per
+// public hostname. The winner is chosen with deterministic priority:
+// current gateway > local node being rendered > alphabetical by agent name.
 // For local apps (same node): use the shared Docker network alias.
 // For remote apps: use the remote node's IP
 func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
@@ -128,76 +140,141 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	alive := m.aliveAgents()
 	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 
-	type route struct {
-		publicHost   string
-		internalHost string
-		target       string
+	gatewayNode := m.getGatewayNode()
+
+	// Collect app report candidates per app, so we can pick one winner
+	type candidate struct {
+		agentName string
+		agentIP   string
+		report    common.AppReport
+		isGateway bool
+		isLocal   bool
 	}
-	routes := make([]route, 0)
+	appCandidates := make(map[string][]candidate)
 
 	for _, agent := range agents {
 		if !alive[agent.Name] {
 			continue
 		}
 		for _, report := range agent.AppReports {
-			// Skip non-running apps
 			if report.ObservedState != common.ObservedRunning {
 				continue
 			}
-
-			appName := string(report.AppID)
 			if report.AppID == common.GatewayProxyAppID {
 				continue
 			}
 
-			// Determine target host based on local vs remote.
-			// Local apps are reached via the homectl Docker network alias.
-			// Remote apps are proxied to the remote agent's caddy over WireGuard.
-			var targetHost string
-			var defaultPort int
-			if agent.Name == forNodeID {
-				targetHost = docker.HealthAlias(appName)
-				defaultPort = report.Port
-			} else {
-				targetHost = agent.IP
-				defaultPort = 80
+			appName := string(report.AppID)
+			appCandidates[appName] = append(appCandidates[appName], candidate{
+				agentName: agent.Name,
+				agentIP:   agent.IP,
+				report:    report,
+				isGateway: gatewayNode != "" && agent.Name == gatewayNode,
+				isLocal:   agent.Name == forNodeID,
+			})
+		}
+	}
+
+	// Pick one winning candidate per app: gateway > local > alphabetical
+	type appRouting struct {
+		appName   string
+		target    string
+		host      string
+		candidate candidate
+	}
+	routingMap := make(map[string]appRouting, len(appCandidates))
+
+	for appName, candidates := range appCandidates {
+		sort.Slice(candidates, func(i, j int) bool {
+			// Gateway first
+			if candidates[i].isGateway != candidates[j].isGateway {
+				return candidates[i].isGateway
 			}
+			// Local node second
+			if candidates[i].isLocal != candidates[j].isLocal {
+				return candidates[i].isLocal
+			}
+			// Deterministic by agent name
+			return candidates[i].agentName < candidates[j].agentName
+		})
 
-			// Check if app has exposed_subdomains override
-			if appCfg, ok := appConfigs[appName]; ok && len(appCfg.ExposedSubdomains) > 0 {
-				// Sort subdomain keys for deterministic config output
-				subdomains := make([]string, 0, len(appCfg.ExposedSubdomains))
-				for sd := range appCfg.ExposedSubdomains {
-					subdomains = append(subdomains, sd)
+		winner := candidates[0]
+
+		// Determine target host based on local vs remote.
+		// Local apps are reached via the homectl Docker network alias.
+		// Remote apps are proxied to the remote agent's caddy over WireGuard.
+		var targetHost string
+		var upstreamPort int
+		if winner.isLocal {
+			targetHost = docker.HealthAlias(appName)
+			upstreamPort = winner.report.Port
+		} else {
+			targetHost = winner.agentIP
+			upstreamPort = 80
+		}
+
+		routingMap[appName] = appRouting{
+			appName:   appName,
+			target:    fmt.Sprintf("http://%s:%d", targetHost, upstreamPort),
+			host:      targetHost,
+			candidate: winner,
+		}
+	}
+
+	// Build routes from winning candidates
+	routes := make([]agentRoute, 0)
+	for _, routing := range routingMap {
+		appName := routing.appName
+		baseTarget := routing.target
+		report := routing.candidate.report
+
+		// Check if app has exposed_subdomains override
+		if appCfg, ok := appConfigs[appName]; ok && len(appCfg.ExposedSubdomains) > 0 {
+			// Sort subdomain keys for deterministic config output
+			subdomains := make([]string, 0, len(appCfg.ExposedSubdomains))
+			for sd := range appCfg.ExposedSubdomains {
+				subdomains = append(subdomains, sd)
+			}
+			sort.Strings(subdomains)
+
+			// Use custom subdomains from homectl-config.json
+			for _, subdomain := range subdomains {
+				port := appCfg.ExposedSubdomains[subdomain]
+
+				// When routing to a remote agent, proxy to the agent's Caddy
+				// on port 80 (the WireGuard overlay port), not the app's
+				// internal port. The remote Caddy handles TLS and routes to
+				// the actual app port internally.
+				targetPort := int(port)
+				if !routing.candidate.isLocal {
+					targetPort = 80
 				}
-				sort.Strings(subdomains)
 
-				// Use custom subdomains from homectl-config.json
-				for _, subdomain := range subdomains {
-					port := appCfg.ExposedSubdomains[subdomain]
-
-					publicDomain := fmt.Sprintf("%s.%s", subdomain, suffix)
-					internalDomain := fmt.Sprintf("%s.internal.%s", subdomain, suffix)
-					routes = append(routes, route{
-						publicHost:   publicDomain,
-						internalHost: internalDomain,
-						target:       fmt.Sprintf("http://%s:%d", targetHost, int(port)),
-					})
-				}
-			} else {
-				// Default behavior: use app name as subdomain and reported port
-				if report.Port == 0 {
-					continue // Skip apps without exposed ports
-				}
-
-				publicDomain := fmt.Sprintf("%s.%s", appName, suffix)
-				internalDomain := fmt.Sprintf("%s.internal.%s", appName, suffix)
-				routes = append(routes, route{
+				publicDomain := fmt.Sprintf("%s.%s", subdomain, suffix)
+				internalDomain := fmt.Sprintf("%s.internal.%s", subdomain, suffix)
+				routes = append(routes, agentRoute{
 					publicHost:   publicDomain,
 					internalHost: internalDomain,
-					target:       fmt.Sprintf("http://%s:%d", targetHost, defaultPort),
+					target:       fmt.Sprintf("http://%s:%d", routing.host, targetPort),
+					isLocal:      routing.candidate.isLocal,
+					remoteHost:   routing.host,
 				})
 			}
+		} else {
+			// Default behavior: use app name as subdomain and reported port
+			if report.Port == 0 {
+				continue // Skip apps without exposed ports
+			}
+
+			publicDomain := fmt.Sprintf("%s.%s", appName, suffix)
+			internalDomain := fmt.Sprintf("%s.internal.%s", appName, suffix)
+			routes = append(routes, agentRoute{
+				publicHost:   publicDomain,
+				internalHost: internalDomain,
+				target:       baseTarget,
+				isLocal:      routing.candidate.isLocal,
+				remoteHost:   routing.host,
+			})
 		}
 	}
 
@@ -223,23 +300,23 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	}
 	b.WriteString("}\n\n")
 	dnsTokenEnv := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyDNSTokenEnv))
-	for _, route := range routes {
+	for _, r := range routes {
 		if hasDNS {
-			fmt.Fprintf(&b, "%s {\n", route.publicHost)
+			fmt.Fprintf(&b, "%s {\n", r.publicHost)
 			if dnsTokenEnv != "" {
 				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
 			}
-			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			writeRouteProxy(&b, r)
 			b.WriteString("}\n\n")
-			fmt.Fprintf(&b, "%s {\n", route.internalHost)
+			fmt.Fprintf(&b, "%s {\n", r.internalHost)
 			if dnsTokenEnv != "" {
 				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
 			}
-			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			writeRouteProxy(&b, r)
 			b.WriteString("}\n\n")
 		} else {
-			fmt.Fprintf(&b, "%s, %s {\n", route.publicHost, route.internalHost)
-			fmt.Fprintf(&b, "\treverse_proxy %s\n", route.target)
+			fmt.Fprintf(&b, "%s, %s {\n", r.publicHost, r.internalHost)
+			writeRouteProxy(&b, r)
 			b.WriteString("}\n\n")
 		}
 	}
@@ -258,4 +335,21 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 // the Caddyfile consumed by the compatibility /traefik-config endpoint.
 func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 	return m.GenerateCaddyConfig(forNodeID)
+}
+
+// writeRouteProxy emits a reverse_proxy directive for a route block.
+// Local apps (Docker aliases) use plain HTTP. Remote agents use HTTPS
+// with TLS SNI and Host header forwarding, matching how the manager
+// proxies to agents over WireGuard.
+func writeRouteProxy(b *strings.Builder, r agentRoute) {
+	if r.isLocal {
+		fmt.Fprintf(b, "\treverse_proxy %s\n", r.target)
+		return
+	}
+	fmt.Fprintf(b, "\treverse_proxy https://%s {\n", r.remoteHost)
+	fmt.Fprintf(b, "\t\theader_up Host {host}\n")
+	fmt.Fprintf(b, "\t\ttransport http {\n")
+	fmt.Fprintf(b, "\t\t\ttls_server_name %s\n", r.publicHost)
+	fmt.Fprintf(b, "\t\t}\n")
+	fmt.Fprintf(b, "\t}\n")
 }
