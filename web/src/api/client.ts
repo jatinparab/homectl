@@ -18,6 +18,17 @@ export async function fetchAgents(): Promise<Agent[]> {
   return fetchJSON<Agent[]>(`${API_BASE}/agents`);
 }
 
+export interface VersionInfo {
+  component: string;
+  version: string;
+  commit: string;
+  build_date: string;
+}
+
+export async function fetchVersion(): Promise<VersionInfo> {
+  return fetchJSON<VersionInfo>(`${API_BASE}/version`);
+}
+
 export async function fetchStorageStatus(): Promise<StorageStatus> {
   return fetchJSON<StorageStatus>(`${API_BASE}/storage`);
 }

@@ -106,7 +106,14 @@ const OnlineText = styled.span<{ online: boolean }>`
 const IpAddress = styled.div`
   font-size: 11px;
   color: ${(p) => p.theme.colors.textMuted};
-  margin-bottom: 12px;
+  margin-bottom: 4px;
+  font-family: ${(p) => p.theme.fonts.mono};
+`;
+
+const VersionLine = styled.div`
+  font-size: 10px;
+  color: ${(p) => p.theme.colors.textMuted};
+  margin-bottom: 10px;
   font-family: ${(p) => p.theme.fonts.mono};
 `;
 
@@ -216,6 +223,12 @@ function NodeCard({ agent, gatewayInfo }: { agent: Agent; gatewayInfo: GatewayIn
       </CardHeader>
 
       <IpAddress>{agent.ip}</IpAddress>
+
+      {agent.online && (
+        <VersionLine>
+          version {agent.version || 'unknown'}
+        </VersionLine>
+      )}
 
       {agent.online && agent.metrics ? (
         <MetricsWrap>

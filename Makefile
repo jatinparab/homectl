@@ -1,8 +1,15 @@
 .PHONY: help build build-web build-manager build-agent test clean docker-manager docker-agent docker-images dev-up dev-down deploy-logs dev-logs dev-deploy
 
 IMAGE_REPO ?= homectl
-IMAGE_TAG ?= local
+IMAGE_TAG ?= $(shell head -n1 VERSION 2>/dev/null || echo local)
 CROWDSEC_VERSION ?= v1.7.8
+
+# Build metadata injected via ldflags.
+VERSION_PKG = github.com/jatinparab/homectl/buildinfo
+GO_LDFLAGS = -s -w \
+	-X $(VERSION_PKG).Version=$(IMAGE_TAG) \
+	-X $(VERSION_PKG).Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	-X $(VERSION_PKG).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 DEV_DEPLOY_HOST ?= 192.168.50.101
 DEV_DEPLOY_USER ?= jatin
@@ -41,19 +48,28 @@ build-web:
 	cp -r web/dist manager/ui/
 
 build-manager: build-web
-	go build -o ./bin/manager ./manager/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=manager" -o ./bin/manager ./manager/cmd
 
 build-agent:
-	go build -o ./bin/agent ./agent/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=agent" -o ./bin/agent ./agent/cmd
 
 test:
 	go test ./...
 
 docker-manager:
-	docker build -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build -f Dockerfile.manager \
+		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 
 docker-agent:
-	docker build -f Dockerfile.agent -t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
+	docker build -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
 
 docker-images: docker-manager docker-agent
 
@@ -70,12 +86,21 @@ dev-logs:
 	ssh $(DEV_DEPLOY_USER)@$(DEV_DEPLOY_HOST) 'cd $(DEV_COMPOSE_DIR) && docker compose logs --tail 50 -f'
 
 dev-deploy:
-	docker build --platform linux/amd64 -f Dockerfile.agent -t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
 	docker save $(IMAGE_REPO)/agent:$(IMAGE_TAG) | ssh $(DEV_DEPLOY_USER)@$(DEV_DEPLOY_HOST) 'docker load'
 	ssh $(DEV_DEPLOY_USER)@$(DEV_DEPLOY_HOST) 'cd $(DEV_COMPOSE_DIR) && docker compose down && docker compose up -d'
 
 dev-deploy-manager:
-	docker build --platform linux/amd64 -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 -f Dockerfile.manager \
+		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 	docker save $(IMAGE_REPO)/manager:$(IMAGE_TAG) | ssh $(DEV_MANAGER_USER)@$(DEV_MANAGER_HOST) 'docker load'
 	ssh $(DEV_MANAGER_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && docker compose down && docker compose up -d'
 
