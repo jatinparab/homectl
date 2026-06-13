@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jatinparab/homectl/common"
 )
 
 var publicRouteLog = slog.With("area", "public-routes")
@@ -214,7 +216,9 @@ func (m *Manager) publicRouteStatuses() []PublicRouteStatus {
 }
 
 func (m *Manager) StartPublicRouteLoop(ctx context.Context) {
-	if err := m.SyncCaddyConfig(); err != nil {
+	if crowdSecBouncerKey() != "" {
+		publicRouteLog.Info("Deferring initial Caddy sync until CrowdSec bootstrap completes")
+	} else if err := m.SyncCaddyConfig(); err != nil {
 		publicRouteLog.Warn("Initial Caddy sync failed", "err", err)
 	}
 	m.refreshPublicRouteHealth(ctx)
@@ -392,6 +396,18 @@ func (m *Manager) SyncCaddyConfig() error {
 	if err != nil {
 		return err
 	}
+	return writeAndReloadManagerCaddyfile(content)
+}
+
+func (m *Manager) SyncManagerHostCaddyConfig() error {
+	content, err := m.generateManagerCaddyfile(false)
+	if err != nil {
+		return err
+	}
+	return writeAndReloadManagerCaddyfile(content)
+}
+
+func writeAndReloadManagerCaddyfile(content string) error {
 	path := managerCaddyfilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -417,16 +433,23 @@ func (m *Manager) SyncCaddyConfig() error {
 }
 
 func (m *Manager) GenerateManagerCaddyfile() (string, error) {
+	return m.generateManagerCaddyfile(true)
+}
+
+func (m *Manager) generateManagerCaddyfile(includePublicRoutes bool) (string, error) {
 	m.publicRoutesMu.RLock()
 	routes := append([]PublicRoute(nil), m.publicRoutes...)
 	m.publicRoutesMu.RUnlock()
 
 	var b strings.Builder
 	b.WriteString("{\n")
-	if email := strings.TrimSpace(os.Getenv("CADDY_ACME_EMAIL")); email != "" {
+	if email := strings.TrimSpace(m.configValue(common.ConfigKeyCaddyACMEEmail)); email != "" {
 		fmt.Fprintf(&b, "\temail %s\n", email)
 	}
-	crowdSecKey := crowdSecBouncerKey()
+	crowdSecKey := ""
+	if includePublicRoutes {
+		crowdSecKey = crowdSecBouncerKey()
+	}
 	if crowdSecKey != "" {
 		b.WriteString("\tcrowdsec {\n")
 		b.WriteString("\t\tapi_url http://127.0.0.1:8080\n")
@@ -460,6 +483,10 @@ func (m *Manager) GenerateManagerCaddyfile() (string, error) {
 		b.WriteString("\treverse_proxy 127.0.0.1:1338\n")
 	}
 	b.WriteString("}\n\n")
+
+	if !includePublicRoutes {
+		return b.String(), nil
+	}
 
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
 	for _, route := range routes {
@@ -546,8 +573,6 @@ func (m *Manager) readPublicRouteStats() map[string]routeStats {
 	}
 	return stats
 }
-
-
 
 func parsePublicRouteAccessLogLine(line []byte) (PublicRouteAccessLogEntry, bool) {
 	var raw struct {

@@ -17,6 +17,7 @@ var leaseLog = slog.With("area", "lease")
 type AgentInfo struct {
 	Name         string             `json:"name"`
 	IP           string             `json:"ip"`
+	Version      string             `json:"version,omitempty"`
 	LastSeen     time.Time          `json:"last_seen"`
 	RegisteredAt time.Time          `json:"registered_at"`
 	AppReports   []common.AppReport `json:"app_reports,omitempty"`
@@ -25,11 +26,13 @@ type AgentInfo struct {
 
 // LeaseManager manages agent leases
 type LeaseManager struct {
-	agents        map[string]*AgentInfo
-	mu            sync.RWMutex
-	leaseTTL      time.Duration
-	cleanupTicker *time.Ticker
-	stopCleanup   chan struct{}
+	agents         map[string]*AgentInfo
+	mu             sync.RWMutex
+	leaseTTL       time.Duration
+	cleanupEvery   time.Duration
+	cleanupTicker  *time.Ticker
+	stopCleanup    chan struct{}
+	cleanupStarted bool
 }
 
 // LeaseConfig holds lease configuration
@@ -49,16 +52,24 @@ func DefaultLeaseConfig() LeaseConfig {
 // NewLeaseManager creates a new LeaseManager
 func NewLeaseManager(config LeaseConfig) *LeaseManager {
 	lm := &LeaseManager{
-		agents:      make(map[string]*AgentInfo),
-		leaseTTL:    config.LeaseTTL,
-		stopCleanup: make(chan struct{}),
+		agents:       make(map[string]*AgentInfo),
+		leaseTTL:     config.LeaseTTL,
+		cleanupEvery: config.CleanupInterval,
+		stopCleanup:  make(chan struct{}),
 	}
 
-	// Start background cleanup goroutine
-	lm.cleanupTicker = time.NewTicker(config.CleanupInterval)
-	go lm.cleanupLoop()
-
 	return lm
+}
+
+func (lm *LeaseManager) Start() {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	if lm.cleanupStarted {
+		return
+	}
+	lm.cleanupStarted = true
+	lm.cleanupTicker = time.NewTicker(lm.cleanupEvery)
+	go lm.cleanupLoop()
 }
 
 // cleanupLoop periodically removes expired agents
@@ -95,8 +106,8 @@ func (lm *LeaseManager) cleanupExpired() {
 	}
 }
 
-// Register registers or renews an agent's lease
-func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) {
+// Heartbeat registers or renews an agent's lease
+func (lm *LeaseManager) Heartbeat(name, ip, version string, reports []common.AppReport, metrics common.NodeMetrics) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -104,6 +115,9 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 	if existing, ok := lm.agents[name]; ok {
 		existing.LastSeen = now
 		existing.IP = ip
+		if version != "" {
+			existing.Version = version
+		}
 		existing.AppReports = reports
 		existing.Metrics = metrics
 		leaseLog.Debug("Agent renewed lease", "agent", name, "reports", len(reports))
@@ -111,6 +125,7 @@ func (lm *LeaseManager) Heartbeat(name, ip string, reports []common.AppReport, m
 		lm.agents[name] = &AgentInfo{
 			Name:         name,
 			IP:           ip,
+			Version:      version,
 			LastSeen:     now,
 			RegisteredAt: now,
 			AppReports:   reports,
@@ -159,7 +174,13 @@ func (lm *LeaseManager) ListAgents() []AgentInfo {
 
 // Stop stops the lease manager cleanup goroutine
 func (lm *LeaseManager) Stop() {
-	close(lm.stopCleanup)
+	lm.mu.Lock()
+	started := lm.cleanupStarted
+	lm.cleanupStarted = false
+	lm.mu.Unlock()
+	if started {
+		close(lm.stopCleanup)
+	}
 }
 
 // LeaseTTL returns the configured lease TTL used to determine agent liveness.
@@ -171,6 +192,7 @@ func (lm *LeaseManager) LeaseTTL() time.Duration {
 type HeartbeatRequest struct {
 	Name    string             `json:"name"`
 	IP      string             `json:"ip"`
+	Version string             `json:"version,omitempty"`
 	Reports []common.AppReport `json:"reports,omitempty"`
 	Metrics common.NodeMetrics `json:"metrics,omitempty"`
 }
@@ -194,7 +216,7 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports, req.Metrics)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Version, req.Reports, req.Metrics)
 
 	// Adopt running apps that have no assignment (e.g. after manager restart)
 	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)

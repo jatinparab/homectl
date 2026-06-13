@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -67,28 +66,56 @@ type Restic interface {
 
 // RepoRestic runs restic commands against a B2 repo
 type RepoRestic struct {
-	repo       string
 	appDataDir string
 	useSudo    bool
+	valueFunc  func(string) string
+	envFunc    func() map[string]string
 }
 
-// NewRepoRestic creates a new RepoRestic instance
-func NewRepoRestic(appDataDir string, useSudo bool) *RepoRestic {
-	repo := os.Getenv("RESTIC_REPOSITORY")
-	if repo == "" {
-		repo = "restic-repository-not-configured"
+// NewRepoRestic creates a new RepoRestic instance.
+func NewRepoRestic(appDataDir string, useSudo bool, valueFunc func(string) string, envFunc ...func() map[string]string) *RepoRestic {
+	var snapshotFunc func() map[string]string
+	if len(envFunc) > 0 {
+		snapshotFunc = envFunc[0]
 	}
 	return &RepoRestic{
-		repo:       repo,
 		appDataDir: appDataDir,
 		useSudo:    useSudo,
+		valueFunc:  valueFunc,
+		envFunc:    snapshotFunc,
 	}
 }
 
-func resticRuntimeEnv() []string {
+func (r *RepoRestic) configValue(key string) string {
+	if r.valueFunc != nil {
+		return strings.TrimSpace(r.valueFunc(key))
+	}
+	return ""
+}
+
+func (r *RepoRestic) repoURL() string {
+	if repo := r.configValue(common.ConfigKeyResticRepository); repo != "" {
+		return repo
+	}
+	return "restic-repository-not-configured"
+}
+
+func (r *RepoRestic) resticRuntimeEnv() []string {
 	env := []string{"RESTIC_PROGRESS_FPS=2"}
-	for _, key := range []string{"B2_ACCOUNT_ID", "B2_ACCOUNT_KEY", "RESTIC_PASSWORD"} {
-		if val := os.Getenv(key); val != "" {
+	seen := map[string]bool{"RESTIC_PROGRESS_FPS": true}
+	if r.envFunc != nil {
+		for key, val := range r.envFunc() {
+			key = strings.TrimSpace(key)
+			val = strings.TrimSpace(val)
+			if key == "" || val == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			env = append(env, fmt.Sprintf("%s=%s", key, val))
+		}
+	}
+	for _, key := range []string{common.ConfigKeyB2AccountID, common.ConfigKeyB2AccountKey, common.ConfigKeyResticPassword} {
+		if val := r.configValue(key); val != "" && !seen[key] {
 			env = append(env, fmt.Sprintf("%s=%s", key, val))
 		}
 	}
@@ -98,22 +125,29 @@ func resticRuntimeEnv() []string {
 // resticCmdCtx builds a context-aware restic command (killed when ctx is cancelled).
 // Required env vars are passed explicitly via env(1) so sudo env_reset cannot strip them.
 func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd {
-	runtimeEnv := resticRuntimeEnv()
+	runtimeEnv := r.resticRuntimeEnv()
 	if r.useSudo {
+		preserveKeys := []string{}
+		for _, entry := range runtimeEnv {
+			key, _, _ := strings.Cut(entry, "=")
+			if key != "" {
+				preserveKeys = append(preserveKeys, key)
+			}
+		}
 		cmdArgs := []string{
-			"--preserve-env=B2_ACCOUNT_ID,B2_ACCOUNT_KEY,RESTIC_PASSWORD,RESTIC_PROGRESS_FPS",
+			"--preserve-env=" + strings.Join(preserveKeys, ","),
 			"env",
 			"RESTIC_PROGRESS_FPS=2",
 			"restic",
 		}
 		cmdArgs = append(cmdArgs, args...)
 		cmd := exec.CommandContext(ctx, "sudo", cmdArgs...)
-		// Provide vars for sudo to preserve from the caller env.
-		cmd.Env = append(os.Environ(), runtimeEnv...)
+		// Provide manager-synced vars for sudo to preserve from the caller env.
+		cmd.Env = append(sanitizedAgentEnviron(), runtimeEnv...)
 		return cmd
 	}
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(os.Environ(), runtimeEnv...)
+	cmd.Env = append(sanitizedAgentEnviron(), runtimeEnv...)
 	return cmd
 }
 
@@ -221,7 +255,7 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 
 func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"--retry-lock", "2m",
 		"--json",
 		"restore",
@@ -268,7 +302,7 @@ func containsNoSnapshotError(line string) bool {
 
 func (r *RepoRestic) Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"--retry-lock", "2m",
 		"--json",
 		"--tag", "homectl", "--tag", string(appID),
@@ -322,7 +356,7 @@ func (r *RepoRestic) runLines(prefix string, cmd *exec.Cmd, onLog LogCallback) e
 // still be visible in the backend for a short period after the backup exits.
 func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error {
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"--retry-lock", "5m",
 		"forget", "--prune",
 		"--group-by", "tags",
@@ -343,7 +377,7 @@ func (r *RepoRestic) Prune(ctx context.Context, appID common.AppID, onLog LogCal
 // Check verifies the integrity of the restic repository.
 // --retry-lock handles transient lock conflicts from concurrent operations.
 func (r *RepoRestic) Check(ctx context.Context, onLog LogCallback) error {
-	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "--retry-lock", "5m", "check", "--read-data-subset=1%")
+	cmd := r.resticCmdCtx(ctx, "-r", r.repoURL(), "--retry-lock", "5m", "check", "--read-data-subset=1%")
 	err := r.runLines("check", cmd, onLog)
 	if err != nil {
 		r.tryUnlockOnLockConflict(ctx, "check", err, onLog)
@@ -378,13 +412,13 @@ func isExitCode11(err error) bool {
 
 // Unlock removes stale locks from the restic repository.
 func (r *RepoRestic) Unlock(ctx context.Context, onLog LogCallback) error {
-	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "unlock")
+	cmd := r.resticCmdCtx(ctx, "-r", r.repoURL(), "unlock")
 	return r.runLines("unlock", cmd, onLog)
 }
 
 // ForceUnlock removes all locks from the restic repository, including locks held by other clients.
 func (r *RepoRestic) ForceUnlock(ctx context.Context, onLog LogCallback) error {
-	cmd := r.resticCmdCtx(ctx, "-r", r.repo, "unlock", "--remove-all")
+	cmd := r.resticCmdCtx(ctx, "-r", r.repoURL(), "unlock", "--remove-all")
 	return r.runLines("force-unlock", cmd, onLog)
 }
 
@@ -398,7 +432,7 @@ type resticSnapshot struct {
 // Returns zero time + empty string if no snapshots exist (not an error).
 func (r *RepoRestic) LatestSnapshot(ctx context.Context, appID common.AppID) (time.Time, string, error) {
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"snapshots",
 		"--json",
 		"--latest", "1",
@@ -431,7 +465,7 @@ func (r *RepoRestic) LatestSnapshot(ctx context.Context, appID common.AppID) (ti
 // ListSnapshots returns all snapshots for an app, sorted newest-first.
 func (r *RepoRestic) ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error) {
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"snapshots",
 		"--json",
 		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
@@ -474,7 +508,7 @@ func (r *RepoRestic) ListSnapshotFiles(ctx context.Context, snapshotID, path str
 	}
 
 	cmd := r.resticCmdCtx(ctx,
-		"-r", r.repo,
+		"-r", r.repoURL(),
 		"ls",
 		"--json",
 		snapshotID,

@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
+import styled from '@emotion/styled'
 import type { Tab } from './app/navigation'
 import { tabFromPath, pathFromTab } from './app/navigation'
 import { AppShell } from './components/layout'
+import { fetchAuthStatus, logout } from './api/auth'
+import type { AuthStatus } from './api/auth'
+import { AuthPage } from './features/auth/AuthPage'
 import { DashboardPage } from './features/dashboard/DashboardPage'
 import { SystemLogViewer } from './features/system-logs/SystemLogViewer'
 import { ContainersPage } from './features/containers/ContainersPage'
@@ -19,10 +23,21 @@ type LogPanelState =
   | { type: 'container'; node: string; containerId: string; containerName: string }
   | null
 
+const LoadingRoot = styled.div`
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: ${({ theme }) => theme.colors.neutralBg};
+  color: ${({ theme }) => theme.colors.textMuted};
+  font-size: 13px;
+`
+
 function App() {
   const [logPanel, setLogPanel] = useState<LogPanelState>(null)
   const [path, setPath] = useState(() => window.location.pathname)
   const [logPanelExpanded, setLogPanelExpanded] = useState(false)
+  const [auth, setAuth] = useState<AuthStatus | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
   const activeTab = tabFromPath(path)
   const appDetailId = path.startsWith('/apps/') ? path.slice(6) : null
@@ -44,6 +59,19 @@ function App() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
+  async function refreshAuth() {
+    setAuthLoading(true)
+    try {
+      setAuth(await fetchAuthStatus())
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshAuth()
+  }, [])
+
   const handleShowAppLogs = (node: string, appId: string) => {
     setLogPanel({ type: 'app', node, appId })
   }
@@ -55,8 +83,25 @@ function App() {
   const handleClosePanel = () => setLogPanel(null)
   const LOG_PANEL_HEIGHT = logPanelExpanded ? 360 : 40
 
+  async function handleLogout() {
+    await logout()
+    setAuth(await fetchAuthStatus())
+  }
+
+  if (authLoading || !auth) {
+    return <LoadingRoot>Loading</LoadingRoot>
+  }
+
+  if (auth.onboarding_required) {
+    return <AuthPage mode="onboarding" onDone={refreshAuth} />
+  }
+
+  if (!auth.authenticated) {
+    return <AuthPage mode="login" onDone={refreshAuth} />
+  }
+
   return (
-    <AppShell activeTab={activeTab} onTabChange={handleTabChange} bottomPadding={LOG_PANEL_HEIGHT}>
+    <AppShell activeTab={activeTab} onTabChange={handleTabChange} onLogout={handleLogout} bottomPadding={LOG_PANEL_HEIGHT}>
       {!appDetailId && activeTab === 'dashboard' && (
         <DashboardPage onShowLogs={handleShowAppLogs} onNavigate={navigate} />
       )}

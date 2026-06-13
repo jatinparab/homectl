@@ -4,6 +4,7 @@ import styled from '@emotion/styled';
 import { useCreatePublicRoute, useDeletePublicRoute, usePublicRoutes, useUpdatePublicRoute } from '../../api/hooks';
 import type { PublicRoute, PublicRouteMode } from '../../api/types';
 import { DesiredToggle } from '../../features/shared/components/StatusBadge';
+import { Button } from '../../components/ui';
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -62,18 +63,7 @@ const SelectField = styled.select`
 `;
 
 const FormActions = styled.div`display: flex; align-items: center; gap: 8px;`;
-const SubmitBtn = styled.button`
-  padding: 6px 12px; font-size: 11px;
-  background: #0d9488; color: white; border: none; border-radius: ${(p) => p.theme.radii.sm}; cursor: pointer;
-  &:hover:not(:disabled) { background: #0f766e; }
-  &:disabled { opacity: 0.5; }
-`;
-const CancelBtn = styled.button`
-  padding: 6px 8px; font-size: 11px;
-  border: 1px solid ${(p) => p.theme.colors.border}; color: #78716c;
-  background: none; border-radius: ${(p) => p.theme.radii.sm}; cursor: pointer;
-  &:hover { border-color: #a8a29e; color: #44403c; }
-`;
+
 
 const ErrorBar = styled.div`padding: 8px 16px; font-size: 11px; color: #dc2626; border-bottom: 1px solid #fecaca; background: #fef2f2;`;
 
@@ -96,14 +86,7 @@ const Target = styled.div`font-family: ${(p) => p.theme.fonts.mono}; font-size: 
 const Traffic = styled.div`color: #57534e;`;
 const TrafficSub = styled.div`font-size: 11px; color: #a8a29e;`;
 const RowActions = styled.div`display: flex; align-items: center; justify-content: flex-end; gap: 8px;`;
-const ActionBtn = styled.button<{ $danger?: boolean }>`
-  padding: 4px 8px; font-size: 11px;
-  border: 1px solid ${(p) => (p.$danger ? '#fecaca' : p.theme.colors.border)};
-  color: ${(p) => (p.$danger ? '#dc2626' : '#78716c')};
-  background: none; border-radius: ${(p) => p.theme.radii.sm}; cursor: pointer;
-  &:hover:not(:disabled) { border-color: ${(p) => (p.$danger ? '#f87171' : '#a8a29e')}; }
-  &:disabled { opacity: 0.5; }
-`;
+
 const EmptyRow = styled.div`padding: 32px 16px; text-align: center; font-size: 11px; color: #a8a29e;`;
 
 export function RoutingPage() {
@@ -154,8 +137,8 @@ export function RoutingPage() {
             </Label>
             <FormActions>
               <DesiredToggle state={form.enabled ? 'running' : 'stopped'} onToggle={() => setForm((v) => ({ ...v, enabled: !v.enabled }))} disabled={saving} />
-              <SubmitBtn type="submit" disabled={saving || !form.host.trim()}>{saving ? 'Saving...' : form.id ? 'Update' : 'Add'}</SubmitBtn>
-              {form.id && <CancelBtn type="button" onClick={resetForm}>Cancel</CancelBtn>}
+              <Button type="submit" variant="primary" size="sm" disabled={saving || !form.host.trim()}>{saving ? 'Saving...' : form.id ? 'Update' : 'Add'}</Button>
+              {form.id && <Button type="button" variant="secondary" size="sm" onClick={resetForm}>Cancel</Button>}
             </FormActions>
           </FormRow>
 
@@ -180,8 +163,8 @@ export function RoutingPage() {
                     <Td>
                       <RowActions>
                         <DesiredToggle state={route.enabled ? 'running' : 'stopped'} onToggle={() => toggleRoute(route)} disabled={updateRoute.isPending} />
-                        <ActionBtn onClick={() => editRoute(route)}>Edit</ActionBtn>
-                        <ActionBtn $danger onClick={() => removeRoute(route)} disabled={deleteRoute.isPending}>Delete</ActionBtn>
+                        <Button variant="secondary" size="sm" onClick={() => editRoute(route)}>Edit</Button>
+                        <Button variant="destructive" size="sm" onClick={() => removeRoute(route)} disabled={deleteRoute.isPending}>Delete</Button>
                       </RowActions>
                     </Td>
                   </Tr>

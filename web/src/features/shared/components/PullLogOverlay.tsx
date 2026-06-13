@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styled from '@emotion/styled';
 import type { ResticProgress } from '../../../api/types';
 import { useStreamSubscription } from '../../../api/live';
+import { IconButton } from '../../../components/ui';
 
 interface PhaseLogOverlayProps {
   appId: string;
@@ -40,19 +41,6 @@ const Header = styled.div`
 const Label = styled.span`
   font-size: 11px;
   color: #78716c;
-`;
-
-const CloseBtn = styled.button`
-  color: #a8a29e;
-  font-size: ${(p) => p.theme.fontSizes.xs};
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 4px;
-
-  &:hover {
-    color: #44403c;
-  }
 `;
 
 const LogPre = styled.pre`
@@ -115,7 +103,7 @@ export function PhaseLogOverlay({ appId, node, phase, onClose, onProgress }: Pha
         <Label>
           {label} — {appId} on {node}
         </Label>
-        <CloseBtn onClick={onClose}>✕</CloseBtn>
+        <IconButton label="Close" variant="ghost" color="gray" size="1" onClick={onClose}><span>✕</span></IconButton>
       </Header>
       <LogPre ref={preRef}>
         {lines.length === 0 ? <Waiting>Waiting for output...</Waiting> : lines.join('\n')}

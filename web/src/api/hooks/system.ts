@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   triggerSync,
   triggerRebalance,
@@ -8,6 +8,8 @@ import {
   setManualGateway,
   clearManualGateway,
   triggerStoragePrune,
+  fetchNodeConfig,
+  updateNodeConfig,
 } from "../client";
 
 export function useSync() {
@@ -41,5 +43,24 @@ export function useClearManualGateway() {
 export function useTriggerStoragePrune() {
   return useMutation({
     mutationFn: ({ node }: { node: string }) => triggerStoragePrune(node),
+  });
+}
+
+export function useNodeConfig(node: string | null) {
+  return useQuery({
+    queryKey: ["node-config", node],
+    queryFn: () => fetchNodeConfig(node!),
+    enabled: !!node,
+  });
+}
+
+export function useUpdateNodeConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ node, shared, agent }: { node: string; shared: Record<string, string>; agent: Record<string, string> }) =>
+      updateNodeConfig(node, { shared, agent }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["node-config", variables.node] });
+    },
   });
 }

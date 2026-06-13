@@ -169,6 +169,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 		m.applyHeartbeat(HeartbeatRequest{
 			Name:    hb.Name,
 			IP:      hb.IP,
+			Version: hb.Version,
 			Reports: hb.Reports,
 			Metrics: hb.Metrics,
 		})
@@ -201,6 +202,33 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 			resp.Status = res.status
 			resp.Body = res.body
 		}
+	case common.LinkReqAgentConfigSync:
+		cfg, err := m.agentConfig.GetPlaintext(context.Background(), peer.name)
+		if err != nil {
+			resp.Status = http.StatusInternalServerError
+			resp.Error = err.Error()
+		} else {
+			body, err := json.Marshal(cfg)
+			if err != nil {
+				resp.Status = http.StatusInternalServerError
+				resp.Error = err.Error()
+			} else {
+				resp.Status = http.StatusOK
+				resp.Body = body
+			}
+		}
+	case common.LinkReqAgentConfigSeed:
+		seed, err := common.DecodePayload[common.AgentConfigSeedRequest](req)
+		if err != nil {
+			resp.Status = http.StatusBadRequest
+			resp.Error = err.Error()
+		} else if err := m.agentConfig.SeedAgentValues(context.Background(), peer.name, seed.Config); err != nil {
+			resp.Status = http.StatusInternalServerError
+			resp.Error = err.Error()
+		} else {
+			resp.Status = http.StatusOK
+			resp.Body = []byte(`{"status":"ok"}`)
+		}
 	case common.LinkReqAgentManagerSync:
 		res, err := m.invokeRawEndpoint(http.MethodPost, "/sync", nil)
 		if err != nil {
@@ -219,7 +247,7 @@ func (m *Manager) handleAgentRequest(peer *agentLinkPeer, req common.LinkMessage
 }
 
 func (m *Manager) applyHeartbeat(req HeartbeatRequest) {
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Reports, req.Metrics)
+	m.leaseManager.Heartbeat(req.Name, req.IP, req.Version, req.Reports, req.Metrics)
 	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)
 	now := time.Now()
 	for _, report := range req.Reports {

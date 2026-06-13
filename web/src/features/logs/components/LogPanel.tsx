@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import styled from '@emotion/styled';
 import { useStreamSubscription } from '../../../api/live';
+import { IconButton } from '../../../components/ui';
 
 interface LogPanelProps { isOpen: boolean; onClose: () => void; node: string; appId: string; }
 
@@ -14,11 +15,9 @@ const Header = styled.div`display: flex; align-items: center; justify-content: s
 const Title = styled.span`font-size: ${(p) => p.theme.fontSizes.sm}; font-weight: 600; color: ${(p) => p.theme.colors.textPrimary};`;
 const NodeLabel = styled.span`color: #a8a29e; font-size: ${(p) => p.theme.fontSizes.xs};`;
 const Dot = styled.span<{ $on: boolean }>`width: 8px; height: 8px; border-radius: 50%; background: ${(p) => (p.$on ? '#10b981' : '#d6d3d1')};`;
-const CloseBtn = styled.button`color: #a8a29e; background: none; border: none; font-size: 18px; cursor: pointer; &:hover { color: #44403c; }`;
 const ErrorMsg = styled.div`padding: 8px 16px; background: #fef2f2; color: #ef4444; font-size: 11px; border-bottom: 1px solid #fecaca;`;
 const LogContent = styled.div`flex: 1; overflow: auto; padding: 16px; position: relative;`;
 const LogPre = styled.pre`font-size: 11px; font-family: ${(p) => p.theme.fonts.mono}; color: #57534e; white-space: pre-wrap; line-height: 1.6;`;
-const ScrollBtn = styled.button`position: absolute; right: 16px; bottom: 40px; background: #fff; border: 1px solid ${(p) => p.theme.colors.border}; color: #78716c; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: ${(p) => p.theme.fontSizes.xs}; box-shadow: 0 1px 3px rgba(0,0,0,0.1); &:hover { color: #292524; }`;
 const Footer = styled.div`padding: 8px 16px; border-top: 1px solid ${(p) => p.theme.colors.borderLight}; font-size: 10px; color: #a8a29e; text-align: center;`;
 
 export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
@@ -55,13 +54,13 @@ export function LogPanel({ isOpen, onClose, node, appId }: LogPanelProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Title>{appId}</Title><NodeLabel>({node})</NodeLabel><Dot $on={connected} />
         </div>
-        <CloseBtn onClick={onClose}>×</CloseBtn>
+        <IconButton label="Close" variant="ghost" color="gray" size="1" onClick={onClose}><span>×</span></IconButton>
       </Header>
       {error && <ErrorMsg>{error}</ErrorMsg>}
       <LogContent ref={scrollRef} onScroll={handleScroll}>
         <LogPre>{logs.length === 0 ? <span style={{ color: '#a8a29e' }}>Waiting for logs...</span> : logs.join('\n')}</LogPre>
       </LogContent>
-      {!isAtBottom && <ScrollBtn onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true); } }}>↓</ScrollBtn>}
+      {!isAtBottom && <IconButton label="Scroll to bottom" variant="soft" color="gray" size="1" onClick={() => { if (scrollRef.current) { scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setIsAtBottom(true); } }} style={{ position: 'absolute', right: 16, bottom: 40, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}><span>↓</span></IconButton>}
       <Footer>last 500 lines</Footer>
     </Panel>
   );
