@@ -1,3 +1,6 @@
+ARG HOMECTL_VERSION=dev
+ARG HOMECTL_COMMIT=unknown
+ARG HOMECTL_BUILD_DATE=unknown
 FROM golang:1.25-alpine AS caddy-builder
 RUN apk add --no-cache git && \
     go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest && \
@@ -5,11 +8,16 @@ RUN apk add --no-cache git && \
 
 FROM golang:1.25-alpine AS builder
 ARG TARGETARCH
+ARG HOMECTL_VERSION
+ARG HOMECTL_COMMIT
+ARG HOMECTL_BUILD_DATE
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/agent ./agent/cmd
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+  -ldflags="-s -w -X github.com/jatinparab/homectl/buildinfo.Version=${HOMECTL_VERSION} -X github.com/jatinparab/homectl/buildinfo.Commit=${HOMECTL_COMMIT} -X github.com/jatinparab/homectl/buildinfo.BuildDate=${HOMECTL_BUILD_DATE} -X github.com/jatinparab/homectl/buildinfo.Component=agent" \
+  -o /out/agent ./agent/cmd
 
 FROM alpine:3.20
 ARG RESTIC_VERSION=0.18.0
