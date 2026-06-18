@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,13 +17,15 @@ import (
 )
 
 type StoragePruneState struct {
-	Busy         bool      `json:"busy"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	FinishedAt   time.Time `json:"finished_at,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	DeletedApps  []string  `json:"deleted_apps,omitempty"`
-	DeletedDirs  []string  `json:"deleted_dirs,omitempty"`
-	DeletedBytes uint64    `json:"deleted_bytes,omitempty"`
+	Busy                 bool      `json:"busy"`
+	StartedAt            time.Time `json:"started_at,omitempty"`
+	FinishedAt           time.Time `json:"finished_at,omitempty"`
+	LastError            string    `json:"last_error,omitempty"`
+	DeletedApps          []string  `json:"deleted_apps,omitempty"`
+	DeletedDirs          []string  `json:"deleted_dirs,omitempty"`
+	DeletedBytes         uint64    `json:"deleted_bytes,omitempty"`
+	DockerReclaimedBytes uint64    `json:"docker_reclaimed_bytes,omitempty"`
+	DockerPruneError     string    `json:"docker_prune_error,omitempty"`
 }
 
 type StorageStatusResponse struct {
@@ -88,6 +92,9 @@ func (a *Agent) estimateReclaimableBytes() uint64 {
 		sz, _ := dirSize(filepath.Join(a.appdataDir, name))
 		reclaimable += sz
 	}
+
+	reclaimable += estimateDockerReclaimableBytesFunc()
+
 	return reclaimable
 }
 
@@ -104,6 +111,8 @@ func (a *Agent) startStoragePrune() bool {
 	a.storagePruneState.DeletedApps = nil
 	a.storagePruneState.DeletedDirs = nil
 	a.storagePruneState.DeletedBytes = 0
+	a.storagePruneState.DockerReclaimedBytes = 0
+	a.storagePruneState.DockerPruneError = ""
 	a.storagePruneMu.Unlock()
 
 	go a.runStoragePrune()
@@ -150,6 +159,9 @@ func (a *Agent) runStoragePrune() {
 				lastErr = err.Error()
 				continue
 			}
+			if err := removePathWithSudoFallback(backupMetaPath(a.stateDir, common.AppID(name)), a.stateDir); err != nil {
+				lastErr = err.Error()
+			}
 
 			deletedApps = append(deletedApps, name)
 			deletedDirs = append(deletedDirs, target)
@@ -165,6 +177,9 @@ func (a *Agent) runStoragePrune() {
 	sort.Strings(deletedApps)
 	sort.Strings(deletedDirs)
 
+	// Docker prune
+	dockerReclaimed, dockerErr := dockerSystemPruneFunc()
+
 	a.storagePruneMu.Lock()
 	a.storagePruneState.Busy = false
 	a.storagePruneState.FinishedAt = time.Now()
@@ -172,6 +187,8 @@ func (a *Agent) runStoragePrune() {
 	a.storagePruneState.DeletedApps = deletedApps
 	a.storagePruneState.DeletedDirs = deletedDirs
 	a.storagePruneState.DeletedBytes = deletedBytes
+	a.storagePruneState.DockerReclaimedBytes = dockerReclaimed
+	a.storagePruneState.DockerPruneError = dockerErr
 	a.storagePruneMu.Unlock()
 }
 
@@ -215,6 +232,130 @@ func dirSize(root string) (uint64, error) {
 		return nil
 	})
 	return total, err
+}
+
+// estimateDockerReclaimableBytesFunc and dockerSystemPruneFunc are
+// package-level variables so tests can replace them with no-ops.
+var (
+	estimateDockerReclaimableBytesFunc = estimateDockerReclaimableBytes
+	dockerSystemPruneFunc              = runDockerSystemPrune
+)
+
+// ── Docker reclaimable helpers ──────────────────────────────────────────
+
+// parseDockerSize parses a Docker size string like "1.234GB", "500MB",
+// "10kB", or "0B" into bytes. Docker uses base-2 (1024) units.
+func parseDockerSize(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0B" {
+		return 0, nil
+	}
+
+	// Find the boundary between the numeric part and the unit suffix.
+	var numPart, unit string
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || c == '.' {
+			continue
+		}
+		numPart = s[:i]
+		unit = s[i:]
+		break
+	}
+
+	if numPart == "" {
+		return 0, fmt.Errorf("invalid docker size: %q", s)
+	}
+
+	value, err := strconv.ParseFloat(numPart, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid docker size %q: %w", s, err)
+	}
+
+	var multiplier uint64 = 1
+	switch unit {
+	case "B":
+		multiplier = 1
+	case "kB":
+		multiplier = 1024
+	case "MB":
+		multiplier = 1024 * 1024
+	case "GB":
+		multiplier = 1024 * 1024 * 1024
+	case "TB":
+		multiplier = 1024 * 1024 * 1024 * 1024
+	default:
+		return 0, fmt.Errorf("unknown docker size unit: %q (from %q)", unit, s)
+	}
+
+	return uint64(value * float64(multiplier)), nil
+}
+
+// dfEntry is a single line from "docker system df --format '{{json .}}'".
+type dfEntry struct {
+	Type        string `json:"Type"`
+	Reclaimable string `json:"Reclaimable"`
+}
+
+// estimateDockerReclaimableBytes runs docker system df and sums the
+// Reclaimable sizes across all resource types. Returns 0 if Docker is
+// unavailable or parsing fails.
+func estimateDockerReclaimableBytes() uint64 {
+	cmd := exec.Command("docker", "system", "df", "--format", "{{json .}}")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 0
+	}
+	if err := cmd.Start(); err != nil {
+		return 0
+	}
+
+	var total uint64
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		var e dfEntry
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
+			continue
+		}
+		if e.Reclaimable == "" || e.Reclaimable == "0B" {
+			continue
+		}
+		bytes, err := parseDockerSize(e.Reclaimable)
+		if err != nil {
+			continue
+		}
+		total += bytes
+	}
+
+	_ = cmd.Wait()
+	return total
+}
+
+// runDockerSystemPrune runs "docker system prune -a --volumes -f" and
+// parses the "Total reclaimed space" line from the last line of stdout.
+func runDockerSystemPrune() (reclaimedBytes uint64, errStr string) {
+	cmd := exec.Command("docker", "system", "prune", "-a", "--volumes", "-f")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Sprintf("docker system prune failed: %s", strings.TrimSpace(string(out)))
+	}
+
+	// The last line contains the total: "Total reclaimed space: 1.234GB"
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 {
+		return 0, ""
+	}
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+	const prefix = "Total reclaimed space: "
+	if !strings.HasPrefix(lastLine, prefix) {
+		return 0, ""
+	}
+	sizeStr := strings.TrimPrefix(lastLine, prefix)
+	bytes, err := parseDockerSize(sizeStr)
+	if err != nil {
+		return 0, ""
+	}
+	return bytes, ""
 }
 
 // handleStorageStatus returns current disk and prune status.
