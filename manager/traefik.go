@@ -72,6 +72,14 @@ func (c HomectlConfig) IsBackupEnabled() bool {
 	return *c.BackupEnabled
 }
 
+func backupEnabledForApp(appID common.AppID, configs map[string]HomectlConfig) bool {
+	cfg, ok := configs[string(appID)]
+	if ok && cfg.BackupEnabled != nil {
+		return *cfg.BackupEnabled
+	}
+	return appID != common.GatewayProxyAppID
+}
+
 // GetBackupInterval returns the per-app backup interval, or the default if not set.
 func (c HomectlConfig) GetBackupInterval() time.Duration {
 	if c.BackupInterval != "" {

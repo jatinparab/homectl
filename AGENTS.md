@@ -6,9 +6,14 @@ Right now it's in the early stages of development so all changes can be tested a
 
 use make dev-deploy-manager it is deployed on jatin@65.20.72.36
 
-# To deploy agent
+# To deploy agents
 
-use make dev-deploy it is deployed on ssh akira with user jatin.
+use make dev-deploy-agent it is deployed on the following machines:
+- akira (192.168.1.101)
+- strawberry (192.168.1.102)
+- windranger (192.168.1.103)
+
+You have ssh access to all 3 machines and passwordless sudo too.
 
 This app is setup such that it always runs in a docker, those targets each have their docker compose files defined in ~/homectl-compose if you need to make any changes to the compose files you can do so there.
 

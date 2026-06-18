@@ -103,15 +103,15 @@ dev-release-agent:
 
 # ── Dev deploy (override image + force restart on all nodes) ─────────────
 
-dev-deploy:
+dev-deploy: dev-release
 	scripts/dev-deploy-agents.sh $(DEV_USER) $(DEV_COMPOSE_DIR) $(DEV_AGENT_HOSTS)
 	echo "==> Restarting manager on $(DEV_MANAGER_HOST)..."
 	ssh $(DEV_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose down && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose up -d'
 
-dev-deploy-agent:
+dev-deploy-agent: dev-release-agent
 	scripts/dev-deploy-agents.sh $(DEV_USER) $(DEV_COMPOSE_DIR) $(DEV_AGENT_HOSTS)
 
-dev-deploy-manager:
+dev-deploy-manager: dev-release-manager
 	echo "==> Restarting manager on $(DEV_MANAGER_HOST)..."
 	ssh $(DEV_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose down && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose up -d'
 

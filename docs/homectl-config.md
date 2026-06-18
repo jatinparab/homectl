@@ -27,7 +27,7 @@ Expose one service on a custom subdomain:
   "exposed_subdomains": {
     "photos": 2283
   },
-  "exclude_nodes": ["rpi-1"]
+  "exclude_nodes": ["agent-hostname"]
 }
 ```
 
@@ -40,7 +40,7 @@ Expose several services from a stack:
     "sonarr": "8989",
     "radarr": "7878"
   },
-  "exclude_nodes": ["rpi-1"]
+  "exclude_nodes": ["agent-hostname"]
 }
 ```
 

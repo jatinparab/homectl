@@ -277,12 +277,11 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		da := common.DesiredApp{
 			AppID:          app.ID,
 			DesiredState:   app.DesiredState,
-			BackupEnabled:  true, // default
+			BackupEnabled:  backupEnabledForApp(app.ID, appConfigs),
 			RestoreEnabled: app.RestoreEnabled,
 		}
 		if cfg, ok := appConfigs[string(app.ID)]; ok {
 			da.BackupSensitive = cfg.BackupSensitive
-			da.BackupEnabled = cfg.IsBackupEnabled()
 		}
 		if da.BackupEnabled {
 			if ba, ok := backupAssignments[app.ID]; ok && ba.AgentID == agentID {

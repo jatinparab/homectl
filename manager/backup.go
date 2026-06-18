@@ -138,6 +138,7 @@ func (m *Manager) cleanupBackupStateLocked() {
 	for _, app := range m.appRegistry.ListAll() {
 		validApps[app.ID] = true
 	}
+	appConfigs := m.loadAppConfigs()
 
 	knownAgents := make(map[string]bool)
 	for _, agent := range m.leaseManager.ListAgents() {
@@ -145,12 +146,20 @@ func (m *Manager) cleanupBackupStateLocked() {
 	}
 
 	for appID := range m.pruneState {
-		if !validApps[appID] {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
 			delete(m.pruneState, appID)
 		}
 	}
+	for appID := range m.backupAssignments {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
+			delete(m.backupAssignments, appID)
+		}
+	}
+	if m.pruneAssignment != nil && (!validApps[m.pruneAssignment.AppID] || !backupEnabledForApp(m.pruneAssignment.AppID, appConfigs)) {
+		m.pruneAssignment = nil
+	}
 	for appID, pending := range m.pendingGlobalRestores {
-		if !validApps[appID] {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
 			delete(m.pendingGlobalRestores, appID)
 			continue
 		}
@@ -178,7 +187,7 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 		}
 		for _, report := range agent.AppReports {
 			cfg := appConfigs[string(report.AppID)]
-			if cfg.BackupEnabled != nil && !*cfg.BackupEnabled {
+			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
 			if cfg.IsGlobal && agent.Name != m.gatewayNode {
@@ -225,7 +234,7 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 		}
 		for _, report := range agent.AppReports {
 			cfg := appConfigs[string(report.AppID)]
-			if cfg.BackupEnabled != nil && !*cfg.BackupEnabled {
+			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
 			if cfg.IsGlobal && agent.Name != m.gatewayNode {

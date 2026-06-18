@@ -469,12 +469,11 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			pruneStatuses = append(pruneStatuses, nr.PruneStatus)
 		}
 
-		backupEnabled := true
+		backupEnabled := backupEnabledForApp(app.ID, appConfigs)
 		var backupSensitive bool
 		backupInterval := BackupInterval.String()
 		pruneInterval := PruneInterval.String()
 		if cfg, ok := appConfigs[appID]; ok {
-			backupEnabled = cfg.IsBackupEnabled()
 			backupSensitive = cfg.BackupSensitive
 			backupInterval = cfg.GetBackupInterval().String()
 		}
