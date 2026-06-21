@@ -337,7 +337,12 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allApps := m.appRegistry.ListAll()
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		managerLog.Error("Failed to load app configs for API response; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 
 	// Get all agents with their app reports for per-node detail
 	agents := m.leaseManager.ListAgents()

@@ -12,7 +12,10 @@ import (
 
 func TestGenerateManagerCaddyfileRoutesHomelabToGateway(t *testing.T) {
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.test.example")
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.leaseManager.Heartbeat("node-1", "10.42.1.101", nil, common.NodeMetrics{})
 	if err := m.saveWireGuardPeers([]wireGuardPeerState{
 		{Name: "node-1", PublicKey: "test-key", Address: "10.44.0.7"},
@@ -49,7 +52,10 @@ func TestGenerateManagerCaddyfileRoutesHomelabToGateway(t *testing.T) {
 
 func TestGenerateManagerCaddyfileRoutesCustomWithoutHostOverride(t *testing.T) {
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.test.example")
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.publicRoutes = []PublicRoute{
 		{
 			ID:           "docs-example-com",
@@ -77,7 +83,10 @@ func TestGenerateManagerCaddyfileRoutesCustomWithoutHostOverride(t *testing.T) {
 func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.net")
 	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
 		{
 			AppID:         "photos",
@@ -100,7 +109,10 @@ func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.net")
 	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
 	t.Setenv("CADDY_DNS_TOKEN_ENV", "CF_DNS_API_TOKEN")
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.leaseManager.Heartbeat("node-1", "10.44.0.7", []common.AppReport{
 		{
 			AppID:         "photos",
@@ -124,7 +136,10 @@ func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {
 	t.Setenv("ADMIN_PASSWORD", "secret")
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.example.com")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	called := false
 	handler := m.requirePublicHostBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -150,7 +165,10 @@ func TestRequirePublicHostBasicAuthSkipsJoinPath(t *testing.T) {
 	t.Setenv("ADMIN_PASSWORD", "secret")
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.example.com")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	called := false
 	handler := m.requirePublicHostBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -176,7 +194,10 @@ func TestRequirePublicHostBasicAuthProtectsUIPaths(t *testing.T) {
 	t.Setenv("ADMIN_PASSWORD", "secret")
 	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.example.com")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler := m.requirePublicHostBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("UI request should not bypass basic auth")
 	}))
@@ -222,7 +243,10 @@ func TestParsePublicRouteAccessLogLine(t *testing.T) {
 func TestGenerateAgentCaddyConfigDedupesDuplicateAppReports(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Register two agents both reporting the same app as running.
 	// node-3 is the gateway.
@@ -270,7 +294,10 @@ func TestGenerateAgentCaddyConfigDedupesDuplicateAppReports(t *testing.T) {
 func TestGenerateAgentCaddyConfigPrefersGatewayNode(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Register two agents both reporting the same app as running.
 	// node-3 is the gateway, node-1 is not.
@@ -307,7 +334,10 @@ func TestGenerateAgentCaddyConfigPrefersGatewayNode(t *testing.T) {
 func TestGenerateAgentCaddyConfigFallsBackWhenGatewayMissingApp(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "test.example")
 
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Only node-1 reports the app. node-3 is the gateway but doesn't run it.
 	m.leaseManager.Heartbeat("node-3", "10.44.0.3", nil, common.NodeMetrics{})
