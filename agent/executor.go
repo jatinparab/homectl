@@ -449,13 +449,29 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 
 	// Step 3: Update backup state
 	e.agent.runtimeMu.Lock()
-	rt.Backup.LastBackupAt = time.Now() // Always update to prevent immediate retry on failure
+	// Track attempt time regardless of outcome. On success, also record success time.
+	// On failure we intentionally do NOT update LastBackupAt so the manager does not
+	// mistake a failed attempt for a recent successful backup and skip re-scheduling.
 	if backupErr != nil {
 		rt.Backup.LastError = backupErr.Error()
 		executorLog.Info("Backup failed", "app", appID, "err", backupErr)
+		// Exponential backoff: defer next attempt by 1h, then double each time up to 24h
+		if rt.Backup.BackupDefer.IsZero() {
+			rt.Backup.BackupDefer = time.Now().Add(1 * time.Hour)
+		} else {
+			delay := rt.Backup.BackupDefer.Sub(time.Now())
+			if delay > 0 && delay < 24*time.Hour {
+				rt.Backup.BackupDefer = time.Now().Add(delay * 2)
+			} else {
+				rt.Backup.BackupDefer = time.Now().Add(24 * time.Hour)
+			}
+		}
 	} else {
 		rt.Backup.LastError = ""
 		executorLog.Info("Backup completed", "app", appID)
+		rt.Backup.LastBackupAt = time.Now()
+		rt.Backup.BackupDefer = time.Time{} // Reset defer on success
+		rt.Backup.JustBackedUp = true
 	}
 	rt.Backup.InProgress = false
 	e.agent.runtimeMu.Unlock()
@@ -470,10 +486,6 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 		if err := writeBackupMeta(e.agent.stateDir, appID, meta); err != nil {
 			executorLog.Info("Failed to write backup meta", "app", appID, "err", err)
 		}
-		e.agent.runtimeMu.Lock()
-		rt.Backup.LastBackupAt = now
-		rt.Backup.JustBackedUp = true
-		e.agent.runtimeMu.Unlock()
 
 		// Bust snapshot cache so next request sees the new snapshot
 		go e.agent.refreshSnapshotCache(appID)

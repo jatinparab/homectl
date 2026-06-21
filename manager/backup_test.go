@@ -8,7 +8,10 @@ import (
 )
 
 func TestAppPruneAtNewerDoesNotDeadlockWhileBackupMuHeld(t *testing.T) {
-	m := NewManager(t.TempDir(), 1338)
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer m.Stop()
 
 	prunedAt := time.Now()

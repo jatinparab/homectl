@@ -399,7 +399,10 @@ func TestLeastLoadedExcluding(t *testing.T) {
 }
 
 func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 1338)
+	mgr, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
@@ -419,7 +422,10 @@ func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
 }
 
 func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 1338)
+	mgr, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
@@ -440,7 +446,10 @@ func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 }
 
 func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 1338)
+	mgr, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer mgr.Stop()
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
@@ -476,7 +485,10 @@ func TestReconcileOnce_FullIntegration(t *testing.T) {
 			CleanupInterval: 1 * time.Hour, // disable auto-cleanup for test
 		},
 	}
-	mgr := NewManagerWithConfig(cfg)
+	mgr, err := NewManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer mgr.Stop()
 
 	// Register agents

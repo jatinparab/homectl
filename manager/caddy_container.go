@@ -21,8 +21,10 @@ const (
 )
 
 var (
-	caddyCmd   *exec.Cmd
-	caddyCmdMu sync.Mutex
+	caddyCmd      *exec.Cmd
+	caddyCmdMu    sync.Mutex
+	caddySyncMu   sync.Mutex // protects generation → validation → atomic rename
+	caddyRestartW sync.Mutex // prevents concurrent restarts after failed reload
 )
 
 func caddyHostDir() string {

@@ -26,6 +26,7 @@ type AuthService struct {
 	onboardingMu        sync.RWMutex
 	onboardingRequired  bool
 	onboardingTokenHash string
+	tokenDelivered      func(token string) // optional callback for secure token delivery
 }
 
 type currentUserContextKey struct{}
@@ -47,7 +48,13 @@ func NewAuthService(ctx context.Context, users UserRepository, sessions SessionR
 			return nil, err
 		}
 		svc.onboardingTokenHash = tokenHash(token)
-		authLog.Info("First user onboarding token generated", "token", token)
+		// Deliver token via callback (file or other secure channel) if set.
+		// Avoid logging the token value — it grants admin-equivalent access.
+		if svc.tokenDelivered != nil {
+			svc.tokenDelivered(token)
+		}
+		authLog.Warn("First user onboarding — complete via the UI. " +
+			"A token delivery callback will deliver the token securely.")
 	}
 	return svc, nil
 }
@@ -59,6 +66,13 @@ func (a *AuthService) OnboardingRequired() bool {
 	a.onboardingMu.RLock()
 	defer a.onboardingMu.RUnlock()
 	return a.onboardingRequired
+}
+
+// SetTokenDelivered sets a callback that receives the onboarding token.
+// Use this to deliver the token securely (e.g., to a file) instead of
+// logging it in plaintext. Call before NewAuthService returns.
+func (a *AuthService) SetTokenDelivered(fn func(token string)) {
+	a.tokenDelivered = fn
 }
 
 func (a *AuthService) CompleteOnboarding(ctx context.Context, token, username, password, confirm string) (User, error) {
@@ -255,6 +269,14 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login request", http.StatusBadRequest)
 		return
 	}
+
+	// Rate limit login attempts per IP
+	if !m.loginRateLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "Too many login attempts, try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	token, expires, user, err := m.auth.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -292,6 +314,16 @@ func (m *Manager) requireAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+
+		// Rate limit mutating operations per user
+		if r.Method != http.MethodGet {
+			if !m.mutatingActionLimiter.Allow(user.Username) {
+				w.Header().Set("Retry-After", "30")
+				http.Error(w, "Too many requests, try again later", http.StatusTooManyRequests)
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r.WithContext(withCurrentUser(r.Context(), user)))
 	})
 }
@@ -307,7 +339,7 @@ func (m *Manager) isAuthExempt(r *http.Request) bool {
 	if m.auth != nil && m.auth.OnboardingRequired() && (path == "/auth/onboarding/status" || path == "/auth/onboarding/complete") {
 		return true
 	}
-	if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/agents") && path != "/docker/sync" && path != "/sync" {
+	if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/agents") && !strings.HasPrefix(path, "/files/") && path != "/docker/sync" && path != "/sync" {
 		return true
 	}
 	return false
