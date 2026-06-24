@@ -2,7 +2,7 @@
 
 export { useLiveSlice, useApps, useApp, useAgents, useSystemLogSources, useContainers, useStorageStatus, useUpcomingBackup, useUpcomingPrune, useRepoStatus, useGatewayInfo, usePublicRoutes } from './live-slices';
 
-export { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useReassignApp, useClearReassignment, useSnapshots, useRefreshSnapshots, useSnapshotFiles } from './apps';
+export { useRestartApp, useTriggerBackup, useTriggerPrune, useUpdateAppDesiredState, useUpdateAppRestoreEnabled, useSetRestoreSnapshotOverride, useClearRestoreSnapshotOverride, useReassignApp, useClearReassignment, useSnapshots, useRefreshSnapshots, useSnapshotFiles } from './apps';
 
 export { useSync, useRebalance, useTriggerRepoCheck, useTriggerRepoUnlock, useForceRepoUnlock, useSetManualGateway, useClearManualGateway, useTriggerStoragePrune, useNodeConfig, useUpdateNodeConfig } from './system';
 

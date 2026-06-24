@@ -183,3 +183,135 @@ func TestAppRegistry_QuarantinedOn_CopiedCorrectly(t *testing.T) {
 		t.Errorf("expected 2 quarantined nodes, got %d", len(original.QuarantinedOn))
 	}
 }
+
+func TestAppRegistry_SetRestoreSnapshotOverride(t *testing.T) {
+	reg := NewAppRegistry()
+	reg.Register("app1", common.DesiredRunning, false)
+
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+		ShortID:    "abc12345",
+		Node:       "node1",
+	}
+
+	if err := reg.SetRestoreSnapshotOverride("app1", override); err != nil {
+		t.Fatalf("SetRestoreSnapshotOverride failed: %v", err)
+	}
+
+	app := reg.Get("app1")
+	if app.RestoreSnapshotOverride == nil {
+		t.Fatal("expected RestoreSnapshotOverride to be set")
+	}
+	if app.RestoreSnapshotOverride.SnapshotID != "snap-123" {
+		t.Errorf("expected SnapshotID 'snap-123', got '%s'", app.RestoreSnapshotOverride.SnapshotID)
+	}
+	if app.RestoreSnapshotOverride.ShortID != "abc12345" {
+		t.Errorf("expected ShortID 'abc12345', got '%s'", app.RestoreSnapshotOverride.ShortID)
+	}
+	if app.RestoreSnapshotOverride.Node != "node1" {
+		t.Errorf("expected Node 'node1', got '%s'", app.RestoreSnapshotOverride.Node)
+	}
+}
+
+func TestAppRegistry_SetRestoreSnapshotOverride_UnknownApp(t *testing.T) {
+	reg := NewAppRegistry()
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+	}
+
+	err := reg.SetRestoreSnapshotOverride("unknown", override)
+	if err == nil {
+		t.Fatal("expected error for unknown app")
+	}
+}
+
+func TestAppRegistry_ClearRestoreSnapshotOverride(t *testing.T) {
+	reg := NewAppRegistry()
+	reg.Register("app1", common.DesiredRunning, false)
+
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+	}
+	_ = reg.SetRestoreSnapshotOverride("app1", override)
+
+	if err := reg.ClearRestoreSnapshotOverride("app1"); err != nil {
+		t.Fatalf("ClearRestoreSnapshotOverride failed: %v", err)
+	}
+
+	app := reg.Get("app1")
+	if app.RestoreSnapshotOverride != nil {
+		t.Error("expected RestoreSnapshotOverride to be nil after clear")
+	}
+}
+
+func TestAppRegistry_ClearRestoreSnapshotOverride_UnknownApp(t *testing.T) {
+	reg := NewAppRegistry()
+	err := reg.ClearRestoreSnapshotOverride("unknown")
+	if err == nil {
+		t.Fatal("expected error for unknown app")
+	}
+}
+
+func TestAppRegistry_Get_ReturnsCopyOfRestoreSnapshotOverride(t *testing.T) {
+	reg := NewAppRegistry()
+	reg.Register("app1", common.DesiredRunning, false)
+
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+		ShortID:    "abc12345",
+		Node:       "node1",
+	}
+	_ = reg.SetRestoreSnapshotOverride("app1", override)
+
+	app := reg.Get("app1")
+	app.RestoreSnapshotOverride.SnapshotID = "modified"
+
+	// Original should be unmodified
+	original := reg.Get("app1")
+	if original.RestoreSnapshotOverride.SnapshotID != "snap-123" {
+		t.Errorf("expected original SnapshotID 'snap-123', got '%s'", original.RestoreSnapshotOverride.SnapshotID)
+	}
+}
+
+func TestAppRegistry_ListAll_ReturnsCopyOfRestoreSnapshotOverride(t *testing.T) {
+	reg := NewAppRegistry()
+	reg.Register("app1", common.DesiredRunning, false)
+
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+	}
+	_ = reg.SetRestoreSnapshotOverride("app1", override)
+
+	apps := reg.ListAll()
+	apps[0].RestoreSnapshotOverride.SnapshotID = "modified"
+
+	// Original should be unmodified
+	apps2 := reg.ListAll()
+	if apps2[0].RestoreSnapshotOverride.SnapshotID != "snap-123" {
+		t.Errorf("expected original SnapshotID 'snap-123', got '%s'", apps2[0].RestoreSnapshotOverride.SnapshotID)
+	}
+}
+
+func TestAppRegistry_AppsForAgent_ReturnsCopyOfRestoreSnapshotOverride(t *testing.T) {
+	reg := NewAppRegistry()
+	reg.Register("app1", common.DesiredRunning, false)
+
+	agent := "node1"
+	reg.WithLock(func(apps map[common.AppID]*App) {
+		apps["app1"].AssignedAgent = &agent
+	})
+
+	override := common.RestoreSnapshotOverride{
+		SnapshotID: "snap-123",
+	}
+	_ = reg.SetRestoreSnapshotOverride("app1", override)
+
+	apps := reg.AppsForAgent("node1")
+	apps[0].RestoreSnapshotOverride.SnapshotID = "modified"
+
+	// Original should be unmodified
+	apps2 := reg.AppsForAgent("node1")
+	if apps2[0].RestoreSnapshotOverride.SnapshotID != "snap-123" {
+		t.Errorf("expected original SnapshotID 'snap-123', got '%s'", apps2[0].RestoreSnapshotOverride.SnapshotID)
+	}
+}

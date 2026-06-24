@@ -191,7 +191,12 @@ func (m *Manager) buildLastSeenMap() map[string]time.Time {
 
 // buildExcludedNodes loads exclude_nodes from each app's homectl-config.json.
 func (m *Manager) buildExcludedNodes() map[common.AppID][]string {
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		reconcileLog.Error("Failed to load app configs; excluded nodes unavailable",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 	result := make(map[common.AppID][]string)
 	for name, cfg := range appConfigs {
 		if len(cfg.ExcludeNodes) > 0 {

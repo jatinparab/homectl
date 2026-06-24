@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeConfig, NodeConfigInput, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeConfig, NodeConfigInput, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, RestoreSnapshotOverride, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -154,6 +154,34 @@ export async function updateAppRestoreEnabled(
       method: "PUT",
     },
   );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function setRestoreSnapshotOverride(
+  appId: string,
+  override: RestoreSnapshotOverride,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/apps/${appId}/restore-snapshot-override`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(override),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function clearRestoreSnapshotOverride(appId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/apps/${appId}/restore-snapshot-override`, {
+    method: "DELETE",
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `HTTP error! status: ${response.status}`);

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	agentpkg "github.com/jatinparab/homectl/agent"
 	"github.com/jatinparab/homectl/common"
@@ -209,22 +210,23 @@ type UpcomingPruneInfo struct {
 
 // AppStatus combines desired state with observed state for UI display
 type AppStatus struct {
-	AppID            string       `json:"app_id"`
-	DesiredState     string       `json:"desired_state"`
-	AssignedAgent    *string      `json:"assigned_agent"`
-	ManuallyAssigned bool         `json:"manually_assigned"` // True if placement was set manually via reassign
-	IsGlobal         bool         `json:"is_global"`         // Runs on all connected nodes
-	ObservedState    string       `json:"observed_state"`    // Consolidated (worst case)
-	Health           string       `json:"health"`            // Consolidated (worst case)
-	Phase            string       `json:"phase"`             // Consolidated
-	BackupStatus     string       `json:"backup_status"`     // Consolidated worst backup status
-	PruneStatus      string       `json:"prune_status"`      // Consolidated worst prune status
-	BackupEnabled    bool         `json:"backup_enabled"`    // Whether backup is enabled for this app
-	BackupSensitive  bool         `json:"backup_sensitive"`  // App is sensitive to backup interruptions
-	BackupInterval   string       `json:"backup_interval"`   // Human-readable backup interval
-	PruneInterval    string       `json:"prune_interval"`    // Human-readable prune interval
-	RestoreEnabled   bool         `json:"restore_enabled"`   // Whether restore-on-start is enabled
-	NodeReports      []NodeReport `json:"node_reports"`      // All node reports
+	AppID                   string                          `json:"app_id"`
+	DesiredState            string                          `json:"desired_state"`
+	AssignedAgent           *string                         `json:"assigned_agent"`
+	ManuallyAssigned        bool                            `json:"manually_assigned"` // True if placement was set manually via reassign
+	IsGlobal                bool                            `json:"is_global"`         // Runs on all connected nodes
+	ObservedState           string                          `json:"observed_state"`    // Consolidated (worst case)
+	Health                  string                          `json:"health"`            // Consolidated (worst case)
+	Phase                   string                          `json:"phase"`             // Consolidated
+	BackupStatus            string                          `json:"backup_status"`     // Consolidated worst backup status
+	PruneStatus             string                          `json:"prune_status"`      // Consolidated worst prune status
+	BackupEnabled           bool                            `json:"backup_enabled"`    // Whether backup is enabled for this app
+	BackupSensitive         bool                            `json:"backup_sensitive"`  // App is sensitive to backup interruptions
+	BackupInterval          string                          `json:"backup_interval"`   // Human-readable backup interval
+	PruneInterval           string                          `json:"prune_interval"`    // Human-readable prune interval
+	RestoreEnabled          bool                            `json:"restore_enabled"`   // Whether restore-on-start is enabled
+	RestoreSnapshotOverride *common.RestoreSnapshotOverride `json:"restore_snapshot_override,omitempty"`
+	NodeReports             []NodeReport                    `json:"node_reports"` // All node reports
 }
 
 // consolidateObservedState returns the worst observed state (error > restarting > stopped > unknown > running)
@@ -337,7 +339,12 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allApps := m.appRegistry.ListAll()
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		managerLog.Error("Failed to load app configs for API response; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 
 	// Get all agents with their app reports for per-node detail
 	agents := m.leaseManager.ListAgents()
@@ -478,23 +485,30 @@ func (m *Manager) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 			backupInterval = cfg.GetBackupInterval().String()
 		}
 
+		var restoreOverride *common.RestoreSnapshotOverride
+		if app.RestoreSnapshotOverride != nil {
+			o := *app.RestoreSnapshotOverride
+			restoreOverride = &o
+		}
+
 		status := AppStatus{
-			AppID:            appID,
-			DesiredState:     string(app.DesiredState),
-			AssignedAgent:    app.AssignedAgent,
-			ManuallyAssigned: app.ManuallyAssigned,
-			IsGlobal:         app.IsGlobal,
-			ObservedState:    consolidateObservedState(states),
-			Health:           consolidateHealth(healths),
-			Phase:            consolidatePhase(phases),
-			BackupStatus:     consolidateBackupStatus(backupStatuses),
-			PruneStatus:      consolidatePruneStatus(pruneStatuses),
-			BackupEnabled:    backupEnabled,
-			BackupSensitive:  backupSensitive,
-			BackupInterval:   backupInterval,
-			PruneInterval:    pruneInterval,
-			RestoreEnabled:   app.RestoreEnabled,
-			NodeReports:      nodeReports,
+			AppID:                   appID,
+			DesiredState:            string(app.DesiredState),
+			AssignedAgent:           app.AssignedAgent,
+			ManuallyAssigned:        app.ManuallyAssigned,
+			IsGlobal:                app.IsGlobal,
+			ObservedState:           consolidateObservedState(states),
+			Health:                  consolidateHealth(healths),
+			Phase:                   consolidatePhase(phases),
+			BackupStatus:            consolidateBackupStatus(backupStatuses),
+			PruneStatus:             consolidatePruneStatus(pruneStatuses),
+			BackupEnabled:           backupEnabled,
+			BackupSensitive:         backupSensitive,
+			BackupInterval:          backupInterval,
+			PruneInterval:           pruneInterval,
+			RestoreEnabled:          app.RestoreEnabled,
+			RestoreSnapshotOverride: restoreOverride,
+			NodeReports:             nodeReports,
 		}
 
 		result = append(result, status)
@@ -704,6 +718,8 @@ func (m *Manager) handleAPIAppRoutes(w http.ResponseWriter, r *http.Request) {
 		m.handleAPIAppSnapshotRefresh(w, r)
 	case "reassign":
 		m.handleAPIAppReassign(w, r)
+	case "restore-snapshot-override":
+		m.handleAPIAppRestoreSnapshotOverride(w, r)
 	default:
 		http.Error(w, "Unknown action", http.StatusNotFound)
 	}
@@ -754,6 +770,155 @@ func (m *Manager) handleAPIAppReassign(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// restoreSnapshotOverrideRequest is the PUT request body for setting a restore snapshot override.
+type restoreSnapshotOverrideRequest struct {
+	SnapshotID string `json:"snapshot_id"`
+	ShortID    string `json:"short_id"`
+	Time       string `json:"time"`
+	Node       string `json:"node"`
+}
+
+// handleAPIAppRestoreSnapshotOverride handles PUT/DELETE for /api/v1/apps/{appId}/restore-snapshot-override.
+// PUT  - set a snapshot override for restore
+// DELETE - clear the snapshot override
+func (m *Manager) handleAPIAppRestoreSnapshotOverride(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
+	appID := common.AppID(strings.SplitN(path, "/", 2)[0])
+
+	switch r.Method {
+	case http.MethodPut:
+		var req restoreSnapshotOverrideRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		snapshotID := strings.TrimSpace(req.SnapshotID)
+		if snapshotID == "" {
+			http.Error(w, "snapshot_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Reject any whitespace within snapshot_id (Unicode-aware)
+		for _, c := range req.SnapshotID {
+			if unicode.IsSpace(c) {
+				http.Error(w, "snapshot_id must not contain whitespace", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Parse time
+		var snapTime time.Time
+		if req.Time != "" {
+			var err error
+			snapTime, err = time.Parse(time.RFC3339, req.Time)
+			if err != nil {
+				http.Error(w, "Invalid time format, use RFC3339", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Default short_id to first 8 chars if missing
+		shortID := strings.TrimSpace(req.ShortID)
+		if shortID == "" && len(snapshotID) >= 8 {
+			shortID = snapshotID[:8]
+		}
+
+		// Validate node and snapshot if node is provided
+		var snapshotNode string
+		if req.Node != "" {
+			if !m.isAgentKnown(req.Node) {
+				http.Error(w, "Unknown node", http.StatusNotFound)
+				return
+			}
+
+			snapshotNode = req.Node
+			agent, ok := m.leaseManager.GetAgent(snapshotNode)
+			if !ok || time.Since(agent.LastSeen) > 30*time.Second {
+				http.Error(w, "cannot validate snapshot on selected node", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Query the node's snapshot list to validate the snapshot belongs to this app
+			status, body, err := m.requestAgentUnary(r.Context(), snapshotNode, common.LinkReqSnapshots, common.SnapshotsPayload{AppID: string(appID)})
+			if err != nil {
+				http.Error(w, "cannot validate snapshot on selected node", http.StatusServiceUnavailable)
+				return
+			}
+			if status != http.StatusOK {
+				http.Error(w, "cannot validate snapshot on selected node", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Parse the snapshot response
+			var snapResp struct {
+				Snapshots []struct {
+					ID      string `json:"id"`
+					ShortID string `json:"short_id"`
+				} `json:"snapshots"`
+			}
+			if err := json.Unmarshal(body, &snapResp); err != nil {
+				http.Error(w, "cannot validate snapshot on selected node", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Check if the requested snapshot ID or short_id matches any known snapshot.
+			// Store the full restic ID after validation so agents restore an unambiguous target.
+			found := false
+			for _, s := range snapResp.Snapshots {
+				if s.ID == snapshotID || s.ShortID == snapshotID || s.ShortID == shortID {
+					found = true
+					snapshotID = s.ID
+					if shortID == "" {
+						shortID = s.ShortID
+					}
+					break
+				}
+			}
+			if !found {
+				http.Error(w, "snapshot not found for this app on the selected node", http.StatusNotFound)
+				return
+			}
+		}
+
+		override := common.RestoreSnapshotOverride{
+			SnapshotID: snapshotID,
+			ShortID:    shortID,
+			Time:       snapTime,
+			Node:       snapshotNode,
+		}
+
+		if err := m.appRegistry.SetRestoreSnapshotOverride(appID, override); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		m.saveRestoreSnapshotOverrides()
+		apiLog.Info("Restore snapshot override set", "app", appID, "snapshot", snapshotID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":   "ok",
+			"override": override,
+		})
+
+	case http.MethodDelete:
+		if err := m.appRegistry.ClearRestoreSnapshotOverride(appID); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		m.saveRestoreSnapshotOverrides()
+		apiLog.Info("Restore snapshot override cleared", "app", appID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // handleAPIAppDesiredState handles PUT requests to update an app's desired state
