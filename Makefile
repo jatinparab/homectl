@@ -1,6 +1,6 @@
 .PHONY: help build build-web build-manager build-agent test clean \
         docker-manager docker-agent docker-images \
-        release release-manager release-agent \
+        release release-check release-manager release-agent \
         dev-release dev-release-manager dev-release-agent \
         dev-deploy dev-deploy-agent dev-deploy-manager \
         dev-up dev-down deploy-logs dev-logs
@@ -15,7 +15,17 @@ RELEASE_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown
 RELEASE_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CROWDSEC_VERSION ?= v1.7.8
 
-GHCR_REPO ?= ghcr.io/jatinparab/homectl
+# Build metadata injected via ldflags.
+# shellcheck disable=SC2034
+VERSION_PKG=github.com/jatinparab/homectl/buildinfo
+# shellcheck disable=SC2037
+GO_LDFLAGS=-s -w \
+	-X $(VERSION_PKG).Version=$(IMAGE_TAG) \
+	-X $(VERSION_PKG).Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	-X $(VERSION_PKG).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+DEV_DEPLOY_HOST ?= 192.168.50.101
+DEV_DEPLOY_USER ?= jatin
 
 DEV_AGENT_HOSTS ?= 192.168.50.101 192.168.50.103 192.168.50.102
 DEV_MANAGER_HOST ?= 203.0.113.10
@@ -87,17 +97,28 @@ docker-images: docker-manager docker-agent
 
 # ── Release (push to ghcr.io) ────────────────────────────────────────────
 
-release: release-manager release-agent
+release-check:
+	test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is empty; set RELEASE_VERSION or create VERSION" >&2; exit 1)
+	echo "$(RELEASE_VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || (echo "RELEASE_VERSION must be X.Y.Z, got: $(RELEASE_VERSION)" >&2; exit 1)
 
-release-manager:
-	docker build --platform linux/amd64 -f Dockerfile.manager \
+release: release-check release-manager release-agent
+
+release-manager: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.manager \
 		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
-		-t $(GHCR_REPO)/manager:latest .
-	docker push $(GHCR_REPO)/manager:latest
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/manager:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/manager:latest .
 
-release-agent:
-	docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.agent \
-		-t $(GHCR_REPO)/agent:latest --push .
+release-agent: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/agent:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/agent:latest .
 
 # ── Dev release (build local images, push to all nodes) ──────────────────
 
@@ -118,15 +139,15 @@ dev-release-agent:
 
 # ── Dev deploy (override image + force restart on all nodes) ─────────────
 
-dev-deploy:
+dev-deploy: dev-release
 	scripts/dev-deploy-agents.sh $(DEV_USER) $(DEV_COMPOSE_DIR) $(DEV_AGENT_HOSTS)
 	echo "==> Restarting manager on $(DEV_MANAGER_HOST)..."
 	ssh $(DEV_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose down && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose up -d'
 
-dev-deploy-agent:
+dev-deploy-agent: dev-release-agent
 	scripts/dev-deploy-agents.sh $(DEV_USER) $(DEV_COMPOSE_DIR) $(DEV_AGENT_HOSTS)
 
-dev-deploy-manager:
+dev-deploy-manager: dev-release-manager
 	echo "==> Restarting manager on $(DEV_MANAGER_HOST)..."
 	ssh $(DEV_USER)@$(DEV_MANAGER_HOST) 'cd $(DEV_COMPOSE_DIR) && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose down && HOMECTL_MANAGER_IMAGE=homectl/manager:local docker compose up -d'
 

@@ -753,6 +753,7 @@ func (a *Agent) reconcileOnce() {
 		rt.SetBackupSensitive(app.BackupSensitive)
 		rt.SetBackupEnabled(app.BackupEnabled)
 		rt.SetRestoreEnabled(app.RestoreEnabled)
+		rt.SetRestoreSnapshotID(app.RestoreSnapshotID)
 
 		// Skip if action already in flight
 		if rt.IsInFlight() {

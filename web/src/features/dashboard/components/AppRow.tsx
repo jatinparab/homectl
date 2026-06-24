@@ -45,6 +45,38 @@ function timeAgo(dateStr: string): string {
   return `${days}d`;
 }
 
+function formatSnapshotDate(dateStr?: string): string | null {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function restoreOverrideID(app: AppStatus): string | null {
+  const override = app.restore_snapshot_override;
+  if (!override) return null;
+  return override.short_id || override.snapshot_id.slice(0, 8);
+}
+
+function restoreOverrideLabel(app: AppStatus): string | null {
+  const id = restoreOverrideID(app);
+  return id ? `restore: old ${id}` : null;
+}
+
+function restoreOverrideTooltip(app: AppStatus): string {
+  const override = app.restore_snapshot_override;
+  const id = restoreOverrideID(app);
+  if (!override || !id) return '';
+
+  const details = [`snapshot ${id}`];
+  const date = formatSnapshotDate(override.time);
+  if (date) details.push(`from ${date}`);
+  if (override.node) details.push(`on ${override.node}`);
+
+  const inactive = app.restore_enabled ? '' : ' Restore is disabled, so this override is stored but inactive.';
+  return `Temporary restore override active. Future restores use ${details.join(' ')} instead of latest.${inactive}`;
+}
+
 interface ProgressAccumulator {
   completedFiles: number;
   completedBytes: number;
@@ -339,6 +371,15 @@ function AppNameCell({ app, isUpcomingBackup, upcomingBackup, isUpcomingPrune, u
         >
           local
         </Button>
+      )}
+      {app.restore_snapshot_override && (
+        <Tooltip content={restoreOverrideTooltip(app)}>
+          <TooltipWrap>
+            <ScheduleBadge $variant="amber" $strong>
+              {restoreOverrideLabel(app)}
+            </ScheduleBadge>
+          </TooltipWrap>
+        </Tooltip>
       )}
       {app.backup_sensitive && (
         <Tooltip content="Backup-sensitive: waits for no active connections">

@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import styled from "@emotion/styled";
 import type { AppStatus, ResticProgress, Snapshot } from "../../api/types";
 import {
+  useApps,
   useSnapshots,
   useSnapshotFiles,
   useRefreshSnapshots,
@@ -407,6 +408,7 @@ interface BackupsPageProps {
 }
 
 export function BackupsPage({ apps }: BackupsPageProps) {
+  const { data: liveApps } = useApps();
   const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
 
   const toggleApp = useCallback((appId: string) => {
@@ -419,8 +421,8 @@ export function BackupsPage({ apps }: BackupsPageProps) {
   }, []);
 
   const backupApps = useMemo(
-    () => (apps ?? []).filter((a) => a.backup_enabled).sort((a, b) => a.app_id.localeCompare(b.app_id)),
-    [apps],
+    () => (apps ?? liveApps ?? []).filter((a) => a.backup_enabled).sort((a, b) => a.app_id.localeCompare(b.app_id)),
+    [apps, liveApps],
   );
 
   return (

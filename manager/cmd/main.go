@@ -31,7 +31,11 @@ func main() {
 	repoDir := config.GetGitRepoDir(hostname)
 	port := 1338
 
-	mgr := manager.NewManager(repoDir, port)
+	mgr, err := manager.NewManager(repoDir, port)
+	if err != nil {
+		slog.Error("Failed to initialize manager", "err", err)
+		os.Exit(1)
+	}
 	reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
 	mgr.SetRuntimeContext(reconcileCtx)
 	mgr.SetReconcileCancel(reconcileCancel)

@@ -11,7 +11,10 @@ import (
 )
 
 func TestVersionAPI(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 0)
+	mgr, err := NewManager(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
 	rec := httptest.NewRecorder()
@@ -44,7 +47,10 @@ func TestVersionAPI(t *testing.T) {
 }
 
 func TestVersionAPI_MethodNotAllowed(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 0)
+	mgr, err := NewManager(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/version", nil)
 	rec := httptest.NewRecorder()
@@ -90,7 +96,10 @@ func TestAgentHeartbeatVersionPropagation(t *testing.T) {
 }
 
 func TestAgentInfoVersionInAPI(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 0)
+	mgr, err := NewManager(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Simulate heartbeat with version
 	mgr.leaseManager.Heartbeat("test-agent", "10.0.0.10", "0.1.0", nil, common.NodeMetrics{})
@@ -142,7 +151,10 @@ func TestAgentInfoVersionInAPI(t *testing.T) {
 }
 
 func TestHeartbeatHandlerVersionPropagation(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 0)
+	mgr, err := NewManager(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	body, _ := json.Marshal(HeartbeatRequest{
 		Name:    "hb-agent",
@@ -168,7 +180,10 @@ func TestHeartbeatHandlerVersionPropagation(t *testing.T) {
 }
 
 func TestMissingAgentVersionIsEmpty(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 0)
+	mgr, err := NewManager(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Heartbeat without version (old agent)
 	mgr.leaseManager.Heartbeat("old-agent", "10.0.0.30", "", nil, common.NodeMetrics{})

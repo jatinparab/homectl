@@ -24,65 +24,168 @@ const (
 	AssignmentKindPrune  = "prune"
 )
 
+// BackupAssignmentState tracks the lifecycle phase of a work assignment.
+type BackupAssignmentState int
+
+const (
+	AssignmentPending   BackupAssignmentState = iota // Waiting for agent to start
+	AssignmentRunning                                // Agent is executing
+	AssignmentUncertain                              // Agent went offline during execution
+	AssignmentFailed                                 // Explicit failure or timeout
+	AssignmentCompleted                              // Positive success evidence observed
+)
+
+func (s BackupAssignmentState) String() string {
+	switch s {
+	case AssignmentPending:
+		return "pending"
+	case AssignmentRunning:
+		return "running"
+	case AssignmentUncertain:
+		return "uncertain"
+	case AssignmentFailed:
+		return "failed"
+	case AssignmentCompleted:
+		return "completed"
+	default:
+		return "unknown"
+	}
+}
+
 // BackupAssignment represents a manager-assigned backup/prune task.
 type BackupAssignment struct {
 	Kind          string
 	AgentID       string
 	AppID         common.AppID
 	AssignedAt    time.Time
-	BackupStarted bool // set true when heartbeat shows corresponding busy=true
+	State         BackupAssignmentState
+	FailedAt      time.Time // When the assignment was marked failed
+	FailCount     int       // Number of consecutive failures
+	NextRetryAt   time.Time // When the next retry is allowed
+	BackupStarted bool      // Deprecated: kept for migration compatibility
 }
 
 // resolveWorkAssignments is called from handleDesiredApps under backupMu.
 // It resolves state transitions for in-flight assignments and may create new
 // backup or prune assignments when allowed.
+//
+// Completion semantics: only positive evidence (LastBackupAt > AssignedAt)
+// triggers success actions. A stopped or offline agent is never mistaken
+// for a completed backup.
 func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssignment, prune *BackupAssignment) {
 	m.cleanupBackupStateLocked()
+	now := time.Now()
 
 	for appID, a := range m.backupAssignments {
-		busy := m.isAppBackupBusy(a.AgentID, a.AppID)
-		if !a.BackupStarted && busy {
-			a.BackupStarted = true
-			backupMgrLog.Info("Backup assignment started", "agent", a.AgentID, "app", a.AppID)
-			continue
-		}
-		if a.BackupStarted && !busy {
-			backupMgrLog.Info("Backup assignment completed", "agent", a.AgentID, "app", a.AppID)
-			m.triggerGlobalRestore(a.AgentID, a.AppID)
-			delete(m.backupAssignments, appID)
-			continue
-		}
-		if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
-			backupMgrLog.Info("Backup assignment completed (LastBackupAt updated)", "agent", a.AgentID, "app", a.AppID)
-			m.triggerGlobalRestore(a.AgentID, a.AppID)
-			delete(m.backupAssignments, appID)
-			continue
-		}
-		if !a.BackupStarted && time.Since(a.AssignedAt) > 5*time.Minute {
-			backupMgrLog.Info("Backup assignment timed out (not started in 5m)", "agent", a.AgentID, "app", a.AppID)
-			delete(m.backupAssignments, appID)
+		switch a.State {
+		case AssignmentPending:
+			if m.isAppBackupBusy(a.AgentID, a.AppID) {
+				a.State = AssignmentRunning
+				a.BackupStarted = true
+				backupMgrLog.Info("Backup assignment started", "agent", a.AgentID, "app", a.AppID)
+				continue
+			}
+			// Timed out before starting
+			if now.Sub(a.AssignedAt) > 5*time.Minute {
+				a.State = AssignmentFailed
+				a.FailedAt = now
+				a.FailCount++
+				a.NextRetryAt = now.Add(5 * time.Minute)
+				backupMgrLog.Info("Backup assignment timed out (not started)", "agent", a.AgentID, "app", a.AppID, "fail_count", a.FailCount)
+			}
+
+		case AssignmentRunning:
+			// Check for positive success evidence first
+			if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
+				a.State = AssignmentCompleted
+				backupMgrLog.Info("Backup assignment completed (positive evidence)", "agent", a.AgentID, "app", a.AppID)
+				m.triggerGlobalRestore(a.AgentID, a.AppID)
+				delete(m.backupAssignments, appID)
+				continue
+			}
+			// Agent went offline: mark uncertain, don't treat as completion
+			if !m.isAppBackupBusy(a.AgentID, a.AppID) {
+				a.State = AssignmentUncertain
+				backupMgrLog.Info("Backup assignment uncertain (agent offline)", "agent", a.AgentID, "app", a.AppID)
+			}
+
+		case AssignmentUncertain:
+			// Agent came back online and is still busy -> back to running
+			if m.isAppBackupBusy(a.AgentID, a.AppID) {
+				a.State = AssignmentRunning
+				backupMgrLog.Info("Backup assignment back to running (agent reconnected)", "agent", a.AgentID, "app", a.AppID)
+				continue
+			}
+			// Still offline or finished: check for positive evidence
+			if m.appBackupAtNewer(a.AgentID, a.AppID, a.AssignedAt) {
+				a.State = AssignmentCompleted
+				backupMgrLog.Info("Backup assignment completed (positive evidence after reconnect)", "agent", a.AgentID, "app", a.AppID)
+				m.triggerGlobalRestore(a.AgentID, a.AppID)
+				delete(m.backupAssignments, appID)
+				continue
+			}
+			// Uncertain for too long -> fail and retry
+			if now.Sub(a.FailedAt) > 10*time.Minute {
+				a.State = AssignmentFailed
+				a.FailCount++
+				a.NextRetryAt = now.Add(5 * time.Minute)
+				backupMgrLog.Info("Backup assignment uncertain -> failed (timeout)", "agent", a.AgentID, "app", a.AppID, "fail_count", a.FailCount)
+			}
+
+		case AssignmentFailed:
+			// Expired or app removed -> clean up
+			if a.NextRetryAt.IsZero() || now.After(a.NextRetryAt) {
+				backupMgrLog.Info("Backup assignment expired", "agent", a.AgentID, "app", a.AppID)
+				delete(m.backupAssignments, appID)
+			}
 		}
 	}
 
 	// Existing prune assignment next
 	if p := m.pruneAssignment; p != nil {
-		busy := m.isAppPruneBusy(p.AgentID, p.AppID)
-		if !p.BackupStarted && busy {
-			p.BackupStarted = true
-			backupMgrLog.Info("Prune assignment started", "agent", p.AgentID, "app", p.AppID)
-			return m.backupAssignments, p
-		}
-		if p.BackupStarted && !busy {
-			backupMgrLog.Info("Prune assignment completed", "agent", p.AgentID, "app", p.AppID)
-			m.pruneAssignment = nil
-		} else if m.appPruneAtNewer(p.AgentID, p.AppID, p.AssignedAt) {
-			backupMgrLog.Info("Prune assignment completed (LastPruneAt updated)", "agent", p.AgentID, "app", p.AppID)
-			m.pruneAssignment = nil
-		} else if !p.BackupStarted && time.Since(p.AssignedAt) > 5*time.Minute {
-			backupMgrLog.Info("Prune assignment timed out (not started in 5m)", "agent", p.AgentID, "app", p.AppID)
-			m.pruneAssignment = nil
-		} else {
-			return m.backupAssignments, p
+		switch p.State {
+		case AssignmentPending:
+			if m.isAppPruneBusy(p.AgentID, p.AppID) {
+				p.State = AssignmentRunning
+				p.BackupStarted = true
+				backupMgrLog.Info("Prune assignment started", "agent", p.AgentID, "app", p.AppID)
+				return m.backupAssignments, p
+			}
+			if now.Sub(p.AssignedAt) > 5*time.Minute {
+				p.State = AssignmentFailed
+				p.FailedAt = now
+				p.FailCount++
+				p.NextRetryAt = now.Add(5 * time.Minute)
+				backupMgrLog.Info("Prune assignment timed out (not started)", "agent", p.AgentID, "app", p.AppID)
+			}
+
+		case AssignmentRunning:
+			if m.appPruneAtNewer(p.AgentID, p.AppID, p.AssignedAt) {
+				p.State = AssignmentCompleted
+				backupMgrLog.Info("Prune assignment completed", "agent", p.AgentID, "app", p.AppID)
+				m.pruneAssignment = nil
+			} else if !m.isAppPruneBusy(p.AgentID, p.AppID) {
+				p.State = AssignmentUncertain
+				backupMgrLog.Info("Prune assignment uncertain (agent offline)", "agent", p.AgentID, "app", p.AppID)
+			}
+
+		case AssignmentUncertain:
+			if m.isAppPruneBusy(p.AgentID, p.AppID) {
+				p.State = AssignmentRunning
+			} else if m.appPruneAtNewer(p.AgentID, p.AppID, p.AssignedAt) {
+				p.State = AssignmentCompleted
+				m.pruneAssignment = nil
+			} else if now.Sub(p.FailedAt) > 10*time.Minute {
+				p.State = AssignmentFailed
+				p.FailCount++
+				p.NextRetryAt = now.Add(5 * time.Minute)
+			}
+
+		case AssignmentFailed:
+			if p.NextRetryAt.IsZero() || now.After(p.NextRetryAt) {
+				backupMgrLog.Info("Prune assignment expired", "agent", p.AgentID, "app", p.AppID)
+				m.pruneAssignment = nil
+			}
 		}
 	}
 
@@ -96,7 +199,6 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 	pruneAgent, pruneApp, pruneOK := m.findStalestPruneApp()
 
 	if len(backupCandidates) > 0 {
-		now := time.Now()
 		for _, c := range backupCandidates {
 			if _, ok := m.backupAssignments[c.AppID]; ok {
 				continue
@@ -106,6 +208,7 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 				AgentID:    c.AgentID,
 				AppID:      c.AppID,
 				AssignedAt: now,
+				State:      AssignmentPending,
 			}
 			backupMgrLog.Info("Backup assignment created", "agent", c.AgentID, "app", c.AppID)
 		}
@@ -121,7 +224,8 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 			Kind:       AssignmentKindPrune,
 			AgentID:    pruneAgent,
 			AppID:      pruneApp,
-			AssignedAt: time.Now(),
+			AssignedAt: now,
+			State:      AssignmentPending,
 		}
 		m.lastScheduledWorkKind = AssignmentKindPrune
 		backupMgrLog.Info("Prune assignment created", "agent", pruneAgent, "app", pruneApp)
@@ -138,6 +242,12 @@ func (m *Manager) cleanupBackupStateLocked() {
 	for _, app := range m.appRegistry.ListAll() {
 		validApps[app.ID] = true
 	}
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		backupMgrLog.Warn("Failed to load app configs; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 
 	knownAgents := make(map[string]bool)
 	for _, agent := range m.leaseManager.ListAgents() {
@@ -145,12 +255,20 @@ func (m *Manager) cleanupBackupStateLocked() {
 	}
 
 	for appID := range m.pruneState {
-		if !validApps[appID] {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
 			delete(m.pruneState, appID)
 		}
 	}
+	for appID := range m.backupAssignments {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
+			delete(m.backupAssignments, appID)
+		}
+	}
+	if m.pruneAssignment != nil && (!validApps[m.pruneAssignment.AppID] || !backupEnabledForApp(m.pruneAssignment.AppID, appConfigs)) {
+		m.pruneAssignment = nil
+	}
 	for appID, pending := range m.pendingGlobalRestores {
-		if !validApps[appID] {
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
 			delete(m.pendingGlobalRestores, appID)
 			continue
 		}
@@ -168,7 +286,18 @@ func (m *Manager) cleanupBackupStateLocked() {
 // findStaleBackupApps returns all running+healthy apps with stale backup data.
 func (m *Manager) findStaleBackupApps() []BackupAssignment {
 	agents := m.leaseManager.ListAgents()
-	appConfigs := m.loadAppConfigs()
+	restoreOverrides := make(map[common.AppID]bool)
+	for _, app := range m.appRegistry.ListAll() {
+		if app.RestoreSnapshotOverride != nil {
+			restoreOverrides[app.ID] = true
+		}
+	}
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		backupMgrLog.Warn("Failed to load app configs; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 	now := time.Now()
 	candidates := make([]BackupAssignment, 0)
 
@@ -178,13 +307,16 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 		}
 		for _, report := range agent.AppReports {
 			cfg := appConfigs[string(report.AppID)]
-			if cfg.BackupEnabled != nil && !*cfg.BackupEnabled {
+			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
 			if cfg.IsGlobal && agent.Name != m.gatewayNode {
 				continue
 			}
 			if report.ObservedState != common.ObservedRunning || report.Health != common.HealthHealthy {
+				continue
+			}
+			if restoreOverrides[report.AppID] {
 				continue
 			}
 			if report.BackupBusy || report.PruneBusy {
@@ -215,7 +347,12 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 // findStalestPruneApp finds the app most overdue for prune.
 func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok bool) {
 	agents := m.leaseManager.ListAgents()
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		backupMgrLog.Warn("Failed to load app configs; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 	now := time.Now()
 	var stalestTime time.Time
 
@@ -225,7 +362,7 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 		}
 		for _, report := range agent.AppReports {
 			cfg := appConfigs[string(report.AppID)]
-			if cfg.BackupEnabled != nil && !*cfg.BackupEnabled {
+			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
 			if cfg.IsGlobal && agent.Name != m.gatewayNode {
@@ -255,25 +392,25 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 	return
 }
 
-// invalidateWorkAssignments clears stale assignments if their agent/app is no
-// longer viable before they start.
+// invalidateWorkAssignments clears stale pending assignments if their agent/app
+// is no longer viable. Running, uncertain, and failed assignments are left alone.
 func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 	m.backupMu.Lock()
 	defer m.backupMu.Unlock()
 
-	invalidate := func(prefix string, a **BackupAssignment, allowPhases map[common.Phase]bool) {
+	invalidate := func(prefix string, a **BackupAssignment) {
 		cur := *a
-		if cur == nil || cur.BackupStarted {
+		if cur == nil || cur.State != AssignmentPending {
 			return
 		}
 		if !alive[cur.AgentID] {
-			backupMgrLog.Info("Clearing assignment (agent dead)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
+			backupMgrLog.Info("Clearing pending assignment (agent dead)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 			*a = nil
 			return
 		}
 		agent, ok := m.leaseManager.GetAgent(cur.AgentID)
 		if !ok {
-			backupMgrLog.Info("Clearing assignment (agent not found)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
+			backupMgrLog.Info("Clearing pending assignment (agent not found)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 			*a = nil
 			return
 		}
@@ -281,42 +418,40 @@ func (m *Manager) invalidateWorkAssignments(alive map[string]bool) {
 			if report.AppID != cur.AppID {
 				continue
 			}
-			if allowPhases[report.Phase] {
-				return
-			}
 			if report.ObservedState != common.ObservedRunning {
-				backupMgrLog.Debug("Clearing assignment (app not running)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID, "state", report.ObservedState)
+				backupMgrLog.Debug("Clearing pending assignment (app not running)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID, "state", report.ObservedState)
 				*a = nil
 				return
 			}
 			return
 		}
-		backupMgrLog.Info("Clearing assignment (app not in agent reports)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
+		backupMgrLog.Info("Clearing pending assignment (app not in agent reports)", "kind", prefix, "agent", cur.AgentID, "app", cur.AppID)
 		*a = nil
 	}
 
 	for appID := range m.backupAssignments {
 		a := m.backupAssignments[appID]
 		ptr := &a
-		invalidate("Backup", ptr, map[common.Phase]bool{
-			common.PhaseBackupStopping: true,
-			common.PhaseBackupStopped:  true,
-			common.PhaseBackingUp:      true,
-		})
+		invalidate("Backup", ptr)
 		if *ptr == nil {
 			delete(m.backupAssignments, appID)
 		} else {
 			m.backupAssignments[appID] = *ptr
 		}
 	}
-	invalidate("Prune", &m.pruneAssignment, map[common.Phase]bool{})
+	invalidate("Prune", &m.pruneAssignment)
 }
 
 // triggerGlobalRestore checks if the completed backup was for a global app on the
 // gateway node. If so, it flags all other alive agents to restore that app.
 // Called under backupMu.
 func (m *Manager) triggerGlobalRestore(agentID string, appID common.AppID) {
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		backupMgrLog.Warn("Failed to load app configs; using defaults",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 	cfg, ok := appConfigs[string(appID)]
 	if !ok || !cfg.IsGlobal {
 		return

@@ -53,13 +53,14 @@ type SnapshotEntry struct {
 
 // Restic interface for backup/restore operations
 type Restic interface {
-	Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
+	Restore(ctx context.Context, appID common.AppID, snapshotID string, onProgress ProgressCallback, onLog LogCallback) error
 	Backup(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error
 	Prune(ctx context.Context, appID common.AppID, onLog LogCallback) error
 	Check(ctx context.Context, onLog LogCallback) error
 	Unlock(ctx context.Context, onLog LogCallback) error
 	ForceUnlock(ctx context.Context, onLog LogCallback) error
 	LatestSnapshot(ctx context.Context, appID common.AppID) (snapshotTime time.Time, snapshotID string, err error)
+	Snapshot(ctx context.Context, appID common.AppID, snapshotID string) (snapshotTime time.Time, resolvedID string, err error)
 	ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error)
 	ListSnapshotFiles(ctx context.Context, snapshotID, path string) ([]SnapshotEntry, error)
 }
@@ -254,7 +255,12 @@ func (r *RepoRestic) runWithJSON(prefix string, cmd *exec.Cmd, onProgress Progre
 	return stderrLines, cmd.Wait()
 }
 
-func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress ProgressCallback, onLog LogCallback) error {
+func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, snapshotID string, onProgress ProgressCallback, onLog LogCallback) error {
+	target := strings.TrimSpace(snapshotID)
+	wasLatest := target == ""
+	if target == "" {
+		target = "latest"
+	}
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repoURL(),
 		"--retry-lock", "2m",
@@ -264,15 +270,17 @@ func (r *RepoRestic) Restore(ctx context.Context, appID common.AppID, onProgress
 		"--delete",
 		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
 		fmt.Sprintf("--include=/%s", string(appID)),
-		"latest",
+		target,
 	)
 
 	stderrLines, err := r.runWithJSON("restore:"+string(appID), cmd, onProgress, onLog)
 
-	// If restore failed, check if it's because there are no snapshots (valid case)
+	// If restore failed, check if it's because there are no snapshots.
+	// Only suppress this error when target is "latest" (no explicit snapshot requested).
+	// Explicit snapshot failures must propagate so the app does not start without the requested data.
 	if err != nil {
 		for _, line := range stderrLines {
-			if containsNoSnapshotError(line) {
+			if containsNoSnapshotError(line) && wasLatest {
 				backupLog.Info("No snapshots available for restore (valid case, continuing startup)", "app", appID)
 				return nil
 			}
@@ -289,6 +297,7 @@ func containsNoSnapshotError(line string) bool {
 	noSnapshotPatterns := []string{
 		"no snapshots",
 		"no snapshot",
+		"could not find any snapshot",
 		"could not find a snapshot",
 		"snapshot not found",
 	}
@@ -459,6 +468,34 @@ func (r *RepoRestic) LatestSnapshot(ctx context.Context, appID common.AppID) (ti
 	sort.Slice(snapshots, func(i, j int) bool {
 		return snapshots[i].Time.After(snapshots[j].Time)
 	})
+
+	return snapshots[0].Time, snapshots[0].ID, nil
+}
+
+// Snapshot returns the timestamp and resolved ID of a specific snapshot for an app.
+// Returns zero time + empty string if the snapshot is not found (not an error).
+func (r *RepoRestic) Snapshot(ctx context.Context, appID common.AppID, snapshotID string) (time.Time, string, error) {
+	cmd := r.resticCmdCtx(ctx,
+		"-r", r.repoURL(),
+		"snapshots",
+		"--json",
+		"--tag", fmt.Sprintf("%s,homectl", string(appID)),
+		snapshotID,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("restic snapshots: %w", err)
+	}
+
+	var snapshots []resticSnapshot
+	if err := json.Unmarshal(output, &snapshots); err != nil {
+		return time.Time{}, "", fmt.Errorf("parse snapshots json: %w", err)
+	}
+
+	if len(snapshots) == 0 {
+		return time.Time{}, "", nil
+	}
 
 	return snapshots[0].Time, snapshots[0].ID, nil
 }

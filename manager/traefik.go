@@ -72,6 +72,14 @@ func (c HomectlConfig) IsBackupEnabled() bool {
 	return *c.BackupEnabled
 }
 
+func backupEnabledForApp(appID common.AppID, configs map[string]HomectlConfig) bool {
+	cfg, ok := configs[string(appID)]
+	if ok && cfg.BackupEnabled != nil {
+		return *cfg.BackupEnabled
+	}
+	return appID != common.GatewayProxyAppID
+}
+
 // GetBackupInterval returns the per-app backup interval, or the default if not set.
 func (c HomectlConfig) GetBackupInterval() time.Duration {
 	if c.BackupInterval != "" {
@@ -83,15 +91,24 @@ func (c HomectlConfig) GetBackupInterval() time.Duration {
 	return BackupInterval
 }
 
-// loadAppConfigs loads homectl-config.json files from docker directories
-func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
+// LoadAppConfigs loads homectl-config.json files from docker directories.
+// If includeApps is non-empty, only configs for those apps are loaded.
+// If strict is true, a missing docker directory is a fatal error.
+// If strict is false, a missing docker directory is logged and app configs
+// default to an empty map (routing still works, just no custom subdomains).
+// Per-app config parse failures are logged with app context and skipped.
+func (m *Manager) LoadAppConfigs(includeApps []string, strict bool) (map[string]HomectlConfig, error) {
 	configs := make(map[string]HomectlConfig)
 
 	dockerDir := filepath.Join(m.repoDir, "docker")
 	entries, err := os.ReadDir(dockerDir)
 	if err != nil {
-		caddyMgrLog.Error("Failed to read docker directory", "err", err)
-		return configs
+		caddyMgrLog.Error("Failed to read docker directory; app configs unavailable",
+			"path", dockerDir, "err", err)
+		if strict {
+			return configs, fmt.Errorf("failed to read docker directory: %w", err)
+		}
+		return configs, nil
 	}
 
 	for _, entry := range entries {
@@ -99,25 +116,40 @@ func (m *Manager) loadAppConfigs() map[string]HomectlConfig {
 			continue
 		}
 
+		// If includeApps is set, only process matching apps
+		if len(includeApps) > 0 {
+			found := false
+			for _, app := range includeApps {
+				if app == entry.Name() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
 		appName := entry.Name()
 		configPath := filepath.Join(dockerDir, appName, "homectl-config.json")
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			// Config file doesn't exist or can't be read - that's fine
+			// Config file doesn't exist - that's fine, skip silently
 			continue
 		}
 
 		var cfg HomectlConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			caddyMgrLog.Error("Failed to parse config", "path", configPath, "err", err)
+			caddyMgrLog.Error("Failed to parse app config; app will use default settings",
+				"app", appName, "path", configPath, "err", err)
 			continue
 		}
 
 		configs[appName] = cfg
 	}
 
-	return configs
+	return configs, nil
 }
 
 // GenerateCaddyConfig generates Caddy config for a specific node.
@@ -132,8 +164,15 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 		return "", err
 	}
 
-	// Load app configs for exposed_subdomains overrides
-	appConfigs := m.loadAppConfigs()
+	// Load app configs for exposed_subdomains overrides.
+	// A missing docker directory is tolerated here because config generation
+	// can proceed with default routing (no custom subdomain overrides).
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		caddyMgrLog.Warn("Failed to load app configs; using default routing (no subdomain overrides)",
+			"err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 
 	// Get all agents and their app reports, sorted by name for deterministic output
 	agents := m.leaseManager.ListAgents()
@@ -329,6 +368,12 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	b.WriteString("}\n\n")
 
 	return b.String(), nil
+}
+
+// LoadAppConfigsStrict is a convenience wrapper that loads app configs with
+// strict error handling (missing docker directory is fatal).
+func (m *Manager) LoadAppConfigsStrict(includeApps []string) (map[string]HomectlConfig, error) {
+	return m.LoadAppConfigs(includeApps, true)
 }
 
 // GenerateTraefikConfig is kept for mixed-version compatibility. It now emits
