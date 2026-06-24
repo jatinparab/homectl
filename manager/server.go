@@ -45,6 +45,7 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/dashboard", m.handleAPIDashboard)
 	mux.HandleFunc("/api/v1/agents", m.handleAPIAgents)
 	mux.HandleFunc("/api/v1/agents/", m.handleAPIAgentDetail)
+	mux.HandleFunc("/api/v1/version", m.handleAPIVersion)
 	mux.HandleFunc("/api/v1/agent-configs/", m.handleAPIAgentConfig)
 	mux.HandleFunc("/api/v1/apps", m.handleAPIApps)
 	mux.HandleFunc("/api/v1/apps/", m.handleAPIAppRoutes)

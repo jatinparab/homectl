@@ -57,6 +57,7 @@ type LinkMessage struct {
 type AgentHeartbeatPayload struct {
 	Name    string      `json:"name"`
 	IP      string      `json:"ip"`
+	Version string      `json:"version,omitempty"`
 	Reports []AppReport `json:"reports,omitempty"`
 	Metrics NodeMetrics `json:"metrics,omitempty"`
 }

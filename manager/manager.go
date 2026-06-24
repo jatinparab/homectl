@@ -14,6 +14,7 @@ import (
 
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
+	"github.com/jatinparab/homectl/buildinfo"
 )
 
 var managerLog = slog.With("area", "manager")
@@ -608,4 +609,9 @@ func (m *Manager) DiscoverApps() {
 		count++
 	}
 	managerLog.Info("App discovery complete", "count", count)
+}
+
+// versionInfo returns the manager's build-time version info.
+func (m *Manager) versionInfo() buildinfo.Info {
+	return buildinfo.ForComponent("manager")
 }

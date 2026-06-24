@@ -34,12 +34,27 @@ type DashboardResponse struct {
 type APIAgentInfo struct {
 	Name         string             `json:"name"`
 	IP           string             `json:"ip"`
+	Version      string             `json:"version,omitempty"`
 	LastSeen     string             `json:"last_seen"`
 	RegisteredAt string             `json:"registered_at"`
 	Online       bool               `json:"online"`
 	IsGateway    bool               `json:"is_gateway"`
 	Metrics      common.NodeMetrics `json:"metrics,omitempty"`
 	AppReports   []common.AppReport `json:"app_reports"`
+}
+
+// handleAPIVersion returns the manager runtime version metadata.
+// GET /api/v1/version
+func (m *Manager) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	info := m.versionInfo()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
 }
 
 // handleAPIDashboard returns aggregated stats for the dashboard
@@ -107,6 +122,7 @@ func (m *Manager) handleAPIAgents(w http.ResponseWriter, r *http.Request) {
 		apiAgents = append(apiAgents, APIAgentInfo{
 			Name:         agent.Name,
 			IP:           agent.IP,
+			Version:      agent.Version,
 			LastSeen:     agent.LastSeen.Format(time.RFC3339),
 			RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 			Online:       now.Sub(agent.LastSeen) < 30*time.Second,
@@ -156,6 +172,7 @@ func (m *Manager) handleAPIAgentDetail(w http.ResponseWriter, r *http.Request) {
 	apiAgent := APIAgentInfo{
 		Name:         agent.Name,
 		IP:           agent.IP,
+		Version:      agent.Version,
 		LastSeen:     agent.LastSeen.Format(time.RFC3339),
 		RegisteredAt: agent.RegisteredAt.Format(time.RFC3339),
 		Online:       now.Sub(agent.LastSeen) < 30*time.Second,

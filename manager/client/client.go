@@ -284,8 +284,8 @@ func (c *Client) IsConnected() bool {
 }
 
 // Heartbeat sends a heartbeat to the manager with app reports.
-func (c *Client) Heartbeat(name, ip string, reports []common.AppReport, metrics common.NodeMetrics) error {
-	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Reports: reports, Metrics: metrics}, 10*time.Second)
+func (c *Client) Heartbeat(name, ip, version string, reports []common.AppReport, metrics common.NodeMetrics) error {
+	_, err := c.request(common.LinkReqAgentHeartbeat, common.AgentHeartbeatPayload{Name: name, IP: ip, Version: version, Reports: reports, Metrics: metrics}, 10*time.Second)
 	return err
 }
 

@@ -16,7 +16,7 @@ func TestGenerateManagerCaddyfileRoutesHomelabToGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.leaseManager.Heartbeat("akira", "10.42.1.101", nil, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("akira", "10.42.1.101", "", nil, common.NodeMetrics{})
 	if err := m.saveWireGuardPeers([]wireGuardPeerState{
 		{Name: "akira", PublicKey: "test-key", Address: "10.44.0.7"},
 	}); err != nil {
@@ -87,7 +87,7 @@ func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{
 			AppID:         "photos",
 			ObservedState: common.ObservedRunning,
@@ -113,7 +113,7 @@ func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{
 			AppID:         "photos",
 			ObservedState: common.ObservedRunning,
@@ -250,10 +250,10 @@ func TestGenerateAgentCaddyConfigDedupesDuplicateAppReports(t *testing.T) {
 
 	// Register two agents both reporting the same app as running.
 	// windranger is the gateway.
-	m.leaseManager.Heartbeat("windranger", "10.44.0.3", []common.AppReport{
+	m.leaseManager.Heartbeat("windranger", "10.44.0.3", "", []common.AppReport{
 		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
 	}, common.NodeMetrics{})
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
 	}, common.NodeMetrics{})
 
@@ -301,10 +301,10 @@ func TestGenerateAgentCaddyConfigPrefersGatewayNode(t *testing.T) {
 
 	// Register two agents both reporting the same app as running.
 	// windranger is the gateway, akira is not.
-	m.leaseManager.Heartbeat("windranger", "10.44.0.3", []common.AppReport{
+	m.leaseManager.Heartbeat("windranger", "10.44.0.3", "", []common.AppReport{
 		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
 	}, common.NodeMetrics{})
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
 	}, common.NodeMetrics{})
 
@@ -340,8 +340,8 @@ func TestGenerateAgentCaddyConfigFallsBackWhenGatewayMissingApp(t *testing.T) {
 	}
 
 	// Only akira reports the app. windranger is the gateway but doesn't run it.
-	m.leaseManager.Heartbeat("windranger", "10.44.0.3", nil, common.NodeMetrics{})
-	m.leaseManager.Heartbeat("akira", "10.44.0.7", []common.AppReport{
+	m.leaseManager.Heartbeat("windranger", "10.44.0.3", "", nil, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("akira", "10.44.0.7", "", []common.AppReport{
 		{AppID: "photos", ObservedState: common.ObservedRunning, Health: common.HealthHealthy, Port: 2283},
 	}, common.NodeMetrics{})
 
