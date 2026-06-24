@@ -13,11 +13,14 @@ import (
 func setupAgentLinkTest(t *testing.T) (*Manager, net.Conn, *json.Encoder, *json.Decoder) {
 	t.Helper()
 	t.Setenv("HOMECTL_JOIN_TOKEN", "test-token")
-	mgr := NewManagerWithConfig(Config{
+	mgr, err := NewManagerWithConfig(Config{
 		RepoDir: t.TempDir(),
 		Port:    0,
 		Lease:   DefaultLeaseConfig(),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	serverConn, clientConn := net.Pipe()
 	go mgr.attachAgentLink(serverConn)

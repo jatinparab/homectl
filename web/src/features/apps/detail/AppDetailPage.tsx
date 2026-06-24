@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import styled from '@emotion/styled';
-import { useApp, useContainers, useUpdateAppDesiredState, useRestartApp, useTriggerBackup, useSnapshots, useGatewayInfo } from '../../../api/hooks';
+import { useApp, useContainers, useUpdateAppDesiredState, useRestartApp, useTriggerBackup, useSnapshots, useGatewayInfo, useRefreshSnapshots, useSetRestoreSnapshotOverride, useClearRestoreSnapshotOverride } from '../../../api/hooks';
 import { HealthBadge, PhaseBadge, DesiredToggle, ContainerStateBadge } from '../../../features/shared/components/StatusBadge';
 import { useStreamSubscription } from '../../../api/live';
-import type { NodeReport } from '../../../api/types';
-import { Button } from '../../../components/ui';
+import type { NodeReport, RestoreSnapshotOverride, Snapshot } from '../../../api/types';
+import { Button, Dialog } from '../../../components/ui';
 
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return '—';
@@ -16,6 +16,17 @@ function timeAgo(dateStr?: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function shortSnapshotID(override: RestoreSnapshotOverride): string {
+  return override.short_id || override.snapshot_id.slice(0, 8);
+}
+
+function restoreOverrideText(override: RestoreSnapshotOverride): string {
+  const parts = [`snapshot ${shortSnapshotID(override)}`];
+  if (override.time) parts.push(`from ${timeAgo(override.time)}`);
+  if (override.node) parts.push(`on ${override.node}`);
+  return parts.join(' ');
 }
 
 // ── Shared styled components ──────────────────
@@ -292,6 +303,104 @@ const BackupTime = styled.span<{ $error?: boolean }>`
   color: ${(p) => (p.$error ? '#dc2626' : '#57534e')};
 `;
 
+const RestoreWarning = styled.div`
+  font-size: 11px;
+  line-height: 1.4;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: ${(p) => p.theme.radii.md};
+  padding: 8px 10px;
+`;
+
+const ModalBody = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const ModalToolbar = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #a8a29e;
+`;
+
+const SnapshotList = styled.div`
+  border: 1px solid ${(p) => p.theme.colors.border};
+  border-radius: ${(p) => p.theme.radii.md};
+  overflow: hidden;
+`;
+
+const SnapshotButton = styled.button<{ $selected: boolean }>`
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid ${(p) => p.theme.colors.borderLight};
+  background: ${(p) => (p.$selected ? '#f0fdfa' : '#fff')};
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &:hover {
+    background: ${(p) => (p.$selected ? '#ccfbf1' : '#faf9f7')};
+  }
+`;
+
+const SnapshotRowTop = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const RadioDot = styled.span<{ $selected: boolean }>`
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid ${(p) => (p.$selected ? '#0d9488' : '#c9c4bc')};
+  background: ${(p) => (p.$selected ? '#0d9488' : '#fff')};
+  flex-shrink: 0;
+`;
+
+const SnapshotID = styled.span`
+  font-size: 11px;
+  font-weight: 600;
+  color: #1c1917;
+`;
+
+const LatestTag = styled.span`
+  font-size: 10px;
+  color: #0d9488;
+  background: #ccfbf1;
+  border-radius: ${(p) => p.theme.radii.sm};
+  padding: 1px 5px;
+`;
+
+const SnapshotMeta = styled.div`
+  margin: 3px 0 0 18px;
+  font-size: 10px;
+  color: #78716c;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+`;
+
+const ModalError = styled.div`
+  font-size: 11px;
+  color: #dc2626;
+`;
+
+const ModalFooter = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+`;
+
 // ── LogPanel component ───────────────────────
 
 interface LogLine { id: number; text: string }
@@ -454,6 +563,7 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
   const desiredMutation = useUpdateAppDesiredState();
   const restartMutation = useRestartApp();
   const backupMutation = useTriggerBackup();
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
 
   const allReports = useMemo(
     () => [...(app?.node_reports ?? [])].sort((a, b) => a.node.localeCompare(b.node)),
@@ -534,14 +644,24 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
                   Restart
                 </Button>
                 {app.backup_enabled && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => backupMutation.mutate({ appId, node: onlineReport.node })}
-                    disabled={backupMutation.isPending}
-                  >
-                    Backup now
-                  </Button>
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setRestoreModalOpen(true)}
+                      disabled={!logNode}
+                    >
+                      Restore from previous backup
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => backupMutation.mutate({ appId, node: onlineReport.node })}
+                      disabled={backupMutation.isPending}
+                    >
+                      Backup now
+                    </Button>
+                  </>
                 )}
               </>
             )}
@@ -586,6 +706,14 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
                   <DD>every {app.prune_interval}</DD>
                   <DT>Restore on start</DT>
                   <DD>{app.restore_enabled ? 'yes' : 'no'}</DD>
+                  {app.restore_snapshot_override && (
+                    <>
+                      <DT>Restore override</DT>
+                      <DD title={app.restore_snapshot_override.snapshot_id}>
+                        {shortSnapshotID(app.restore_snapshot_override)}
+                      </DD>
+                    </>
+                  )}
                   <DT>Sensitive</DT>
                   <DD>{app.backup_sensitive ? 'yes' : 'no'}</DD>
                   {snapshots?.snapshots && (
@@ -598,6 +726,16 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
               )}
             </DL>
           </SectionWrap>
+
+          {app.backup_enabled && app.restore_snapshot_override && (
+            <SectionWrap>
+              <SectionTitle>Restore override</SectionTitle>
+              <RestoreWarning>
+                Temporary restore override active: future restores use {restoreOverrideText(app.restore_snapshot_override)} instead of latest.
+                {!app.restore_enabled ? ' Restore is disabled, so this is stored but inactive.' : ''}
+              </RestoreWarning>
+            </SectionWrap>
+          )}
 
           {app.backup_enabled && allReports.some((nr) => nr.last_backup_at) && (
             <SectionWrap>
@@ -657,7 +795,180 @@ export function AppDetailPage({ appId, onBack }: AppDetailPageProps) {
           </LogPanelWrap>
         </RightCol>
       </Content>
+      {app.backup_enabled && (
+        <RestoreSnapshotOverrideModal
+          appId={appId}
+          node={logNode}
+          open={restoreModalOpen}
+          onOpenChange={setRestoreModalOpen}
+          currentOverride={app.restore_snapshot_override}
+        />
+      )}
     </HC>
+  );
+}
+
+function RestoreSnapshotOverrideModal({
+  appId,
+  node,
+  open,
+  onOpenChange,
+  currentOverride,
+}: {
+  appId: string;
+  node: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  currentOverride?: RestoreSnapshotOverride;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { data, isLoading, error } = useSnapshots(open ? appId : null, node);
+  const refreshMutation = useRefreshSnapshots();
+  const setMutation = useSetRestoreSnapshotOverride();
+  const clearMutation = useClearRestoreSnapshotOverride();
+
+  useEffect(() => {
+    if (open) setSelectedId(currentOverride?.snapshot_id ?? null);
+  }, [open, currentOverride?.snapshot_id]);
+
+  const snapshots = data?.snapshots ?? [];
+  const selectedSnapshot = snapshots.find((s) => s.id === selectedId);
+  const mutationError = setMutation.error ?? clearMutation.error;
+
+  function save() {
+    if (!node || !selectedSnapshot) return;
+    setMutation.mutate(
+      {
+        appId,
+        override: {
+          snapshot_id: selectedSnapshot.id,
+          short_id: selectedSnapshot.short_id,
+          time: selectedSnapshot.time,
+          node,
+        },
+      },
+      { onSuccess: () => onOpenChange(false) },
+    );
+  }
+
+  function clear() {
+    clearMutation.mutate(appId, { onSuccess: () => onOpenChange(false) });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Restore from previous backup"
+      description="Choose a snapshot to use for future restores instead of latest. This stays active until cleared."
+    >
+      <ModalBody>
+        {currentOverride && (
+          <RestoreWarning>
+            Current override: {restoreOverrideText(currentOverride)}.
+            {!currentOverride.time && !currentOverride.node ? '' : ' '}
+            Future restores use this snapshot until cleared.
+          </RestoreWarning>
+        )}
+
+        <ModalToolbar>
+          <span>
+            {!node
+              ? 'Select an online node to view snapshots.'
+              : data?.cached_at
+                ? `Cached ${timeAgo(data.cached_at)}${data.loading ? ' · refreshing' : ''}`
+                : isLoading
+                  ? 'Loading snapshots...'
+                  : `Node ${node}`}
+          </span>
+          {node && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => refreshMutation.mutate({ appId, node })}
+              disabled={refreshMutation.isPending || data?.loading}
+            >
+              {refreshMutation.isPending || data?.loading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          )}
+        </ModalToolbar>
+
+        {error && <ModalError>{error.message}</ModalError>}
+        {data?.error && <ModalError>Cache error: {data.error}</ModalError>}
+
+        {node && !isLoading && snapshots.length === 0 && !data?.loading && (
+          <NoData>No snapshots found for this app on this node.</NoData>
+        )}
+
+        {snapshots.length > 0 && (
+          <SnapshotList>
+            {snapshots.map((snapshot, index) => (
+              <SnapshotOption
+                key={snapshot.id}
+                snapshot={snapshot}
+                latest={index === 0}
+                selected={selectedId === snapshot.id}
+                onSelect={() => setSelectedId(snapshot.id)}
+              />
+            ))}
+          </SnapshotList>
+        )}
+
+        {mutationError && <ModalError>{mutationError.message}</ModalError>}
+
+        <ModalFooter>
+          <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          {currentOverride && (
+            <Button
+              variant="secondary"
+              size="sm"
+              color="amber"
+              onClick={clear}
+              disabled={clearMutation.isPending}
+            >
+              Clear override
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={save}
+            disabled={!selectedSnapshot || setMutation.isPending}
+          >
+            Use selected snapshot
+          </Button>
+        </ModalFooter>
+      </ModalBody>
+    </Dialog>
+  );
+}
+
+function SnapshotOption({
+  snapshot,
+  latest,
+  selected,
+  onSelect,
+}: {
+  snapshot: Snapshot;
+  latest: boolean;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <SnapshotButton type="button" $selected={selected} onClick={onSelect}>
+      <SnapshotRowTop>
+        <RadioDot $selected={selected} />
+        <SnapshotID>{snapshot.short_id}</SnapshotID>
+        {latest && <LatestTag>latest</LatestTag>}
+      </SnapshotRowTop>
+      <SnapshotMeta>
+        <span title={new Date(snapshot.time).toLocaleString()}>{timeAgo(snapshot.time)}</span>
+        <span>{snapshot.hostname}</span>
+        {snapshot.tags?.length > 0 && <span>{snapshot.tags.join(', ')}</span>}
+      </SnapshotMeta>
+    </SnapshotButton>
   );
 }
 

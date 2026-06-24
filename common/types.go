@@ -101,16 +101,27 @@ type AppReport struct {
 	PostBackupPhase   string          `json:"post_backup_phase,omitempty"`
 }
 
+// RestoreSnapshotOverride carries metadata about a user-selected snapshot
+// to restore from instead of latest.
+type RestoreSnapshotOverride struct {
+	SnapshotID string    `json:"snapshot_id"`
+	ShortID    string    `json:"short_id,omitempty"`
+	Time       time.Time `json:"time,omitempty"`
+	Node       string    `json:"node,omitempty"`
+}
+
 // DesiredApp is sent from manager to agent with desired state
 type DesiredApp struct {
-	AppID           AppID        `json:"app_id"`
-	DesiredState    DesiredState `json:"desired_state"`
-	BackupSensitive bool         `json:"backup_sensitive,omitempty"`
-	BackupNow       bool         `json:"backup_now,omitempty"`
-	PruneNow        bool         `json:"prune_now,omitempty"`
-	BackupEnabled   bool         `json:"backup_enabled"`
-	RestoreEnabled  bool         `json:"restore_enabled"`
-	RestoreNow      bool         `json:"restore_now,omitempty"`
+	AppID                   AppID                    `json:"app_id"`
+	DesiredState            DesiredState             `json:"desired_state"`
+	BackupSensitive         bool                     `json:"backup_sensitive,omitempty"`
+	BackupNow               bool                     `json:"backup_now,omitempty"`
+	PruneNow                bool                     `json:"prune_now,omitempty"`
+	BackupEnabled           bool                     `json:"backup_enabled"`
+	RestoreEnabled          bool                     `json:"restore_enabled"`
+	RestoreNow              bool                     `json:"restore_now,omitempty"`
+	RestoreSnapshotID       string                   `json:"restore_snapshot_id,omitempty"`
+	RestoreSnapshotOverride *RestoreSnapshotOverride `json:"restore_snapshot_override,omitempty"`
 }
 
 // DesiredAppsResponse is the response from /agents/{id}/desired

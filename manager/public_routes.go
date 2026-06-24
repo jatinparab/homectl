@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -407,7 +408,13 @@ func (m *Manager) SyncManagerHostCaddyConfig() error {
 	return writeAndReloadManagerCaddyfile(content)
 }
 
+// writeAndReloadManagerCaddyfile atomically writes and validates the Caddyfile.
+// It is serialized with caddySyncMu to prevent concurrent generation/reload races.
+// The previous file is preserved on failure so the last known-good config is always available.
 func writeAndReloadManagerCaddyfile(content string) error {
+	caddySyncMu.Lock()
+	defer caddySyncMu.Unlock()
+
 	path := managerCaddyfilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -420,13 +427,59 @@ func writeAndReloadManagerCaddyfile(content string) error {
 			return nil
 		}
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+
+	// Save previous config for rollback on failure
+	var backup []byte
+	if existing, err := os.ReadFile(path); err == nil {
+		backup = make([]byte, len(existing))
+		copy(backup, existing)
+	}
+
+	// Write to temp file, then validate, then atomically rename
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
 		return err
 	}
+	defer os.Remove(tmpPath) // clean up on any exit path
+
+	// Validate with Caddy (dry-run check)
+	caddyCmdMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, caddyBinary, "validate", "--config", tmpPath, "--adapter", "caddyfile")
+	validateOutput, validateErr := cmd.CombinedOutput()
+	caddyCmdMu.Unlock()
+	if validateErr != nil {
+		caddyContainerLog.Warn("Caddy config validation failed, restoring previous file",
+			"err", validateErr, "output", string(validateOutput))
+		os.Rename(tmpPath, tmpPath+".invalid") // preserve invalid config for debugging
+		if backup != nil {
+			os.WriteFile(path, backup, 0644) // restore previous working config
+		} else {
+			os.Remove(tmpPath) // nothing to restore
+		}
+		return fmt.Errorf("caddy config validation failed: %s", validateOutput)
+	}
+
+	// Validate passed, atomically rename
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		if backup != nil {
+			os.WriteFile(path, backup, 0644) // restore previous working config
+		}
+		return err
+	}
+
 	if err := ensureCaddy(); err != nil {
 		return err
 	}
+	caddyRestartW.Lock()
+	defer caddyRestartW.Unlock()
 	if err := reloadCaddy(); err != nil {
+		// Restore previous config on reload failure
+		if backup != nil {
+			os.WriteFile(path, backup, 0644)
+		}
 		return err
 	}
 	return nil

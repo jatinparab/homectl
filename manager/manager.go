@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -108,10 +109,15 @@ type Manager struct {
 
 	wgCleanupStop chan struct{}
 	startedAt     time.Time
+
+	// Rate limiters
+	loginRateLimiter      *rateLimiter        // per-IP rate limiter for login
+	mutatingActionLimiter *perUserRateLimiter // per-user rate limiter for mutations
 }
 
-// NewManager creates a new Manager instance with default lease config
-func NewManager(repoDir string, port int) *Manager {
+// NewManager creates a new Manager instance with default lease config.
+// Returns an error if any initialization step fails (store, auth, encryption key).
+func NewManager(repoDir string, port int) (*Manager, error) {
 	return NewManagerWithConfig(Config{
 		RepoDir: repoDir,
 		Port:    port,
@@ -119,8 +125,9 @@ func NewManager(repoDir string, port int) *Manager {
 	})
 }
 
-// NewManagerWithConfig creates a new Manager instance with custom config
-func NewManagerWithConfig(cfg Config) *Manager {
+// NewManagerWithConfig creates a new Manager instance with custom config.
+// Returns an error if any initialization step fails.
+func NewManagerWithConfig(cfg Config) (*Manager, error) {
 	stateDir := config.StateDir
 	if cfg.RepoDir != "" && cfg.RepoDir != config.RepoDir {
 		stateDir = filepath.Join(cfg.RepoDir, ".homectl")
@@ -140,22 +147,33 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		pruneState:            make(map[common.AppID]PruneState),
 		routeHealth:           make(map[string]PublicRouteHealth),
 		agentLinks:            make(map[string]*agentLinkPeer),
+		loginRateLimiter:      newRateLimiter(5, 1*time.Minute),         // 5 login attempts per IP per minute
+		mutatingActionLimiter: newPerUserRateLimiter(30, 1*time.Minute), // 30 mutations per user per minute
 	}
 	store, err := OpenStore(stateDir)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("open store: %w", err)
 	}
 	authSvc, err := NewAuthService(context.Background(), store.Users, store.Sessions)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("init auth service: %w", err)
 	}
+	// Deliver onboarding token to a dedicated file to avoid plaintext in logs.
+	tokenFile := filepath.Join(stateDir, "onboarding-token")
+	authSvc.SetTokenDelivered(func(token string) {
+		if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+			managerLog.Error("Failed to write onboarding token file", "err", err)
+		}
+		managerLog.Warn("First user onboarding — the admin token has been written to " + tokenFile +
+			". Anyone with access to that file can create the first admin account.")
+	})
 	agentConfigKey, err := ensureAgentConfigEncryptionKey(stateDir)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("ensure agent config encryption key: %w", err)
 	}
 	agentConfigSvc, err := NewAgentConfigServiceWithKey(store.AgentConfigs, agentConfigKey)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("init agent config service: %w", err)
 	}
 	if err := agentConfigSvc.SeedFromEnv(context.Background()); err != nil {
 		managerLog.Warn("Failed to seed agent config from environment", "err", err)
@@ -166,7 +184,7 @@ func NewManagerWithConfig(cfg Config) *Manager {
 	mgr.loadRepoState()
 	mgr.loadPruneState()
 	mgr.loadPublicRoutes()
-	return mgr
+	return mgr, nil
 }
 
 func (m *Manager) SetRuntimeContext(ctx context.Context) {
@@ -409,6 +427,57 @@ func (m *Manager) saveRestoreDisabled() {
 	}
 }
 
+// restoreSnapshotOverridesPath returns the path to the persisted restore snapshot overrides file.
+func (m *Manager) restoreSnapshotOverridesPath() string {
+	return filepath.Join(m.stateDir, "restore-snapshot-overrides.json")
+}
+
+// loadRestoreSnapshotOverrides reads the persisted restore snapshot overrides.
+// Returns nil map if the file doesn't exist (not an error).
+func (m *Manager) loadRestoreSnapshotOverrides() map[string]common.RestoreSnapshotOverride {
+	data, err := os.ReadFile(m.restoreSnapshotOverridesPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			managerLog.Error("Failed to read restore-snapshot-overrides file", "err", err)
+		}
+		return nil
+	}
+
+	var overrides map[string]common.RestoreSnapshotOverride
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		managerLog.Error("Failed to parse restore-snapshot-overrides file", "err", err)
+		return nil
+	}
+	return overrides
+}
+
+// saveRestoreSnapshotOverrides persists the current restore snapshot overrides.
+// Only stores apps that have an override set.
+func (m *Manager) saveRestoreSnapshotOverrides() {
+	allApps := m.appRegistry.ListAll()
+	overrides := make(map[string]common.RestoreSnapshotOverride)
+	for _, app := range allApps {
+		if app.RestoreSnapshotOverride != nil {
+			overrides[string(app.ID)] = *app.RestoreSnapshotOverride
+		}
+	}
+
+	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
+		managerLog.Error("Failed to create state dir", "err", err)
+		return
+	}
+
+	data, err := json.MarshalIndent(overrides, "", "  ")
+	if err != nil {
+		managerLog.Error("Failed to marshal restore-snapshot-overrides", "err", err)
+		return
+	}
+
+	if err := os.WriteFile(m.restoreSnapshotOverridesPath(), data, 0644); err != nil {
+		managerLog.Error("Failed to write restore-snapshot-overrides file", "err", err)
+	}
+}
+
 // manualAssignmentsPath returns the path to the persisted manual-assignments file.
 func (m *Manager) manualAssignmentsPath() string {
 	return filepath.Join(m.stateDir, "manual-assignments.json")
@@ -474,9 +543,23 @@ func (m *Manager) DiscoverApps() {
 		return
 	}
 
-	appConfigs := m.loadAppConfigs()
+	// Build include list from entries already read to avoid a second directory scan
+	includeApps := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			includeApps = append(includeApps, entry.Name())
+		}
+	}
+
+	appConfigs, err := m.LoadAppConfigs(includeApps, false)
+	if err != nil {
+		managerLog.Error("Failed to load app configs; using defaults for all apps",
+			"err", err)
+	}
+
 	persisted := m.loadDesiredState()
 	restoreDisabled := m.loadRestoreDisabled()
+	restoreOverrides := m.loadRestoreSnapshotOverrides()
 	manualAssignments := m.loadManualAssignments()
 
 	count := 0
@@ -503,12 +586,18 @@ func (m *Manager) DiscoverApps() {
 		if cfg, ok := appConfigs[entry.Name()]; ok {
 			isGlobal = cfg.IsGlobal
 		}
+		// If config loading failed, isGlobal defaults to false (safe default)
 
 		m.appRegistry.Register(appID, desiredState, isGlobal)
 
 		// Apply restore-disabled state
 		if restoreDisabled[entry.Name()] {
 			m.appRegistry.UpdateRestoreEnabled(appID, false)
+		}
+
+		// Restore restore snapshot override
+		if override, ok := restoreOverrides[entry.Name()]; ok {
+			_ = m.appRegistry.SetRestoreSnapshotOverride(appID, override)
 		}
 
 		// Restore manual assignment

@@ -158,7 +158,33 @@ func (m *Manager) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	fullPath := filepath.Join(m.repoDir, cleanPath)
 
-	info, err := os.Stat(fullPath)
+	// Resolve symlinks and verify the result stays within the repository root.
+	// This prevents traversal via symlinks pointing outside the repo.
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Error accessing file", http.StatusInternalServerError)
+		return
+	}
+
+	// Canonicalize the repo root (resolve any symlinks in the repo path itself)
+	canonicalRepoDir, err := filepath.EvalSymlinks(m.repoDir)
+	if err != nil {
+		http.Error(w, "Repository root unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	// Verify resolved path is beneath the canonical repo directory
+	rel, err := filepath.Rel(canonicalRepoDir, resolvedPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
+	info, err := os.Stat(resolvedPath)
 	if os.IsNotExist(err) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -169,11 +195,11 @@ func (m *Manager) handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if info.IsDir() {
-		m.serveDirectory(w, fullPath, cleanPath)
+		m.serveDirectory(w, resolvedPath, cleanPath)
 		return
 	}
 
-	m.serveFile(w, fullPath)
+	m.serveFile(w, resolvedPath)
 }
 
 func (m *Manager) serveFile(w http.ResponseWriter, fullPath string) {
@@ -250,7 +276,12 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	}
 
 	agentApps := m.appRegistry.AppsForAgent(agentID)
-	appConfigs := m.loadAppConfigs()
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		serverLog.Error("Failed to load app configs; using defaults",
+			"agent", agentID, "err", err)
+		appConfigs = make(map[string]HomectlConfig)
+	}
 
 	// Resolve scheduled backup/prune assignments under lock
 	m.backupMu.Lock()
@@ -275,10 +306,17 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	restoreSent := make(map[common.AppID]bool)
 	for _, app := range agentApps {
 		da := common.DesiredApp{
-			AppID:          app.ID,
-			DesiredState:   app.DesiredState,
-			BackupEnabled:  backupEnabledForApp(app.ID, appConfigs),
-			RestoreEnabled: app.RestoreEnabled,
+			AppID:             app.ID,
+			DesiredState:      app.DesiredState,
+			BackupEnabled:     backupEnabledForApp(app.ID, appConfigs),
+			RestoreEnabled:    app.RestoreEnabled,
+			RestoreSnapshotID: "",
+		}
+		if app.RestoreSnapshotOverride != nil {
+			da.RestoreSnapshotID = app.RestoreSnapshotOverride.SnapshotID
+			// Deep-copy override for transmission to agent
+			override := *app.RestoreSnapshotOverride
+			da.RestoreSnapshotOverride = &override
 		}
 		if cfg, ok := appConfigs[string(app.ID)]; ok {
 			da.BackupSensitive = cfg.BackupSensitive

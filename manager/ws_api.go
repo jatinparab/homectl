@@ -52,12 +52,41 @@ type wsStreamMsg struct {
 	Done   bool   `json:"done,omitempty"`
 }
 
+func wsCheckOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients (e.g. curl, scripts) send no Origin
+		return true
+	}
+	// Allow same-origin requests
+	publicHost, err := homectlPublicHost()
+	if err == nil {
+		allowedOrigin := "https://" + publicHost
+		if origin == allowedOrigin {
+			return true
+		}
+		// Also allow http for local development
+		allowedOrigin = "http://" + publicHost
+		if origin == allowedOrigin {
+			return true
+		}
+		// Allow manager localhost aliases
+		if strings.HasPrefix(origin, "http://"+homectlLocalhostAlias) ||
+			strings.HasPrefix(origin, "http://"+managerLocalhostAlias) {
+			return true
+		}
+	}
+	// Same-host fallback: if origin matches the request's Host header
+	if r.Host != "" && origin == "https://"+r.Host {
+		return true
+	}
+	return false
+}
+
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(_ *http.Request) bool {
-		return true
-	},
+	CheckOrigin:     wsCheckOrigin,
 }
 
 // handleAPIWebSocketState streams dashboard state updates and multiplexes log streams.
