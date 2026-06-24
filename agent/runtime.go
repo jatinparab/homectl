@@ -25,27 +25,28 @@ type PruneState struct {
 type AppRuntime struct {
 	mu sync.RWMutex
 
-	AppID           common.AppID
-	Phase           common.Phase           // Stored lifecycle phase
-	Running         common.RunningStatus   // From sensor: is container running?
-	Health          common.HealthStatus    // From health check
-	LastSeen        time.Time              // Last time sensor saw this app
-	RestartCount    int                    // Incremented on each start/restart
-	Quarantined     bool                   // Set when RestartCount >= MaxRestarts
-	InFlight        bool                   // Action in progress
-	InFlightAction  string                 // Description of the in-flight action
-	LastError       string                 // Last error message
-	Port            int                    // First exposed port (for gateway proxy routing)
-	Progress        *common.ResticProgress // Restic backup/restore progress
-	Backup          BackupState
-	Prune           PruneState
-	BackupSensitive bool            // App is sensitive to backup interruptions (e.g. media streaming)
-	BackupEnabled   bool            // Whether backups/restores are enabled for this app (default true)
-	RestoreEnabled  bool            // Whether restore-on-start is enabled (default true)
-	PhaseLog        *PhaseLogBuffer // Ring buffer for phase (pull) logs
-	UnhealthyCount  int             // Consecutive unhealthy health checks
-	LastActiveAt    time.Time       // Last time active TCP connections were seen
-	PostBackupPhase string          // Phase of post-backup steps (prune/check), separate from lifecycle Phase
+	AppID             common.AppID
+	Phase             common.Phase           // Stored lifecycle phase
+	Running           common.RunningStatus   // From sensor: is container running?
+	Health            common.HealthStatus    // From health check
+	LastSeen          time.Time              // Last time sensor saw this app
+	RestartCount      int                    // Incremented on each start/restart
+	Quarantined       bool                   // Set when RestartCount >= MaxRestarts
+	InFlight          bool                   // Action in progress
+	InFlightAction    string                 // Description of the in-flight action
+	LastError         string                 // Last error message
+	Port              int                    // First exposed port (for gateway proxy routing)
+	Progress          *common.ResticProgress // Restic backup/restore progress
+	Backup            BackupState
+	Prune             PruneState
+	BackupSensitive   bool            // App is sensitive to backup interruptions (e.g. media streaming)
+	BackupEnabled     bool            // Whether backups/restores are enabled for this app (default true)
+	RestoreEnabled    bool            // Whether restore-on-start is enabled (default true)
+	PhaseLog          *PhaseLogBuffer // Ring buffer for phase (pull) logs
+	UnhealthyCount    int             // Consecutive unhealthy health checks
+	LastActiveAt      time.Time       // Last time active TCP connections were seen
+	PostBackupPhase   string          // Phase of post-backup steps (prune/check), separate from lifecycle Phase
+	RestoreSnapshotID string          // Selected snapshot ID for restore override
 }
 
 // NewAppRuntime creates a new AppRuntime for the given app
@@ -254,6 +255,20 @@ func (r *AppRuntime) IsRestoreEnabled() bool {
 	return r.RestoreEnabled
 }
 
+// SetRestoreSnapshotID sets the snapshot ID for restore override
+func (r *AppRuntime) SetRestoreSnapshotID(snapshotID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.RestoreSnapshotID = snapshotID
+}
+
+// GetRestoreSnapshotID returns the snapshot ID for restore override (thread-safe)
+func (r *AppRuntime) GetRestoreSnapshotID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.RestoreSnapshotID
+}
+
 // RunningStatus returns whether the app is running (thread-safe)
 func (r *AppRuntime) RunningStatus() common.RunningStatus {
 	r.mu.RLock()
@@ -294,21 +309,22 @@ func (r *AppRuntime) Snapshot() AppRuntime {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return AppRuntime{
-		AppID:           r.AppID,
-		Phase:           r.Phase,
-		Running:         r.Running,
-		Health:          r.Health,
-		LastSeen:        r.LastSeen,
-		RestartCount:    r.RestartCount,
-		Quarantined:     r.Quarantined,
-		InFlight:        r.InFlight,
-		LastError:       r.LastError,
-		Port:            r.Port,
-		Progress:        r.Progress,
-		Backup:          r.Backup,
-		BackupSensitive: r.BackupSensitive,
-		BackupEnabled:   r.BackupEnabled,
-		RestoreEnabled:  r.RestoreEnabled,
+		AppID:             r.AppID,
+		Phase:             r.Phase,
+		Running:           r.Running,
+		Health:            r.Health,
+		LastSeen:          r.LastSeen,
+		RestartCount:      r.RestartCount,
+		Quarantined:       r.Quarantined,
+		InFlight:          r.InFlight,
+		LastError:         r.LastError,
+		Port:              r.Port,
+		Progress:          r.Progress,
+		Backup:            r.Backup,
+		BackupSensitive:   r.BackupSensitive,
+		BackupEnabled:     r.BackupEnabled,
+		RestoreEnabled:    r.RestoreEnabled,
+		RestoreSnapshotID: r.RestoreSnapshotID,
 	}
 }
 

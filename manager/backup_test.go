@@ -46,3 +46,51 @@ func TestAppPruneAtNewerDoesNotDeadlockWhileBackupMuHeld(t *testing.T) {
 		t.Fatalf("expected prune state %v, got %v", prunedAt, state.LastPruneAt)
 	}
 }
+
+func TestFindStaleBackupAppsSkipsRestoreSnapshotOverride(t *testing.T) {
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+
+	now := time.Now()
+	m.appRegistry.Register("overridden-app", common.DesiredRunning, false)
+	m.appRegistry.Register("normal-app", common.DesiredRunning, false)
+	_ = m.appRegistry.SetRestoreSnapshotOverride("overridden-app", common.RestoreSnapshotOverride{
+		SnapshotID: "snap-override",
+	})
+
+	m.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+		{
+			AppID:           "overridden-app",
+			ObservedState:   common.ObservedRunning,
+			Health:          common.HealthHealthy,
+			LastBackupAt:    now.Add(-2 * time.Hour),
+			BackupBusy:      false,
+			PruneBusy:       false,
+			BackupDefer:     time.Time{},
+			LastActiveAt:    time.Time{},
+			PostBackupPhase: "",
+		},
+		{
+			AppID:           "normal-app",
+			ObservedState:   common.ObservedRunning,
+			Health:          common.HealthHealthy,
+			LastBackupAt:    now.Add(-2 * time.Hour),
+			BackupBusy:      false,
+			PruneBusy:       false,
+			BackupDefer:     time.Time{},
+			LastActiveAt:    time.Time{},
+			PostBackupPhase: "",
+		},
+	}, common.NodeMetrics{})
+
+	candidates := m.findStaleBackupApps()
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 backup candidate, got %d", len(candidates))
+	}
+	if candidates[0].AppID != "normal-app" {
+		t.Fatalf("expected normal-app candidate, got %s", candidates[0].AppID)
+	}
+}

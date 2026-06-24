@@ -306,10 +306,17 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	restoreSent := make(map[common.AppID]bool)
 	for _, app := range agentApps {
 		da := common.DesiredApp{
-			AppID:          app.ID,
-			DesiredState:   app.DesiredState,
-			BackupEnabled:  backupEnabledForApp(app.ID, appConfigs),
-			RestoreEnabled: app.RestoreEnabled,
+			AppID:             app.ID,
+			DesiredState:      app.DesiredState,
+			BackupEnabled:     backupEnabledForApp(app.ID, appConfigs),
+			RestoreEnabled:    app.RestoreEnabled,
+			RestoreSnapshotID: "",
+		}
+		if app.RestoreSnapshotOverride != nil {
+			da.RestoreSnapshotID = app.RestoreSnapshotOverride.SnapshotID
+			// Deep-copy override for transmission to agent
+			override := *app.RestoreSnapshotOverride
+			da.RestoreSnapshotOverride = &override
 		}
 		if cfg, ok := appConfigs[string(app.ID)]; ok {
 			da.BackupSensitive = cfg.BackupSensitive

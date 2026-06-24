@@ -278,6 +278,7 @@ func (e *Executor) execute(action Action) {
 // executeStart starts an app with smart restore: skip restore when local data is current.
 func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	needsRestore := true
+	restoreSnapshotID := rt.GetRestoreSnapshotID()
 
 	// If backup is disabled for this app, skip all restore logic
 	if !rt.IsBackupEnabled() {
@@ -291,17 +292,17 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 		needsRestore = false
 	}
 
-	// Short-circuit: if we just backed up this app locally, data is already current
-	if needsRestore {
-		e.agent.runtimeMu.Lock()
-		justBacked := rt.Backup.JustBackedUp
-		rt.Backup.JustBackedUp = false
-		e.agent.runtimeMu.Unlock()
+	// Clear JustBackedUp flag on every start so the next restart doesn't
+	// incorrectly skip restoring latest. Only use the flag to skip restore
+	// when no override exists (user explicitly requested a specific snapshot).
+	e.agent.runtimeMu.Lock()
+	justBacked := rt.Backup.JustBackedUp
+	rt.Backup.JustBackedUp = false
+	e.agent.runtimeMu.Unlock()
 
-		if justBacked {
-			executorLog.Info("Restarting after local backup, skipping restore", "app", appID)
-			needsRestore = false
-		}
+	if justBacked && restoreSnapshotID == "" {
+		executorLog.Info("Restarting after local backup, skipping restore", "app", appID)
+		needsRestore = false
 	}
 
 	if needsRestore {
@@ -310,6 +311,8 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 			executorLog.Info("Failed to load backup meta (will restore)", "app", appID, "err", metaErr)
 		} else if meta == nil {
 			executorLog.Info("No backup meta (first start, will restore)", "app", appID)
+		} else if restoreSnapshotID != "" {
+			executorLog.Info("Restore snapshot override set, restoring selected snapshot", "app", appID, "snapshot", restoreSnapshotID)
 		} else {
 			// Metadata exists — check if a newer snapshot is available
 			snapTime, _, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
@@ -330,7 +333,7 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	if needsRestore {
 		rt.SetPhase(common.PhaseRestoring)
 		rt.PhaseLog.Clear()
-		err := e.restic.Restore(e.ctx, appID, func(p *common.ResticProgress) {
+		err := e.restic.Restore(e.ctx, appID, restoreSnapshotID, func(p *common.ResticProgress) {
 			rt.SetProgress(p)
 		}, func(line string) {
 			rt.PhaseLog.Write(line)
@@ -343,7 +346,14 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 		}
 
 		// After restore, write metadata with the actual snapshot timestamp
-		snapTime, snapID, snapErr := e.restic.LatestSnapshot(e.ctx, appID)
+		var snapTime time.Time
+		var snapID string
+		var snapErr error
+		if restoreSnapshotID != "" {
+			snapTime, snapID, snapErr = e.restic.Snapshot(e.ctx, appID, restoreSnapshotID)
+		} else {
+			snapTime, snapID, snapErr = e.restic.LatestSnapshot(e.ctx, appID)
+		}
 		if snapErr != nil {
 			executorLog.Info("Failed to query snapshot after restore", "app", appID, "err", snapErr)
 		} else if !snapTime.IsZero() {

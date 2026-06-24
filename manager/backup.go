@@ -28,11 +28,11 @@ const (
 type BackupAssignmentState int
 
 const (
-	AssignmentPending    BackupAssignmentState = iota // Waiting for agent to start
-	AssignmentRunning                                 // Agent is executing
-	AssignmentUncertain                               // Agent went offline during execution
-	AssignmentFailed                                  // Explicit failure or timeout
-	AssignmentCompleted                               // Positive success evidence observed
+	AssignmentPending   BackupAssignmentState = iota // Waiting for agent to start
+	AssignmentRunning                                // Agent is executing
+	AssignmentUncertain                              // Agent went offline during execution
+	AssignmentFailed                                 // Explicit failure or timeout
+	AssignmentCompleted                              // Positive success evidence observed
 )
 
 func (s BackupAssignmentState) String() string {
@@ -59,10 +59,10 @@ type BackupAssignment struct {
 	AppID         common.AppID
 	AssignedAt    time.Time
 	State         BackupAssignmentState
-	FailedAt      time.Time     // When the assignment was marked failed
-	FailCount     int           // Number of consecutive failures
-	NextRetryAt   time.Time     // When the next retry is allowed
-	BackupStarted bool          // Deprecated: kept for migration compatibility
+	FailedAt      time.Time // When the assignment was marked failed
+	FailCount     int       // Number of consecutive failures
+	NextRetryAt   time.Time // When the next retry is allowed
+	BackupStarted bool      // Deprecated: kept for migration compatibility
 }
 
 // resolveWorkAssignments is called from handleDesiredApps under backupMu.
@@ -204,11 +204,11 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 				continue
 			}
 			m.backupAssignments[c.AppID] = &BackupAssignment{
-				Kind:      AssignmentKindBackup,
-				AgentID:   c.AgentID,
-				AppID:     c.AppID,
+				Kind:       AssignmentKindBackup,
+				AgentID:    c.AgentID,
+				AppID:      c.AppID,
 				AssignedAt: now,
-				State:     AssignmentPending,
+				State:      AssignmentPending,
 			}
 			backupMgrLog.Info("Backup assignment created", "agent", c.AgentID, "app", c.AppID)
 		}
@@ -286,6 +286,12 @@ func (m *Manager) cleanupBackupStateLocked() {
 // findStaleBackupApps returns all running+healthy apps with stale backup data.
 func (m *Manager) findStaleBackupApps() []BackupAssignment {
 	agents := m.leaseManager.ListAgents()
+	restoreOverrides := make(map[common.AppID]bool)
+	for _, app := range m.appRegistry.ListAll() {
+		if app.RestoreSnapshotOverride != nil {
+			restoreOverrides[app.ID] = true
+		}
+	}
 	appConfigs, err := m.LoadAppConfigs(nil, false)
 	if err != nil {
 		backupMgrLog.Warn("Failed to load app configs; using defaults",
@@ -308,6 +314,9 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 				continue
 			}
 			if report.ObservedState != common.ObservedRunning || report.Health != common.HealthHealthy {
+				continue
+			}
+			if restoreOverrides[report.AppID] {
 				continue
 			}
 			if report.BackupBusy || report.PruneBusy {
