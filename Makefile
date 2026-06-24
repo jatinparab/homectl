@@ -1,15 +1,31 @@
 .PHONY: help build build-web build-manager build-agent test clean \
         docker-manager docker-agent docker-images \
-        release release-manager release-agent \
+        release release-check release-manager release-agent \
         dev-release dev-release-manager dev-release-agent \
         dev-deploy dev-deploy-agent dev-deploy-manager \
         dev-up dev-down deploy-logs dev-logs
 
 IMAGE_REPO ?= homectl
-IMAGE_TAG ?= local
+IMAGE_TAG ?= $(shell head -n1 VERSION 2>/dev/null || echo local)
+GHCR_IMAGE_REPO ?= ghcr.io/jatinparab/homectl
+RELEASE_VERSION ?= $(shell head -n1 VERSION 2>/dev/null | tr -d '\r\n')
+RELEASE_TAG ?= v$(RELEASE_VERSION)
+RELEASE_PLATFORMS ?= linux/amd64,linux/arm64
+RELEASE_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+RELEASE_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CROWDSEC_VERSION ?= v1.7.8
 
-GHCR_REPO ?= ghcr.io/jatinparab/homectl
+# Build metadata injected via ldflags.
+# shellcheck disable=SC2034
+VERSION_PKG=github.com/jatinparab/homectl/buildinfo
+# shellcheck disable=SC2037
+GO_LDFLAGS=-s -w \
+	-X $(VERSION_PKG).Version=$(IMAGE_TAG) \
+	-X $(VERSION_PKG).Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	-X $(VERSION_PKG).BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+DEV_DEPLOY_HOST ?= 192.168.50.101
+DEV_DEPLOY_USER ?= jatin
 
 DEV_AGENT_HOSTS ?= 192.168.50.101 192.168.50.103 192.168.50.102
 DEV_MANAGER_HOST ?= 203.0.113.10
@@ -54,35 +70,55 @@ build-web:
 	cp -r web/dist manager/ui/
 
 build-manager: build-web
-	go build -o ./bin/manager ./manager/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=manager" -o ./bin/manager ./manager/cmd
 
 build-agent:
-	go build -o ./bin/agent ./agent/cmd
+	go build -ldflags="$(GO_LDFLAGS) -X $(VERSION_PKG).Component=agent" -o ./bin/agent ./agent/cmd
 
 test:
 	go test ./...
 
 docker-manager:
-	docker build -f Dockerfile.manager --build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) -t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
+	docker build -f Dockerfile.manager \
+		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/manager:$(IMAGE_TAG) .
 
 docker-agent:
-	docker build -f Dockerfile.agent -t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
+	docker build -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(IMAGE_TAG) \
+		--build-arg HOMECTL_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+		--build-arg HOMECTL_BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t $(IMAGE_REPO)/agent:$(IMAGE_TAG) .
 
 docker-images: docker-manager docker-agent
 
 # ── Release (push to ghcr.io) ────────────────────────────────────────────
 
-release: release-manager release-agent
+release-check:
+	test -n "$(RELEASE_VERSION)" || (echo "RELEASE_VERSION is empty; set RELEASE_VERSION or create VERSION" >&2; exit 1)
+	echo "$(RELEASE_VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' || (echo "RELEASE_VERSION must be X.Y.Z, got: $(RELEASE_VERSION)" >&2; exit 1)
 
-release-manager:
-	docker build --platform linux/amd64 -f Dockerfile.manager \
+release: release-check release-manager release-agent
+
+release-manager: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.manager \
 		--build-arg CROWDSEC_VERSION=$(CROWDSEC_VERSION) \
-		-t $(GHCR_REPO)/manager:latest .
-	docker push $(GHCR_REPO)/manager:latest
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/manager:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/manager:latest .
 
-release-agent:
-	docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.agent \
-		-t $(GHCR_REPO)/agent:latest --push .
+release-agent: release-check
+	docker buildx build --push --platform $(RELEASE_PLATFORMS) -f Dockerfile.agent \
+		--build-arg HOMECTL_VERSION=$(RELEASE_VERSION) \
+		--build-arg HOMECTL_COMMIT=$(RELEASE_COMMIT) \
+		--build-arg HOMECTL_BUILD_DATE=$(RELEASE_BUILD_DATE) \
+		-t $(GHCR_IMAGE_REPO)/agent:$(RELEASE_TAG) \
+		-t $(GHCR_IMAGE_REPO)/agent:latest .
 
 # ── Dev release (build local images, push to all nodes) ──────────────────
 

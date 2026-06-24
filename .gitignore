@@ -43,3 +43,4 @@ go.work.sum
 .DS_Store
 # Local Pi runtime state
 .atl/
+.pi/

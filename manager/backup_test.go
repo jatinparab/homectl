@@ -15,7 +15,7 @@ func TestAppPruneAtNewerDoesNotDeadlockWhileBackupMuHeld(t *testing.T) {
 	defer m.Stop()
 
 	prunedAt := time.Now()
-	m.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+	m.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		{
 			AppID:       "app1",
 			LastPruneAt: prunedAt,
@@ -61,7 +61,7 @@ func TestFindStaleBackupAppsSkipsRestoreSnapshotOverride(t *testing.T) {
 		SnapshotID: "snap-override",
 	})
 
-	m.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+	m.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		{
 			AppID:           "overridden-app",
 			ObservedState:   common.ObservedRunning,

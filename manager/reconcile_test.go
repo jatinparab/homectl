@@ -405,10 +405,10 @@ func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
 	}
 	defer mgr.Stop()
 
-	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 	}, common.NodeMetrics{})
-	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
@@ -428,11 +428,11 @@ func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 	}
 	defer mgr.Stop()
 
-	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
-	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
@@ -452,10 +452,10 @@ func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
 	}
 	defer mgr.Stop()
 
-	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 	}, common.NodeMetrics{})
-	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", []common.AppReport{
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
 		healthyReport("adguard"),
 	}, common.NodeMetrics{})
@@ -492,8 +492,8 @@ func TestReconcileOnce_FullIntegration(t *testing.T) {
 	defer mgr.Stop()
 
 	// Register agents
-	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", nil, common.NodeMetrics{})
-	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", nil, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", nil, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", nil, common.NodeMetrics{})
 
 	// Register apps
 	mgr.appRegistry.Register("app1", common.DesiredRunning, false)

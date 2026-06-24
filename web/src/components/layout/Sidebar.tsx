@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import styled from '@emotion/styled';
 import {
   LayoutDashboard,
@@ -16,6 +17,8 @@ import { pathFromTab } from '../../app/navigation';
 import { HomectlHeaderLogo } from './HomectlLogo';
 import { LiveStatusDot } from './LiveStatusDot';
 import { Tooltip } from '../ui/Tooltip';
+import { fetchVersion } from '../../api/client';
+import type { VersionInfo } from '../../api/client';
 
 interface NavItem {
   id: Tab;
@@ -54,15 +57,33 @@ const SidebarAside = styled.aside`
 
 const BrandRow = styled.div`
   display: flex;
-  height: 56px;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  padding: 8px 12px;
   border-bottom: 1px solid ${({ theme }) => theme.colors.neutralBorder};
-  padding: 0 12px;
 
   @media (min-width: 768px) {
+    flex-direction: row;
+    height: 56px;
+    align-items: center;
     justify-content: flex-start;
+    gap: 0;
     padding: 0 16px;
+  }
+`;
+
+const VersionText = styled.span`
+  font-size: 10px;
+  color: ${({ theme }) => theme.colors.textMuted};
+  font-family: ${({ theme }) => theme.fonts.mono};
+  white-space: nowrap;
+
+  @media (min-width: 768px) {
+    margin-top: 16px;
+    align-self: flex-start;
+    font-size: 10px;
   }
 `;
 
@@ -183,10 +204,27 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVersion()
+      .then((info) => {
+        if (!cancelled) setVersionInfo(info);
+      })
+      .catch(() => {
+        // Ignore – version fetch is best-effort.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <SidebarAside>
       <BrandRow>
         <SidebarLogo markSize={32} />
+        {versionInfo && <VersionText>v{versionInfo.version}</VersionText>}
       </BrandRow>
 
       <Nav aria-label="Primary navigation">

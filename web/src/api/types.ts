@@ -91,6 +91,7 @@ export interface UpcomingPrune {
 export interface Agent {
 	name: string;
 	ip: string;
+	version?: string;
 	last_seen: string;
 	registered_at: string;
 	online: boolean;
