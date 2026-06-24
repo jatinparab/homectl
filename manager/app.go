@@ -16,9 +16,9 @@ type App struct {
 	ID               common.AppID
 	DesiredState     common.DesiredState
 	AssignedAgent    *string
-	ManuallyAssigned bool    // If true, skip automatic rebalancing/migration for this app
-	IsGlobal         bool    // Run on all connected nodes
-	RestoreEnabled   bool    // Whether restore-on-start is enabled (default true)
+	ManuallyAssigned bool // If true, skip automatic rebalancing/migration for this app
+	IsGlobal         bool // Run on all connected nodes
+	RestoreEnabled   bool // Whether restore-on-start is enabled (default true)
 
 	// Observational fields updated from heartbeats
 	ObservedState common.ObservedState
@@ -31,6 +31,10 @@ type App struct {
 	LastMigratedAt time.Time
 	MigrationCount int
 	QuarantinedOn  []string
+
+	// RestoreSnapshotOverride stores a user-selected snapshot to restore from
+	// instead of latest. Nil means restore from latest.
+	RestoreSnapshotOverride *common.RestoreSnapshotOverride
 }
 
 // AppRegistry is a thread-safe registry of apps known to the manager.
@@ -74,9 +78,13 @@ func (r *AppRegistry) Get(appID common.AppID) *App {
 	if !ok {
 		return nil
 	}
-	copy := *app
-	copy.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
-	return &copy
+	cp := *app
+	cp.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
+	if app.RestoreSnapshotOverride != nil {
+		o := *app.RestoreSnapshotOverride
+		cp.RestoreSnapshotOverride = &o
+	}
+	return &cp
 }
 
 // ListAll returns copies of all apps.
@@ -86,9 +94,13 @@ func (r *AppRegistry) ListAll() []App {
 
 	result := make([]App, 0, len(r.apps))
 	for _, app := range r.apps {
-		copy := *app
-		copy.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
-		result = append(result, copy)
+		cp := *app
+		cp.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
+		if app.RestoreSnapshotOverride != nil {
+			o := *app.RestoreSnapshotOverride
+			cp.RestoreSnapshotOverride = &o
+		}
+		result = append(result, cp)
 	}
 	return result
 }
@@ -104,9 +116,13 @@ func (r *AppRegistry) AppsForAgent(agentName string) []App {
 		assigned := app.AssignedAgent != nil && *app.AssignedAgent == agentName
 		global := app.IsGlobal && app.DesiredState == common.DesiredRunning
 		if assigned || global {
-			copy := *app
-			copy.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
-			result = append(result, copy)
+			cp := *app
+			cp.QuarantinedOn = append([]string(nil), app.QuarantinedOn...)
+			if app.RestoreSnapshotOverride != nil {
+				o := *app.RestoreSnapshotOverride
+				cp.RestoreSnapshotOverride = &o
+			}
+			result = append(result, cp)
 		}
 	}
 	return result
@@ -218,6 +234,34 @@ func (r *AppRegistry) ClearManualAssignment(appID common.AppID) error {
 	}
 
 	app.ManuallyAssigned = false
+	return nil
+}
+
+// SetRestoreSnapshotOverride sets the restore snapshot override for an app.
+func (r *AppRegistry) SetRestoreSnapshotOverride(appID common.AppID, override common.RestoreSnapshotOverride) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appID]
+	if !ok {
+		return fmt.Errorf("app not found: %s", appID)
+	}
+
+	app.RestoreSnapshotOverride = &override
+	return nil
+}
+
+// ClearRestoreSnapshotOverride clears the restore snapshot override for an app.
+func (r *AppRegistry) ClearRestoreSnapshotOverride(appID common.AppID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	app, ok := r.apps[appID]
+	if !ok {
+		return fmt.Errorf("app not found: %s", appID)
+	}
+
+	app.RestoreSnapshotOverride = nil
 	return nil
 }
 

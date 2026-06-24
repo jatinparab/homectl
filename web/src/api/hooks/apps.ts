@@ -10,7 +10,10 @@ import {
   fetchSnapshots,
   refreshSnapshots,
   fetchSnapshotFiles,
+  setRestoreSnapshotOverride,
+  clearRestoreSnapshotOverride,
 } from "../client";
+import type { RestoreSnapshotOverride } from "../types";
 
 // ── App actions ──────────────────────────────
 
@@ -43,6 +46,27 @@ export function useUpdateAppRestoreEnabled() {
   return useMutation({
     mutationFn: ({ appId, enabled }: { appId: string; enabled: boolean }) =>
       updateAppRestoreEnabled(appId, enabled),
+  });
+}
+
+export function useSetRestoreSnapshotOverride() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, override }: { appId: string; override: RestoreSnapshotOverride }) =>
+      setRestoreSnapshotOverride(appId, override),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useClearRestoreSnapshotOverride() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (appId: string) => clearRestoreSnapshotOverride(appId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+    },
   });
 }
 

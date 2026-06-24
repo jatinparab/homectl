@@ -63,7 +63,15 @@ export interface AppStatus {
 	backup_interval: string; // Human-readable backup interval (e.g. "1h0m0s")
 	prune_interval: string; // Human-readable prune interval (e.g. "3h0m0s")
 	restore_enabled: boolean; // Whether restore-on-start is enabled
+	restore_snapshot_override?: RestoreSnapshotOverride;
 	node_reports: NodeReport[]; // All node reports
+}
+
+export interface RestoreSnapshotOverride {
+	snapshot_id: string;
+	short_id?: string;
+	time?: string;
+	node?: string;
 }
 
 export interface UpcomingBackup {

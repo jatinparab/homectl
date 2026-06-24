@@ -427,6 +427,57 @@ func (m *Manager) saveRestoreDisabled() {
 	}
 }
 
+// restoreSnapshotOverridesPath returns the path to the persisted restore snapshot overrides file.
+func (m *Manager) restoreSnapshotOverridesPath() string {
+	return filepath.Join(m.stateDir, "restore-snapshot-overrides.json")
+}
+
+// loadRestoreSnapshotOverrides reads the persisted restore snapshot overrides.
+// Returns nil map if the file doesn't exist (not an error).
+func (m *Manager) loadRestoreSnapshotOverrides() map[string]common.RestoreSnapshotOverride {
+	data, err := os.ReadFile(m.restoreSnapshotOverridesPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			managerLog.Error("Failed to read restore-snapshot-overrides file", "err", err)
+		}
+		return nil
+	}
+
+	var overrides map[string]common.RestoreSnapshotOverride
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		managerLog.Error("Failed to parse restore-snapshot-overrides file", "err", err)
+		return nil
+	}
+	return overrides
+}
+
+// saveRestoreSnapshotOverrides persists the current restore snapshot overrides.
+// Only stores apps that have an override set.
+func (m *Manager) saveRestoreSnapshotOverrides() {
+	allApps := m.appRegistry.ListAll()
+	overrides := make(map[string]common.RestoreSnapshotOverride)
+	for _, app := range allApps {
+		if app.RestoreSnapshotOverride != nil {
+			overrides[string(app.ID)] = *app.RestoreSnapshotOverride
+		}
+	}
+
+	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
+		managerLog.Error("Failed to create state dir", "err", err)
+		return
+	}
+
+	data, err := json.MarshalIndent(overrides, "", "  ")
+	if err != nil {
+		managerLog.Error("Failed to marshal restore-snapshot-overrides", "err", err)
+		return
+	}
+
+	if err := os.WriteFile(m.restoreSnapshotOverridesPath(), data, 0644); err != nil {
+		managerLog.Error("Failed to write restore-snapshot-overrides file", "err", err)
+	}
+}
+
 // manualAssignmentsPath returns the path to the persisted manual-assignments file.
 func (m *Manager) manualAssignmentsPath() string {
 	return filepath.Join(m.stateDir, "manual-assignments.json")
@@ -508,6 +559,7 @@ func (m *Manager) DiscoverApps() {
 
 	persisted := m.loadDesiredState()
 	restoreDisabled := m.loadRestoreDisabled()
+	restoreOverrides := m.loadRestoreSnapshotOverrides()
 	manualAssignments := m.loadManualAssignments()
 
 	count := 0
@@ -541,6 +593,11 @@ func (m *Manager) DiscoverApps() {
 		// Apply restore-disabled state
 		if restoreDisabled[entry.Name()] {
 			m.appRegistry.UpdateRestoreEnabled(appID, false)
+		}
+
+		// Restore restore snapshot override
+		if override, ok := restoreOverrides[entry.Name()]; ok {
+			_ = m.appRegistry.SetRestoreSnapshotOverride(appID, override)
 		}
 
 		// Restore manual assignment

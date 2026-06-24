@@ -133,6 +133,8 @@ func TestComposeCommandIncludesExtraArgsBeforeSubcommand(t *testing.T) {
 	wantArgs := []string{
 		"docker",
 		"compose",
+		"--project-name",
+		"homectl-adguard",
 		"-f",
 		filepath.Join(rootDir, "adguard", "docker-compose.yml"),
 		"-f",

@@ -536,6 +536,10 @@ func (d *Docker) ConnectLoadedAppsToHomectlNetwork() error {
 	return nil
 }
 
+func homectlProjectName(appID string) string {
+	return "homectl-" + appID
+}
+
 // ComposeCommand creates a docker compose command for a managed app.
 func (d *Docker) ComposeCommand(appID string, subcommandArgs ...string) *exec.Cmd {
 	return d.ComposeCommandContext(context.Background(), appID, subcommandArgs...)
@@ -545,7 +549,7 @@ func (d *Docker) ComposeCommand(appID string, subcommandArgs ...string) *exec.Cm
 // cancellation support.
 func (d *Docker) ComposeCommandContext(ctx context.Context, appID string, subcommandArgs ...string) *exec.Cmd {
 	appDir := filepath.Join(d.rootDir, appID)
-	args := []string{"compose", "-f", filepath.Join(appDir, "docker-compose.yml")}
+	args := []string{"compose", "--project-name", homectlProjectName(appID), "-f", filepath.Join(appDir, "docker-compose.yml")}
 	args = append(args, d.composeExtraArgs...)
 	args = append(args, subcommandArgs...)
 
