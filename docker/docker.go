@@ -469,6 +469,17 @@ func ConnectContainerToHomectlNetwork(container string, aliases ...string) error
 	if err := EnsureHomectlDockerNetwork(); err != nil {
 		return err
 	}
+
+	// Disconnect first if already connected, so aliases are always applied correctly.
+	discArgs := []string{"network", "disconnect", HomectlDockerNetwork, container}
+	if discOut, discErr := exec.Command("docker", discArgs...).CombinedOutput(); discErr != nil {
+		discText := strings.TrimSpace(string(discOut))
+		// "not connected" is fine for disconnect.
+		if !strings.Contains(discText, "is not connected") && !strings.Contains(discText, "not found") {
+			// Real error (e.g. container doesn't exist) — skip, not fatal for connect.
+		}
+	}
+
 	args := []string{"network", "connect"}
 	for _, alias := range aliases {
 		if alias = strings.TrimSpace(alias); alias != "" {
@@ -479,8 +490,7 @@ func ConnectContainerToHomectlNetwork(container string, aliases ...string) error
 	output, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
 		text := strings.TrimSpace(string(output))
-		if strings.Contains(text, "already exists") || strings.Contains(text, "already connected") ||
-			strings.Contains(text, "sharing network namespace") || strings.Contains(text, "cannot be connected") {
+		if strings.Contains(text, "sharing network namespace") || strings.Contains(text, "cannot be connected") {
 			return nil
 		}
 		return fmt.Errorf("connect %s to %s: %w: %s", container, HomectlDockerNetwork, err, text)
