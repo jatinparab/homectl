@@ -509,6 +509,7 @@ func (d *Docker) connectAppNetwork(app DockerApp) error {
 		}
 	}
 
+	var lastErr error
 	for serviceName, containerID := range serviceToContainer {
 		var aliases []string
 		aliases = append(aliases, serviceName)
@@ -516,25 +517,26 @@ func (d *Docker) connectAppNetwork(app DockerApp) error {
 			aliases = append(aliases, app.HealthHost)
 		}
 		if err := ConnectContainerToHomectlNetwork(containerID, aliases...); err != nil {
-			return err
+			lastErr = err
 		}
 	}
-	return nil
+	return lastErr
 }
 
 // ConnectLoadedAppsToHomectlNetwork connects all discovered managed app containers
 // to the shared network used for agent health checks.
 func (d *Docker) ConnectLoadedAppsToHomectlNetwork() error {
+	var lastErr error
 	for _, app := range d.dockerApps {
 		running, err := d.IsRunning(app.Name)
 		if err != nil || running == common.RunningStatusStopped {
 			continue
 		}
 		if err := d.connectAppNetwork(app); err != nil {
-			return err
+			lastErr = err
 		}
 	}
-	return nil
+	return lastErr
 }
 
 func homectlProjectName(appID string) string {
