@@ -3,6 +3,8 @@ package manager
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +82,59 @@ func TestGenerateManagerCaddyfileRoutesCustomWithoutHostOverride(t *testing.T) {
 	}
 }
 
+func TestGenerateManagerCaddyfileRoutesWithAuthModes(t *testing.T) {
+	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.example.net")
+	t.Setenv("AUTHENTIK_OUTPOST_URL", "https://auth.example.net")
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.leaseManager.Heartbeat("node-1", "10.42.1.101", "", nil, common.NodeMetrics{})
+	if err := m.saveWireGuardPeers([]wireGuardPeerState{
+		{Name: "node-1", PublicKey: "test-key", Address: "10.44.0.7"},
+	}); err != nil {
+		t.Fatalf("saveWireGuardPeers: %v", err)
+	}
+	m.gatewayMu.Lock()
+	m.gatewayNode = "node-1"
+	m.gatewayMu.Unlock()
+	now := time.Now()
+	m.publicRoutes = []PublicRoute{
+		{ID: "grafana-sulphurgfx-com", Host: "grafana.example.net", Mode: PublicRouteModeHomelab, AuthMode: PublicRouteAuthModeAuthentik, Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{ID: "jellyfin-sulphurgfx-com", Host: "jellyfin.example.net", Mode: PublicRouteModeHomelab, AuthMode: PublicRouteAuthModeUpstream, Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{ID: "status-sulphurgfx-com", Host: "status.example.net", Mode: PublicRouteModeCustom, AuthMode: PublicRouteAuthModePublic, CustomTarget: "http://homectl-localhost:3001", Enabled: true, CreatedAt: now, UpdatedAt: now},
+	}
+
+	caddyfile, err := m.GenerateManagerCaddyfile()
+	if err != nil {
+		t.Fatalf("GenerateManagerCaddyfile: %v", err)
+	}
+
+	assertContains(t, caddyfile, "(authentik_forward_auth) {")
+	assertContains(t, caddyfile, "reverse_proxy /outpost.goauthentik.io/* https://auth.example.net")
+	assertContains(t, caddyfile, "forward_auth https://auth.example.net {")
+	assertContains(t, caddyfile, "# Auth mode: authentik\ngrafana.example.net {\n\tlog {")
+	assertContains(t, caddyfile, "\t\timport authentik_forward_auth\n\t\treverse_proxy https://10.44.0.7 {")
+	assertContains(t, caddyfile, "# Auth mode: upstream\njellyfin.example.net {")
+	assertContains(t, caddyfile, "# Auth mode: public\nstatus.example.net {")
+	if strings.Contains(caddyfile[strings.Index(caddyfile, "jellyfin.example.net"):], "import authentik_forward_auth") &&
+		strings.Index(caddyfile, "jellyfin.example.net") < strings.Index(caddyfile, "import authentik_forward_auth") {
+		t.Fatalf("upstream route imported authentik snippet:\n%s", caddyfile)
+	}
+}
+
+func TestValidatePublicRouteRejectsAuthentikProtectingAuthentik(t *testing.T) {
+	t.Setenv("HOMECTL_PUBLIC_HOST", "homectl.example.net")
+	err := validatePublicRoute(PublicRoute{
+		Host:     "auth.example.net",
+		Mode:     PublicRouteModeHomelab,
+		AuthMode: PublicRouteAuthModeAuthentik,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not use authentik") {
+		t.Fatalf("expected authentik self-protection error, got %v", err)
+	}
+}
+
 func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.net")
 	t.Setenv("CADDY_DNS_PROVIDER", "cloudflare")
@@ -129,6 +184,81 @@ func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
 
 	assertContains(t, caddyfile, "photos.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
 	assertContains(t, caddyfile, "photos.internal.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
+}
+
+func TestGenerateAgentCaddyConfigExposedSubdomainsUseContainerPortService(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.net")
+
+	repoDir := t.TempDir()
+	appDir := filepath.Join(repoDir, "docker", "arr-stack")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "homectl-config.json"), []byte(`{
+  "exposed_subdomains": {
+    "torrent": "8081",
+    "prowlarr": "9696",
+    "sonarr": "8989",
+    "radarr": "7878",
+    "bazarr": "6767",
+    "nzbget": "6789"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "docker-compose.yml"), []byte(`services:
+  qbittorrent:
+    container_name: qbittorrent
+    ports:
+      - 8081:8081
+  nzbget:
+    container_name: nzbget
+    ports:
+      - 6789:6789
+  prowlarr:
+    container_name: prowlarr
+    ports:
+      - 9696:9696
+  sonarr:
+    container_name: sonarr
+    ports:
+      - 8989:8989
+  radarr:
+    container_name: radarr
+    ports:
+      - 7878:7878
+  bazarr:
+    container_name: bazarr
+    ports:
+      - 6767:6767
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewManager(repoDir, 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.leaseManager.Heartbeat("node-1", "10.44.0.7", "", []common.AppReport{
+		{
+			AppID:         "arr-stack",
+			ObservedState: common.ObservedRunning,
+			Health:        common.HealthHealthy,
+			Port:          8081,
+		},
+	}, common.NodeMetrics{})
+
+	caddyfile, err := m.GenerateCaddyConfig("node-1")
+	if err != nil {
+		t.Fatalf("GenerateCaddyConfig: %v", err)
+	}
+
+	assertContains(t, caddyfile, "torrent.example.net, torrent.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8081\n}")
+	assertContains(t, caddyfile, "prowlarr.example.net, prowlarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:9696\n}")
+	assertContains(t, caddyfile, "radarr.example.net, radarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:7878\n}")
+	assertContains(t, caddyfile, "sonarr.example.net, sonarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8989\n}")
+	assertContains(t, caddyfile, "bazarr.example.net, bazarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6767\n}")
+	assertContains(t, caddyfile, "nzbget.example.net, nzbget.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6789\n}")
 }
 
 func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {
