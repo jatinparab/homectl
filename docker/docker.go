@@ -496,25 +496,26 @@ func (d *Docker) connectAppNetwork(app DockerApp) error {
 	if err := EnsureHomectlDockerNetwork(); err != nil {
 		return err
 	}
-	command := d.ComposeCommand(app.Name, "ps", "-q")
-	output, err := command.Output()
-	if err != nil {
-		return err
-	}
-	healthContainer := ""
-	if app.HealthService != "" {
-		command = d.ComposeCommand(app.Name, "ps", "-q", app.HealthService)
-		serviceOutput, err := command.Output()
-		if err == nil {
-			healthContainer = firstLine(serviceOutput)
+
+	serviceToContainer := make(map[string]string)
+	cmd := d.ComposeCommand(app.Name, "ps", "--format", "{{.Service}} {{.ID}}")
+	psOutput, err := cmd.Output()
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(psOutput)), "\n") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				serviceToContainer[parts[0]] = parts[1]
+			}
 		}
 	}
-	for _, container := range strings.Fields(string(output)) {
+
+	for serviceName, containerID := range serviceToContainer {
 		var aliases []string
-		if container == healthContainer && app.HealthHost != "" {
+		aliases = append(aliases, serviceName)
+		if serviceName == app.HealthService && app.HealthHost != "" {
 			aliases = append(aliases, app.HealthHost)
 		}
-		if err := ConnectContainerToHomectlNetwork(container, aliases...); err != nil {
+		if err := ConnectContainerToHomectlNetwork(containerID, aliases...); err != nil {
 			return err
 		}
 	}
@@ -725,14 +726,15 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 }
 
 // StartWithLogs pulls images (with streaming) then starts the service, streaming output.
+// Uses --build to rebuild images when Dockerfile or build context changes.
 func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
 	// Pull images first
 	if err := d.Pull(appID, onLog); err != nil {
 		return err
 	}
 
-	// Then run docker compose up -d with streaming
-	cmd := d.ComposeCommand(appID, "up", "-d")
+	// Then run docker compose up -d with --build to pick up local changes
+	cmd := d.ComposeCommand(appID, "up", "-d", "--build")
 	if err := d.streamCommand(cmd, onLog); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}

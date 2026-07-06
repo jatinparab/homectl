@@ -27,23 +27,36 @@ type agentRoute struct {
 	remoteHost   string // WireGuard IP of the remote agent (empty if local)
 }
 
-type FlexPort int
+type FlexPort struct {
+	Port    int
+	Service string // empty = use default health service
+}
 
 func (f *FlexPort) UnmarshalJSON(data []byte) error {
 	var i int
 	if err := json.Unmarshal(data, &i); err == nil {
-		*f = FlexPort(i)
+		f.Port = i
 		return nil
 	}
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("port must be a number or string, got %s", string(data))
 	}
-	i, err := strconv.Atoi(s)
+	if idx := strings.LastIndex(s, ":"); idx >= 0 {
+		f.Service = s[:idx]
+		portStr := s[idx+1:]
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("cannot convert port %q to int: %w", portStr, err)
+		}
+		f.Port = port
+		return nil
+	}
+	port, err := strconv.Atoi(s)
 	if err != nil {
 		return fmt.Errorf("cannot convert port %q to int: %w", s, err)
 	}
-	*f = FlexPort(i)
+	f.Port = port
 	return nil
 }
 
@@ -278,15 +291,20 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 
 			// Use custom subdomains from homectl-config.json
 			for _, subdomain := range subdomains {
-				port := appCfg.ExposedSubdomains[subdomain]
+				target := appCfg.ExposedSubdomains[subdomain]
 
 				// When routing to a remote agent, proxy to the agent's Caddy
 				// on port 80 (the WireGuard overlay port), not the app's
 				// internal port. The remote Caddy handles TLS and routes to
 				// the actual app port internally.
-				targetPort := int(port)
+				targetPort := target.Port
 				if !routing.candidate.isLocal {
 					targetPort = 80
+				}
+
+				targetHost := routing.host
+				if target.Service != "" {
+					targetHost = target.Service
 				}
 
 				publicDomain := fmt.Sprintf("%s.%s", subdomain, suffix)
@@ -294,7 +312,7 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 				routes = append(routes, agentRoute{
 					publicHost:   publicDomain,
 					internalHost: internalDomain,
-					target:       fmt.Sprintf("http://%s:%d", routing.host, targetPort),
+					target:       fmt.Sprintf("http://%s:%d", targetHost, targetPort),
 					isLocal:      routing.candidate.isLocal,
 					remoteHost:   routing.host,
 				})
@@ -386,13 +404,20 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 // Local apps (Docker aliases) use plain HTTP. Remote agents use HTTPS
 // with TLS SNI and Host header forwarding, matching how the manager
 // proxies to agents over WireGuard.
+// X-Forwarded-Host is preserved from the incoming request to prevent
+// Caddy's reverse_proxy default from overwriting it (which would break
+// Authentik forward-auth sub-requests that set this header explicitly).
 func writeRouteProxy(b *strings.Builder, r agentRoute) {
 	if r.isLocal {
-		fmt.Fprintf(b, "\treverse_proxy %s\n", r.target)
+		fmt.Fprintf(b, "\treverse_proxy %s {\n", r.target)
+		fmt.Fprintf(b, "\t\theader_up Host {host}\n")
+		fmt.Fprintf(b, "\t\theader_up X-Forwarded-Host {header.X-Forwarded-Host}\n")
+		fmt.Fprintf(b, "\t}\n")
 		return
 	}
 	fmt.Fprintf(b, "\treverse_proxy https://%s {\n", r.remoteHost)
 	fmt.Fprintf(b, "\t\theader_up Host {host}\n")
+	fmt.Fprintf(b, "\t\theader_up X-Forwarded-Host {header.X-Forwarded-Host}\n")
 	fmt.Fprintf(b, "\t\ttransport http {\n")
 	fmt.Fprintf(b, "\t\t\ttls_server_name %s\n", r.publicHost)
 	fmt.Fprintf(b, "\t\t}\n")
