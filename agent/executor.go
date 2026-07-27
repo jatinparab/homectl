@@ -50,6 +50,11 @@ func parseResticTextProgress(line string) *common.ResticProgress {
 const (
 	// ExecutorWorkers is the number of parallel workers for executing actions
 	ExecutorWorkers = 12
+
+	// BackupTimeout caps how long a single backup operation may run.
+	// If restic hangs (B2 unreachable, lock conflicts), the phase is reset
+	// and the agent can retry on next reconcile.
+	BackupTimeout = 15 * time.Minute
 )
 
 // ActionType represents the type of action to execute
@@ -449,7 +454,9 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 	// Step 2: Run restic backup (parallel with other backups, but blocked by prune/check lane)
 	rt.PhaseLog.Clear()
 	e.agent.beginBackup()
-	backupErr := e.restic.Backup(e.ctx, appID, func(p *common.ResticProgress) {
+	backupCtx, backupCancel := context.WithTimeout(e.ctx, BackupTimeout)
+	defer backupCancel()
+	backupErr := e.restic.Backup(backupCtx, appID, func(p *common.ResticProgress) {
 		rt.SetProgress(p)
 	}, func(line string) {
 		rt.PhaseLog.Write(line)
