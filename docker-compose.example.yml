@@ -10,6 +10,10 @@ services:
       HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
       HOMECTL_DOMAIN_SUFFIX: your-domain.example
       HOMECTL_PUBLIC_HOST: homectl.your-domain.example
+      ROOT_DOMAIN: example.net
+      HOME_WG_IP: 10.44.0.2
+      AUTHENTIK_CORE_URL: https://auth.example.net
+      AUTHENTIK_OUTPOST_URL: https://auth.example.net
 
       # Admin UI bootstrap/basic-auth fallback
       ADMIN_USER: admin
@@ -47,6 +51,7 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker/config.json:/root/.docker/config.json:ro
       - /opt/homectl/config:/config
       - /opt/homectl/homelab:/homelab
       # - /var/log:/var/log/host:ro  # mount host logs read-only (for CrowdSec SSH monitoring)

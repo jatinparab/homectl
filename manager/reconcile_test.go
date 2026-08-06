@@ -398,6 +398,85 @@ func TestLeastLoadedExcluding(t *testing.T) {
 	}
 }
 
+func TestLeastLoadedExcludingWithMetricsPrefersLowerLoadOverFreeRAM(t *testing.T) {
+	apps := map[common.AppID]*App{
+		"app1": {ID: "app1", AssignedAgent: strPtr("node1")},
+	}
+	alive := map[string]bool{"node1": true, "node2": true}
+	metrics := map[string]common.NodeMetrics{
+		"node1": {MemoryTotal: 8 << 30, MemoryUsed: 2 << 30, MemoryPercent: 25},
+		"node2": {MemoryTotal: 4 << 30, MemoryUsed: 3 << 30, MemoryPercent: 75},
+	}
+
+	result := leastLoadedExcludingWithMetrics(apps, alive, nil, metrics, 0)
+	// node2 has 0 apps (lower load), node1 has 1 app (more free RAM).
+	// Load is preferred over free RAM for stable distribution.
+	if result != "node2" {
+		t.Fatalf("expected node2 with lower load (0 apps), got %s", result)
+	}
+}
+
+func TestLeastLoadedExcludingWithMetricsFreeRAMTiebreaksEqualLoad(t *testing.T) {
+	apps := map[common.AppID]*App{
+		"app1": {ID: "app1", AssignedAgent: strPtr("node1")},
+		"app2": {ID: "app2", AssignedAgent: strPtr("node2")},
+	}
+	alive := map[string]bool{"node1": true, "node2": true}
+	metrics := map[string]common.NodeMetrics{
+		"node1": {MemoryTotal: 8 << 30, MemoryUsed: 2 << 30, MemoryPercent: 25},
+		"node2": {MemoryTotal: 8 << 30, MemoryUsed: 6 << 30, MemoryPercent: 75},
+	}
+
+	result := leastLoadedExcludingWithMetrics(apps, alive, nil, metrics, 0)
+	// Both have 1 app. node1 has more free RAM → tiebreaker picks node1
+	if result != "node1" {
+		t.Fatalf("expected node1 with more free RAM (equal load), got %s", result)
+	}
+}
+
+func TestLeastLoadedExcludingWithMetricsRespectsMaxRAMPercent(t *testing.T) {
+	apps := map[common.AppID]*App{}
+	alive := map[string]bool{"node1": true, "node2": true}
+	metrics := map[string]common.NodeMetrics{
+		"node1": {MemoryTotal: 16 << 30, MemoryUsed: 15 << 30, MemoryPercent: 93.75},
+		"node2": {MemoryTotal: 8 << 30, MemoryUsed: 5 << 30, MemoryPercent: 62.5},
+	}
+
+	result := leastLoadedExcludingWithMetrics(apps, alive, nil, metrics, 85)
+	if result != "node2" {
+		t.Fatalf("expected node2 below max RAM threshold, got %s", result)
+	}
+}
+
+func TestMaxRAMPercentDefaultsTo80(t *testing.T) {
+	mgr, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop()
+
+	if got := mgr.maxRAMPercent(); got != 80 {
+		t.Fatalf("expected missing max RAM percent to default to 80, got %v", got)
+	}
+}
+
+func TestRebalanceWithMetricsMovesStoppedAppOffRAMConstrainedNode(t *testing.T) {
+	apps := map[common.AppID]*App{
+		"app1": {ID: "app1", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},
+	}
+	alive := map[string]bool{"node1": true, "node2": true}
+	metrics := map[string]common.NodeMetrics{
+		"node1": {MemoryTotal: 8 << 30, MemoryUsed: 7 << 30, MemoryPercent: 87.5},
+		"node2": {MemoryTotal: 8 << 30, MemoryUsed: 2 << 30, MemoryPercent: 25},
+	}
+
+	rebalanceWithMetrics(apps, alive, nil, nil, metrics, 80)
+
+	if apps["app1"].AssignedAgent == nil || *apps["app1"].AssignedAgent != "node2" {
+		t.Fatalf("expected app1 to move to node2, got %v", apps["app1"].AssignedAgent)
+	}
+}
+
 func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
 	mgr, err := NewManager(t.TempDir(), 1338)
 	if err != nil {

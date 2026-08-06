@@ -103,10 +103,13 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 				delete(m.backupAssignments, appID)
 				continue
 			}
-			// Agent went offline: mark uncertain, don't treat as completion
+			// The agent is no longer reporting the backup as busy, but completion
+			// evidence has not arrived yet. Stop dispatching the assignment and
+			// allow time for a delayed heartbeat before treating it as failed.
 			if !m.isAppBackupBusy(a.AgentID, a.AppID) {
 				a.State = AssignmentUncertain
-				backupMgrLog.Info("Backup assignment uncertain (agent offline)", "agent", a.AgentID, "app", a.AppID)
+				a.FailedAt = now
+				backupMgrLog.Info("Backup assignment uncertain (no completion evidence)", "agent", a.AgentID, "app", a.AppID)
 			}
 
 		case AssignmentUncertain:
@@ -166,7 +169,8 @@ func (m *Manager) resolveWorkAssignments() (backups map[common.AppID]*BackupAssi
 				m.pruneAssignment = nil
 			} else if !m.isAppPruneBusy(p.AgentID, p.AppID) {
 				p.State = AssignmentUncertain
-				backupMgrLog.Info("Prune assignment uncertain (agent offline)", "agent", p.AgentID, "app", p.AppID)
+				p.FailedAt = now
+				backupMgrLog.Info("Prune assignment uncertain (no completion evidence)", "agent", p.AgentID, "app", p.AppID)
 			}
 
 		case AssignmentUncertain:
@@ -530,6 +534,13 @@ func (m *Manager) anyRestoreBusy() bool {
 		}
 	}
 	return false
+}
+
+func assignmentShouldDispatch(a *BackupAssignment) bool {
+	if a == nil {
+		return false
+	}
+	return a.State == AssignmentPending || a.State == AssignmentRunning
 }
 
 func (m *Manager) isAppBackupBusy(agentID string, appID common.AppID) bool {

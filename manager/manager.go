@@ -155,7 +155,7 @@ func NewManagerWithConfig(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	authSvc, err := NewAuthService(context.Background(), store.Users, store.Sessions)
+	authSvc, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
 	if err != nil {
 		return nil, fmt.Errorf("init auth service: %w", err)
 	}

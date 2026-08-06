@@ -1,4 +1,4 @@
-import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeConfig, NodeConfigInput, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteMode, RepoStatus, RestoreSnapshotOverride, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
+import type { Agent, AppStatus, CrowdSecDecision, CrowdSecHubInstallInput, CrowdSecHubResponse, CrowdSecLogEntry, CrowdSecMetrics, CrowdSecStatus, CrowdSecVersionInfo, GatewayInfo, LogFilterParams, NodeConfig, NodeConfigInput, NodeContainers, PublicRoute, PublicRouteAccessLogEntry, PublicRouteAuthMode, PublicRouteMode, RepoStatus, RestoreSnapshotOverride, SnapshotCacheResponse, SnapshotEntry, SSHLogEntry, StoragePruneResponse, StorageStatus, UpcomingBackup, UpcomingPrune } from "./types";
 
 const API_BASE = "/api/v1";
 
@@ -372,6 +372,7 @@ export async function updateCrowdSec(): Promise<CrowdSecVersionInfo> {
 export interface PublicRouteInput {
   host: string;
   mode: PublicRouteMode;
+  auth_mode?: PublicRouteAuthMode;
   custom_target?: string;
   enabled: boolean;
 }
@@ -458,4 +459,41 @@ export async function clearManualGateway(): Promise<GatewayInfo> {
     throw new Error(text || `HTTP error! status: ${response.status}`);
   }
   return response.json();
+}
+
+export interface APIKey {
+  id: number;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string;
+}
+
+export interface APIKeyCreated extends APIKey {
+  key: string;
+}
+
+export async function fetchAPIKeys(): Promise<APIKey[]> {
+  return fetchJSON<APIKey[]>(`${API_BASE}/api-keys`);
+}
+
+export async function createAPIKey(name: string): Promise<APIKeyCreated> {
+  const response = await fetch(`${API_BASE}/api-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteAPIKey(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/api-keys/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
 }

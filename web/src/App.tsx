@@ -15,6 +15,7 @@ import { StoragePage } from './features/storage/StoragePage'
 import { RoutingPage } from './features/routing/RoutingPage'
 import { CrowdSecPage } from './features/crowdsec/CrowdSecPage'
 import { LogsPage } from './features/logs/LogsPage'
+import { SettingsPage } from './features/settings/SettingsPage'
 import { LogPanel } from './features/logs/components/LogPanel'
 import { AppDetailPage } from './features/apps/detail/AppDetailPage'
 
@@ -113,6 +114,7 @@ function App() {
       {!appDetailId && activeTab === 'routing' && <RoutingPage />}
       {!appDetailId && activeTab === 'crowdsec' && <CrowdSecPage />}
       {!appDetailId && activeTab === 'logs' && <LogsPage />}
+      {!appDetailId && activeTab === 'settings' && <SettingsPage />}
 
       <SystemLogViewer expanded={logPanelExpanded} onToggle={() => setLogPanelExpanded((v) => !v)} />
 

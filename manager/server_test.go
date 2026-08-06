@@ -416,7 +416,7 @@ func TestHandleFiles_RequiresAuthentication(t *testing.T) {
 	}
 	defer store.Close()
 
-	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions)
+	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestHandleFiles_AuthenticatedAccessAllowed(t *testing.T) {
 	}
 	defer store.Close()
 
-	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions)
+	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
 	if err != nil {
 		t.Fatal(err)
 	}

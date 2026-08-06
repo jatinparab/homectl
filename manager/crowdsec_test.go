@@ -3,11 +3,44 @@ package manager
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestInstallCrowdSecHubItemsUsesCachedHubWithoutNetworkUpdate(t *testing.T) {
+	var calls [][]string
+	run := func(_ time.Duration, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+
+	if err := installCrowdSecHubItemsWithRunner(true, run); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"collections", "install", "crowdsecurity/caddy", "crowdsecurity/http-cve", "crowdsecurity/sshd"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("unexpected cscli calls: got %v, want %v", calls, want)
+	}
+}
+
+func TestInstallCrowdSecHubItemsReturnsInstallFailure(t *testing.T) {
+	installErr := errors.New("install failed")
+	run := func(_ time.Duration, args ...string) error {
+		if len(args) > 0 && args[0] == "collections" {
+			return installErr
+		}
+		return nil
+	}
+
+	if err := installCrowdSecHubItemsWithRunner(false, run); !errors.Is(err, installErr) {
+		t.Fatalf("got %v, want %v", err, installErr)
+	}
+}
 
 func TestCrowdSecDecisionsCoalescesConcurrentLoads(t *testing.T) {
 	originalRunner := runCrowdSecCommand

@@ -137,11 +137,16 @@ const (
 	ConfigKeyCaddyACMECA      = "CADDY_ACME_CA"
 	ConfigKeyCaddyDNSTokenEnv = "CADDY_DNS_TOKEN_ENV"
 	ConfigKeyCFDNSAPIToken    = "CF_DNS_API_TOKEN"
+	ConfigKeyRootDomain       = "ROOT_DOMAIN"
+	ConfigKeyHomeWGIP         = "HOME_WG_IP"
+	ConfigKeyAuthentikCoreURL = "AUTHENTIK_CORE_URL"
+	ConfigKeyAuthentikOutpost = "AUTHENTIK_OUTPOST_URL"
 	ConfigKeyResticRepository = "RESTIC_REPOSITORY"
 	ConfigKeyB2AccountID      = "B2_ACCOUNT_ID"
 	ConfigKeyB2AccountKey     = "B2_ACCOUNT_KEY"
 	ConfigKeyResticPassword   = "RESTIC_PASSWORD"
 	ConfigKeyAgentName        = "HOMECTL_AGENT_NAME"
+	ConfigKeyMaxRAMPercent    = "HOMECTL_MAX_RAM_PERCENT"
 )
 
 var SharedAgentConfigKeys = []string{
@@ -149,7 +154,12 @@ var SharedAgentConfigKeys = []string{
 	ConfigKeyCaddyDNSProvider,
 	ConfigKeyCaddyACMEEmail,
 	ConfigKeyCaddyACMECA,
+	ConfigKeyRootDomain,
+	ConfigKeyHomeWGIP,
+	ConfigKeyAuthentikCoreURL,
+	ConfigKeyAuthentikOutpost,
 	ConfigKeyResticRepository,
+	ConfigKeyMaxRAMPercent,
 }
 
 var EditableAgentEnvConfigKeys = []string{

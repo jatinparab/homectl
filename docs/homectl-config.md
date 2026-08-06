@@ -12,6 +12,7 @@ Unknown fields are ignored by the current parser. The supported fields are:
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `exposed_subdomains` | object | unset | Maps public subdomain names to container-facing ports for generated routing config. Values may be numbers or numeric strings. |
+| `auth_mode` | string | `upstream` | Documents the intended public route auth mode: `authentik`, `upstream`, or `public`. Manager public routes enforce the mode. |
 | `exclude_nodes` | array of strings | `[]` | Agent names that should not run this app. |
 | `backup_sensitive` | boolean | `false` | Marks the app as sensitive to backup interruptions, so backup scheduling can defer around recent activity. |
 | `backup_enabled` | boolean | `true` | Enables or disables backup, restore, and prune work for this app. |

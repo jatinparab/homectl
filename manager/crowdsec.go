@@ -535,18 +535,22 @@ func ensureCrowdSecLocalCredentials() error {
 }
 
 func installCrowdSecHubItems() error {
-	if err := runCSCLI(2*time.Minute, "hub", "update"); err != nil {
-		return err
-	}
+	return installCrowdSecHubItemsWithRunner(crowdSecSSHEnabled(), runCSCLI)
+}
+
+func installCrowdSecHubItemsWithRunner(sshEnabled bool, run func(time.Duration, ...string) error) error {
+	// Install from the hub index bundled in the image. Startup must not depend on
+	// upstream DNS/network access because Caddy's bouncer needs the local LAPI.
+	// Hub updates remain available through the explicit CrowdSec management API.
 	items := []string{
 		"crowdsecurity/caddy",
 		"crowdsecurity/http-cve",
 	}
-	if crowdSecSSHEnabled() {
+	if sshEnabled {
 		items = append(items, "crowdsecurity/sshd")
 	}
 	args := append([]string{"collections", "install"}, items...)
-	return runCSCLI(5*time.Minute, args...)
+	return run(5*time.Minute, args...)
 }
 
 func runCSCLI(timeout time.Duration, args ...string) error {

@@ -39,6 +39,16 @@ type AgentConfigRecord struct {
 	UpdatedAt  time.Time
 }
 
+type APIKey struct {
+	ID         int64
+	UserID     int64
+	Name       string
+	KeyHash    string
+	Prefix     string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+}
+
 type UserRepository interface {
 	CountUsers(ctx context.Context) (int, error)
 	CreateUser(ctx context.Context, username, passwordHash string) (User, error)
@@ -59,6 +69,14 @@ type AgentConfigRepository interface {
 	GetAgentConfig(ctx context.Context, agentName string) (AgentConfigRecord, error)
 }
 
+type APIKeyRepository interface {
+	CreateAPIKey(ctx context.Context, userID int64, name, keyHash, prefix string) (APIKey, error)
+	ListAPIKeys(ctx context.Context, userID int64) ([]APIKey, error)
+	GetAPIKeyByHash(ctx context.Context, keyHash string) (APIKey, error)
+	DeleteAPIKey(ctx context.Context, id, userID int64) error
+	TouchAPIKey(ctx context.Context, id int64, lastUsedAt time.Time) error
+}
+
 var ErrNotFound = errors.New("not found")
 
 type Store struct {
@@ -66,6 +84,7 @@ type Store struct {
 	Users        UserRepository
 	Sessions     SessionRepository
 	AgentConfigs AgentConfigRepository
+	APIKeys      APIKeyRepository
 }
 
 func OpenStore(stateDir string) (*Store, error) {
@@ -87,6 +106,7 @@ func OpenStore(stateDir string) (*Store, error) {
 		Users:        repo,
 		Sessions:     repo,
 		AgentConfigs: repo,
+		APIKeys:      repo,
 	}, nil
 }
 
@@ -121,6 +141,16 @@ func migrateStore(db *sql.DB) error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			key_hash TEXT NOT NULL UNIQUE,
+			prefix TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			last_used_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS agent_configs (
 			agent_name TEXT PRIMARY KEY,
 			version INTEGER NOT NULL,
@@ -269,6 +299,73 @@ func (r *sqliteRepo) GetAgentConfig(ctx context.Context, agentName string) (Agen
 	}
 	rec.UpdatedAt = parseDBTime(updated)
 	return rec, nil
+}
+
+func (r *sqliteRepo) CreateAPIKey(ctx context.Context, userID int64, name, keyHash, prefix string) (APIKey, error) {
+	now := time.Now().UTC()
+	res, err := r.db.ExecContext(ctx, `INSERT INTO api_keys(user_id, name, key_hash, prefix, created_at, last_used_at) VALUES(?, ?, ?, ?, ?, ?)`,
+		userID, name, keyHash, prefix, formatDBTime(now), formatDBTime(now))
+	if err != nil {
+		return APIKey{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return APIKey{}, err
+	}
+	return APIKey{ID: id, UserID: userID, Name: name, KeyHash: keyHash, Prefix: prefix, CreatedAt: now, LastUsedAt: now}, nil
+}
+
+func (r *sqliteRepo) ListAPIKeys(ctx context.Context, userID int64) ([]APIKey, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, user_id, name, key_hash, prefix, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []APIKey
+	for rows.Next() {
+		var k APIKey
+		var created, lastUsed string
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.Prefix, &created, &lastUsed); err != nil {
+			return nil, err
+		}
+		k.CreatedAt = parseDBTime(created)
+		k.LastUsedAt = parseDBTime(lastUsed)
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+func (r *sqliteRepo) GetAPIKeyByHash(ctx context.Context, keyHash string) (APIKey, error) {
+	var k APIKey
+	var created, lastUsed string
+	err := r.db.QueryRowContext(ctx, `SELECT id, user_id, name, key_hash, prefix, created_at, last_used_at FROM api_keys WHERE key_hash = ?`, keyHash).
+		Scan(&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.Prefix, &created, &lastUsed)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return APIKey{}, ErrNotFound
+		}
+		return APIKey{}, err
+	}
+	k.CreatedAt = parseDBTime(created)
+	k.LastUsedAt = parseDBTime(lastUsed)
+	return k, nil
+}
+
+func (r *sqliteRepo) DeleteAPIKey(ctx context.Context, id, userID int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *sqliteRepo) TouchAPIKey(ctx context.Context, id int64, lastUsedAt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = ? WHERE id = ?`, formatDBTime(lastUsedAt), id)
+	return err
 }
 
 func formatDBTime(t time.Time) string {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
@@ -15,6 +17,12 @@ const (
 	reconcileInterval    = 30 * time.Second
 	migrationCooldown    = 10 * time.Minute
 	deadAgentGracePeriod = 3 * time.Minute
+	defaultMaxRAMPercent = 80
+
+	// evacuationRAMBuffer prevents oscillation around the RAM threshold.
+	// Evacuation triggers only when MemoryPercent >= maxRAMPercent + buffer.
+	// Targets are only accepted when safely under maxRAMPercent.
+	evacuationRAMBuffer = 5.0
 )
 
 // StartReconcileLoop starts the periodic reconciliation loop.
@@ -46,15 +54,17 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	lastSeenMap := m.buildLastSeenMap()
 	activeApps := m.appsWithActiveConnections()
 	excludedNodes := m.buildExcludedNodes()
+	metrics := m.aliveAgentMetrics(alive)
+	maxRAMPercent := m.maxRAMPercent()
 
 	var manualAssignmentChanged bool
 	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
 		before := countManuallyAssigned(apps)
 		handleDeadAgents(apps, alive, lastSeenMap, now)
 		manualAssignmentChanged = countManuallyAssigned(apps) != before
-		assignUnassignedApps(apps, alive, excludedNodes)
-		handleMigrations(apps, alive, now, excludedNodes)
-		rebalance(apps, alive, activeApps, excludedNodes)
+		assignUnassignedAppsWithMetrics(apps, alive, excludedNodes, metrics, maxRAMPercent)
+		handleMigrationsWithMetrics(apps, alive, now, excludedNodes, metrics, maxRAMPercent)
+		rebalanceWithMetrics(apps, alive, activeApps, excludedNodes, metrics, maxRAMPercent)
 	})
 	if manualAssignmentChanged {
 		m.saveManualAssignments()
@@ -178,6 +188,33 @@ func (m *Manager) aliveAgents() map[string]bool {
 	return alive
 }
 
+func (m *Manager) aliveAgentMetrics(alive map[string]bool) map[string]common.NodeMetrics {
+	agents := m.leaseManager.ListAgents()
+	metrics := make(map[string]common.NodeMetrics, len(alive))
+	for _, agent := range agents {
+		if alive[agent.Name] && agent.Metrics.MemoryTotal > 0 {
+			metrics[agent.Name] = agent.Metrics
+		}
+	}
+	return metrics
+}
+
+func (m *Manager) maxRAMPercent() float64 {
+	raw := strings.TrimSpace(m.configValue(common.ConfigKeyMaxRAMPercent))
+	if raw == "" {
+		return defaultMaxRAMPercent
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value <= 0 {
+		reconcileLog.Warn("Ignoring invalid max RAM percent", "value", raw)
+		return defaultMaxRAMPercent
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
 // buildLastSeenMap returns a map of agent name → LastSeen for all known agents
 // (including recently-offline ones kept by the extended staleAgentTTL).
 func (m *Manager) buildLastSeenMap() map[string]time.Time {
@@ -237,6 +274,10 @@ func handleDeadAgents(apps map[common.AppID]*App, alive map[string]bool, lastSee
 
 // assignUnassignedApps assigns each unassigned running app to the least-loaded alive agent.
 func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string) {
+	assignUnassignedAppsWithMetrics(apps, alive, excludedNodes, nil, 0)
+}
+
+func assignUnassignedAppsWithMetrics(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
 	for _, app := range apps {
 		if app.IsGlobal {
 			continue // global apps run on all nodes, no assignment needed
@@ -249,7 +290,7 @@ func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool, exc
 		}
 
 		excluded := append(app.QuarantinedOn, excludedNodes[app.ID]...)
-		target := leastLoadedExcluding(apps, alive, excluded)
+		target := leastLoadedExcludingWithMetrics(apps, alive, excluded, metrics, maxRAMPercent)
 		if target == "" {
 			reconcileLog.Warn("No available agent for app", "app", app.ID)
 			continue
@@ -262,6 +303,10 @@ func assignUnassignedApps(apps map[common.AppID]*App, alive map[string]bool, exc
 
 // handleMigrations migrates at most 1 quarantined app past its cooldown to a different agent.
 func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now time.Time, excludedNodes map[common.AppID][]string) {
+	handleMigrationsWithMetrics(apps, alive, now, excludedNodes, nil, 0)
+}
+
+func handleMigrationsWithMetrics(apps map[common.AppID]*App, alive map[string]bool, now time.Time, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
 	for _, app := range apps {
 		if app.IsGlobal {
 			continue
@@ -282,7 +327,7 @@ func handleMigrations(apps map[common.AppID]*App, alive map[string]bool, now tim
 		oldAgent := *app.AssignedAgent
 		excluded := append(app.QuarantinedOn, oldAgent)
 		excluded = append(excluded, excludedNodes[app.ID]...)
-		target := leastLoadedExcluding(apps, alive, excluded)
+		target := leastLoadedExcludingWithMetrics(apps, alive, excluded, metrics, maxRAMPercent)
 		if target == "" {
 			continue
 		}
@@ -323,19 +368,27 @@ func (m *Manager) appsWithActiveConnections() map[common.AppID]bool {
 // rebalance moves at most 1 non-quarantined, non-running app from an overloaded agent to an underloaded one.
 // Only stopped apps are moved during automatic rebalancing to avoid disrupting running services.
 func rebalance(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string) {
-	rebalanceApps(apps, alive, activeApps, excludedNodes, false)
+	rebalanceWithMetrics(apps, alive, activeApps, excludedNodes, nil, 0)
+}
+
+func rebalanceWithMetrics(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
+	rebalanceApps(apps, alive, activeApps, excludedNodes, false, metrics, maxRAMPercent)
 }
 
 // forceRebalance moves ALL eligible apps at once to achieve balance, including running apps.
 // Used for user-triggered rebalancing via the UI.
 func forceRebalance(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string) {
-	rebalanceApps(apps, alive, nil, excludedNodes, true)
+	forceRebalanceWithMetrics(apps, alive, excludedNodes, nil, 0)
+}
+
+func forceRebalanceWithMetrics(apps map[common.AppID]*App, alive map[string]bool, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
+	rebalanceApps(apps, alive, nil, excludedNodes, true, metrics, maxRAMPercent)
 }
 
 // rebalanceApps is the shared implementation for both automatic and forced rebalancing.
 // When force=true, running apps can be moved and multiple moves happen in one pass.
 // When force=false, only stopped (ObservedState != running) apps are moved, max 1 per cycle.
-func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, force bool) {
+func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, force bool, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
 	for {
 		// Count apps per agent (exclude global apps from load counting)
 		loadMap := make(map[string]int)
@@ -351,23 +404,38 @@ func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps
 			}
 		}
 
-		// Find most and least loaded
+		// Find most and least loaded. Prefer moving away from nodes over the
+		// configured RAM ceiling, then fall back to count balancing.
 		var maxAgent, minAgent string
 		maxLoad, minLoad := -1, int(^uint(0)>>1)
 		for agent, load := range loadMap {
-			if load > maxLoad {
+			if load > maxLoad || (load == maxLoad && (maxAgent == "" || agent < maxAgent)) {
 				maxLoad = load
 				maxAgent = agent
 			}
-			if load < minLoad {
+			if load < minLoad || (load == minLoad && (minAgent == "" || agent < minAgent)) {
 				minLoad = load
 				minAgent = agent
 			}
 		}
 
-		// Only rebalance if difference > 1
-		if maxLoad-minLoad <= 1 {
+		overLimitAgent := mostMemoryConstrainedAgent(loadMap, metrics, maxRAMPercent)
+		if overLimitAgent != "" {
+			maxAgent = overLimitAgent
+			maxLoad = loadMap[maxAgent]
+			minAgent = leastLoadedExcludingWithMetrics(apps, alive, []string{maxAgent}, metrics, maxRAMPercent)
+			if minAgent == "" || nodeOverRAMLimit(metrics[minAgent], maxRAMPercent) {
+				return
+			}
+			minLoad = loadMap[minAgent]
+		} else if maxLoad-minLoad <= 1 {
 			return
+		} else {
+			target := leastLoadedExcludingWithMetrics(apps, alive, []string{maxAgent}, metrics, maxRAMPercent)
+			if target != "" {
+				minAgent = target
+				minLoad = loadMap[minAgent]
+			}
 		}
 
 		// Find a non-quarantined, non-global app on the overloaded agent to move
@@ -438,7 +506,8 @@ func (m *Manager) ForceRebalance() {
 
 	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
 		alive := m.aliveAgents()
-		forceRebalance(apps, alive, excludedNodes)
+		metrics := m.aliveAgentMetrics(alive)
+		forceRebalanceWithMetrics(apps, alive, excludedNodes, metrics, m.maxRAMPercent())
 	})
 
 	reconcileLog.Info("Force rebalance completed")
@@ -447,37 +516,115 @@ func (m *Manager) ForceRebalance() {
 // leastLoadedExcluding returns the alive agent with the fewest assigned apps,
 // excluding agents in the excluded set.
 func leastLoadedExcluding(apps map[common.AppID]*App, alive map[string]bool, excluded []string) string {
+	return leastLoadedExcludingWithMetrics(apps, alive, excluded, nil, 0)
+}
+
+func leastLoadedExcludingWithMetrics(apps map[common.AppID]*App, alive map[string]bool, excluded []string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) string {
 	excludeSet := make(map[string]bool, len(excluded))
 	for _, e := range excluded {
 		excludeSet[e] = true
 	}
 
-	// Count apps per alive agent
+	loadMap := appLoadMap(apps, alive, excludeSet)
+	names := make([]string, 0, len(loadMap))
+	for name := range loadMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	best := ""
+	for _, name := range names {
+		if best == "" || betterScheduleTarget(name, best, loadMap, metrics, maxRAMPercent) {
+			best = name
+		}
+	}
+	return best
+}
+
+func appLoadMap(apps map[common.AppID]*App, alive map[string]bool, excludeSet map[string]bool) map[string]int {
 	loadMap := make(map[string]int)
 	for name := range alive {
 		if !excludeSet[name] {
 			loadMap[name] = 0
 		}
 	}
-
 	for _, app := range apps {
-		if app.IsGlobal {
+		if app.IsGlobal || app.AssignedAgent == nil {
 			continue
 		}
-		if app.AssignedAgent != nil {
-			if _, ok := loadMap[*app.AssignedAgent]; ok {
-				loadMap[*app.AssignedAgent]++
-			}
+		if _, ok := loadMap[*app.AssignedAgent]; ok {
+			loadMap[*app.AssignedAgent]++
 		}
 	}
+	return loadMap
+}
 
-	// Find minimum
+func betterScheduleTarget(candidate, current string, loadMap map[string]int, metrics map[string]common.NodeMetrics, maxRAMPercent float64) bool {
+	candidateMetrics, candidateHasMetrics := usableNodeMetrics(metrics[candidate])
+	currentMetrics, currentHasMetrics := usableNodeMetrics(metrics[current])
+	candidateOver := candidateHasMetrics && nodeOverRAMLimit(candidateMetrics, maxRAMPercent)
+	currentOver := currentHasMetrics && nodeOverRAMLimit(currentMetrics, maxRAMPercent)
+	if candidateOver != currentOver {
+		return !candidateOver
+	}
+	// Prefer lower app count for stable distribution
+	if loadMap[candidate] != loadMap[current] {
+		return loadMap[candidate] < loadMap[current]
+	}
+	// Tiebreak by free RAM (second-order to avoid bouncing on RAM fluctuation)
+	if candidateHasMetrics && currentHasMetrics {
+		candidateFree := freeMemory(candidateMetrics)
+		currentFree := freeMemory(currentMetrics)
+		if candidateFree != currentFree {
+			return candidateFree > currentFree
+		}
+	}
+	if candidateHasMetrics != currentHasMetrics {
+		return candidateHasMetrics
+	}
+	return candidate < current
+}
+
+func usableNodeMetrics(metrics common.NodeMetrics) (common.NodeMetrics, bool) {
+	return metrics, metrics.MemoryTotal > 0
+}
+
+func freeMemory(metrics common.NodeMetrics) uint64 {
+	if metrics.MemoryUsed >= metrics.MemoryTotal {
+		return 0
+	}
+	return metrics.MemoryTotal - metrics.MemoryUsed
+}
+
+func nodeOverRAMLimit(metrics common.NodeMetrics, maxRAMPercent float64) bool {
+	return maxRAMPercent > 0 && metrics.MemoryTotal > 0 && metrics.MemoryPercent >= maxRAMPercent
+}
+
+// evacuationThreshold returns the effective threshold for triggering RAM-based
+// evacuation. A buffer prevents oscillation when MemoryPercent naturally
+// fluctuates around the limit.
+func evacuationThreshold(maxRAMPercent float64) float64 {
+	return maxRAMPercent + evacuationRAMBuffer
+}
+
+func mostMemoryConstrainedAgent(loadMap map[string]int, metrics map[string]common.NodeMetrics, maxRAMPercent float64) string {
+	if maxRAMPercent <= 0 {
+		return ""
+	}
+	evacThreshold := evacuationThreshold(maxRAMPercent)
 	best := ""
-	bestLoad := int(^uint(0) >> 1)
-	for agent, load := range loadMap {
-		if load < bestLoad {
-			bestLoad = load
-			best = agent
+	bestPercent := 0.0
+	for name, load := range loadMap {
+		if load == 0 {
+			continue
+		}
+		metric := metrics[name]
+		if !nodeOverRAMLimit(metric, evacThreshold) {
+			continue
+		}
+		if best == "" || metric.MemoryPercent > bestPercent || (metric.MemoryPercent == bestPercent && name < best) {
+			best = name
+			bestPercent = metric.MemoryPercent
 		}
 	}
 	return best

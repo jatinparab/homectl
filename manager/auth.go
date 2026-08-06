@@ -22,6 +22,7 @@ var authLog = slog.With("area", "auth")
 type AuthService struct {
 	users    UserRepository
 	sessions SessionRepository
+	apiKeys  APIKeyRepository
 
 	onboardingMu        sync.RWMutex
 	onboardingRequired  bool
@@ -31,7 +32,7 @@ type AuthService struct {
 
 type currentUserContextKey struct{}
 
-func NewAuthService(ctx context.Context, users UserRepository, sessions SessionRepository) (*AuthService, error) {
+func NewAuthService(ctx context.Context, users UserRepository, sessions SessionRepository, apiKeys APIKeyRepository) (*AuthService, error) {
 	count, err := users.CountUsers(ctx)
 	if err != nil {
 		return nil, err
@@ -39,6 +40,7 @@ func NewAuthService(ctx context.Context, users UserRepository, sessions SessionR
 	svc := &AuthService{
 		users:               users,
 		sessions:            sessions,
+		apiKeys:             apiKeys,
 		onboardingRequired:  count == 0,
 		onboardingTokenHash: "",
 	}
@@ -181,6 +183,26 @@ func (a *AuthService) Authenticate(ctx context.Context, token string) (User, err
 	return user, nil
 }
 
+func (a *AuthService) AuthenticateByAPIKey(ctx context.Context, rawKey string) (User, error) {
+	if a == nil || rawKey == "" || a.apiKeys == nil {
+		return User{}, ErrNotFound
+	}
+	keyHash := tokenHash(rawKey)
+	apiKey, err := a.apiKeys.GetAPIKeyByHash(ctx, keyHash)
+	if err != nil {
+		return User{}, err
+	}
+	user, err := a.users.GetByID(ctx, apiKey.UserID)
+	if err != nil {
+		return User{}, err
+	}
+	if user.Disabled {
+		return User{}, ErrNotFound
+	}
+	_ = a.apiKeys.TouchAPIKey(ctx, apiKey.ID, time.Now().UTC())
+	return user, nil
+}
+
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
@@ -211,6 +233,16 @@ func (m *Manager) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		if user, err := m.auth.Authenticate(r.Context(), cookie.Value); err == nil {
 			resp.Authenticated = true
 			resp.Username = user.Username
+		}
+	}
+	if !resp.Authenticated {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			rawKey := strings.TrimPrefix(authHeader, "Bearer ")
+			if user, err := m.auth.AuthenticateByAPIKey(r.Context(), rawKey); err == nil {
+				resp.Authenticated = true
+				resp.Username = user.Username
+			}
 		}
 	}
 	writeJSON(w, resp)
@@ -305,27 +337,45 @@ func (m *Manager) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		cookie, err := r.Cookie(sessionCookieName)
-		if err != nil || strings.TrimSpace(cookie.Value) == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		user, err := m.auth.Authenticate(r.Context(), cookie.Value)
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Rate limit mutating operations per user
-		if r.Method != http.MethodGet {
-			if !m.mutatingActionLimiter.Allow(user.Username) {
-				w.Header().Set("Retry-After", "30")
-				http.Error(w, "Too many requests, try again later", http.StatusTooManyRequests)
+		if err == nil && strings.TrimSpace(cookie.Value) != "" {
+			user, err := m.auth.Authenticate(r.Context(), cookie.Value)
+			if err == nil {
+				m.applyRateLimit(w, r, user)
+				if w.Header().Get("Retry-After") != "" {
+					return
+				}
+				next.ServeHTTP(w, r.WithContext(withCurrentUser(r.Context(), user)))
 				return
 			}
 		}
 
-		next.ServeHTTP(w, r.WithContext(withCurrentUser(r.Context(), user)))
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			rawKey := strings.TrimPrefix(authHeader, "Bearer ")
+			if rawKey != "" {
+				user, err := m.auth.AuthenticateByAPIKey(r.Context(), rawKey)
+				if err == nil {
+					m.applyRateLimit(w, r, user)
+					if w.Header().Get("Retry-After") != "" {
+						return
+					}
+					next.ServeHTTP(w, r.WithContext(withCurrentUser(r.Context(), user)))
+					return
+				}
+			}
+		}
+
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+func (m *Manager) applyRateLimit(w http.ResponseWriter, r *http.Request, user User) {
+	if r.Method != http.MethodGet {
+		if !m.mutatingActionLimiter.Allow(user.Username) {
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "Too many requests, try again later", http.StatusTooManyRequests)
+		}
+	}
 }
 
 func (m *Manager) isAuthExempt(r *http.Request) bool {

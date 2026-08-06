@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jatinparab/homectl/buildinfo"
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/docker"
@@ -22,7 +24,6 @@ import (
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
 	"github.com/jatinparab/homectl/utils"
-	"github.com/jatinparab/homectl/buildinfo"
 	"github.com/jatinparab/homectl/wireguard"
 )
 
@@ -74,10 +75,11 @@ type Agent struct {
 	runtimeMu    sync.RWMutex
 
 	// Executor, Restic, Caddy, Ready
-	executor    *Executor
-	restic      Restic
-	caddySync   *CaddySync
-	readyServer *ReadyServer
+	executor            *Executor
+	restic              Restic
+	caddySync           *CaddySync
+	caddyEnvFingerprint string
+	readyServer         *ReadyServer
 
 	// Gateway state (set by manager)
 	isGateway   bool
@@ -561,12 +563,39 @@ func sanitizedAgentEnviron() []string {
 func (a *Agent) caddyRuntimeEnv() map[string]string {
 	cfg := a.runtimeConfigSnapshot()
 	out := map[string]string{}
-	for key := range cfg {
+	for _, key := range caddyRuntimeEnvKeys() {
 		if val := strings.TrimSpace(cfg[key]); val != "" {
 			out[key] = val
 		}
 	}
 	return out
+}
+
+func caddyRuntimeEnvKeys() []string {
+	return []string{
+		common.ConfigKeyCaddyDNSProvider,
+		common.ConfigKeyCaddyACMEEmail,
+		common.ConfigKeyCaddyACMECA,
+		common.ConfigKeyCaddyDNSTokenEnv,
+		common.ConfigKeyCFDNSAPIToken,
+		common.ConfigKeyRootDomain,
+		common.ConfigKeyHomeWGIP,
+		common.ConfigKeyAuthentikCoreURL,
+		common.ConfigKeyAuthentikOutpost,
+	}
+}
+
+func caddyEnvFingerprint(env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+env[key])
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (a *Agent) applyRuntimeConfig() {
@@ -585,11 +614,17 @@ func (a *Agent) applyRuntimeConfig() {
 	if haIP := a.configValue(common.ConfigKeyLocalHAIP); haIP != "" {
 		a.ensureKeepalived(haIP)
 	}
-	if IsCaddyRunning() {
+	caddyEnv := a.caddyRuntimeEnv()
+	fingerprint := caddyEnvFingerprint(caddyEnv)
+	if IsCaddyRunning() && fingerprint != a.caddyEnvFingerprint {
 		StopCaddy()
 		if err := EnsureCaddy(a.caddyRuntimeEnv); err != nil {
 			agentLog.Warn("Failed to restart Caddy after config sync", "err", err)
+		} else {
+			a.caddyEnvFingerprint = fingerprint
 		}
+	} else {
+		a.caddyEnvFingerprint = fingerprint
 	}
 }
 
@@ -715,8 +750,11 @@ func (a *Agent) reconcileOnce() {
 	// Ensure caddy is running as a process (not a Docker container).
 	// Gracefully skip if caddy is not installed (e.g., e2e environment).
 	if _, cerr := exec.LookPath("caddy"); cerr == nil {
+		caddyEnv := a.caddyRuntimeEnv()
 		if err := EnsureCaddy(a.caddyRuntimeEnv); err != nil {
 			agentLog.Warn("Reconcile: caddy process not running", "err", err)
+		} else {
+			a.caddyEnvFingerprint = caddyEnvFingerprint(caddyEnv)
 		}
 	}
 

@@ -30,6 +30,10 @@ const (
 	PublicRouteModeHomelab = "homelab"
 	PublicRouteModeCustom  = "custom"
 
+	PublicRouteAuthModeAuthentik = "authentik"
+	PublicRouteAuthModeUpstream  = "upstream"
+	PublicRouteAuthModePublic    = "public"
+
 	homectlLocalhostAlias  = "homectl-localhost"
 	managerLocalhostAlias  = "manager-localhost"
 	publicRouteLogsAPIPath = "/api/v1/public-route-logs"
@@ -41,6 +45,7 @@ type PublicRoute struct {
 	ID           string    `json:"id"`
 	Host         string    `json:"host"`
 	Mode         string    `json:"mode"`
+	AuthMode     string    `json:"auth_mode,omitempty"`
 	CustomTarget string    `json:"custom_target,omitempty"`
 	Enabled      bool      `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -125,6 +130,9 @@ func normalizePublicRouteList(routes []PublicRoute) []PublicRoute {
 		if route.Mode == "" {
 			route.Mode = PublicRouteModeHomelab
 		}
+		if route.AuthMode == "" {
+			route.AuthMode = PublicRouteAuthModeUpstream
+		}
 		out = append(out, route)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
@@ -166,6 +174,14 @@ func validatePublicRoute(route PublicRoute) error {
 	}
 	if route.Host == publicHost {
 		return fmt.Errorf("%s is reserved for the manager UI", publicHost)
+	}
+	if route.Host == "auth.example.net" && route.AuthMode == PublicRouteAuthModeAuthentik {
+		return errors.New("auth.example.net must not use authentik auth mode")
+	}
+	switch route.AuthMode {
+	case "", PublicRouteAuthModeAuthentik, PublicRouteAuthModeUpstream, PublicRouteAuthModePublic:
+	default:
+		return errors.New("auth_mode must be authentik, upstream, or public")
 	}
 	switch route.Mode {
 	case PublicRouteModeHomelab:
@@ -515,6 +531,7 @@ func (m *Manager) generateManagerCaddyfile(includePublicRoutes bool) (string, er
 		b.WriteString("\t}\n")
 	}
 	b.WriteString("}\n\n")
+	writeAuthentikForwardAuthSnippet(&b, m.configValue(common.ConfigKeyAuthentikOutpost))
 
 	writeAccessLog := func() {
 		fmt.Fprintf(&b, "\tlog {\n\t\toutput file %s {\n\t\t\troll_size 10MiB\n\t\t\troll_keep 5\n\t\t}\n\t\tformat json\n\t}\n", managerCaddyAccessLogPath())
@@ -525,6 +542,7 @@ func (m *Manager) generateManagerCaddyfile(includePublicRoutes bool) (string, er
 		return "", err
 	}
 
+	b.WriteString("# Auth mode: upstream\n")
 	fmt.Fprintf(&b, "%s {\n", publicHost)
 	writeAccessLog()
 	if crowdSecKey != "" {
@@ -557,36 +575,83 @@ func (m *Manager) generateManagerCaddyfile(includePublicRoutes bool) (string, er
 			return "", err
 		}
 
+		authMode := normalizePublicRouteAuthMode(route.AuthMode)
+		fmt.Fprintf(&b, "# Auth mode: %s\n", authMode)
+		if route.Host == "auth.example.net" {
+			b.WriteString("# Authentik route; do not protect this with authentik_forward_auth or login can break.\n")
+		}
 		fmt.Fprintf(&b, "%s {\n", route.Host)
 		writeAccessLog()
-		if crowdSecKey != "" {
+		needsRoute := crowdSecKey != "" || authMode == PublicRouteAuthModeAuthentik
+		if needsRoute {
 			b.WriteString("\troute {\n")
-			b.WriteString("\t\tcrowdsec\n")
-			fmt.Fprintf(&b, "\t\treverse_proxy %s {\n", target)
-		} else {
-			fmt.Fprintf(&b, "\treverse_proxy %s {\n", target)
-		}
-		if route.Mode == PublicRouteModeHomelab {
-			if crowdSecKey != "" {
-				b.WriteString("\t\t\theader_up Host {host}\n")
-				b.WriteString("\t\t\theader_up X-Forwarded-Host {host}\n")
-				fmt.Fprintf(&b, "\t\t\ttransport http {\n\t\t\t\ttls_server_name %s\n\t\t\t}\n", route.Host)
-			} else {
-				b.WriteString("\t\theader_up Host {host}\n")
-				b.WriteString("\t\theader_up X-Forwarded-Host {host}\n")
-				fmt.Fprintf(&b, "\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n", route.Host)
-			}
 		}
 		if crowdSecKey != "" {
-			b.WriteString("\t\t}\n")
-			b.WriteString("\t}\n")
-		} else {
+			b.WriteString("\t\tcrowdsec\n")
+		}
+		if authMode == PublicRouteAuthModeAuthentik {
+			b.WriteString("\t\timport authentik_forward_auth\n")
+		}
+		indent := "\t"
+		if needsRoute {
+			indent = "\t\t"
+		}
+		fmt.Fprintf(&b, "%sreverse_proxy %s {\n", indent, target)
+		if route.Mode == PublicRouteModeHomelab {
+			fmt.Fprintf(&b, "%s\theader_up Host {host}\n", indent)
+			if route.Host == "auth.example.net" {
+				fmt.Fprintf(&b, "%s\theader_up X-Forwarded-Host {header.X-Forwarded-Host}\n", indent)
+			} else {
+				fmt.Fprintf(&b, "%s\theader_up X-Forwarded-Host {host}\n", indent)
+			}
+			fmt.Fprintf(&b, "%s\ttransport http {\n%s\t\ttls_server_name %s\n%s\t}\n", indent, indent, route.Host, indent)
+		}
+		fmt.Fprintf(&b, "%s}\n", indent)
+		if needsRoute {
 			b.WriteString("\t}\n")
 		}
 		b.WriteString("}\n\n")
 	}
 
 	return b.String(), nil
+}
+
+func normalizePublicRouteAuthMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case PublicRouteAuthModeAuthentik:
+		return PublicRouteAuthModeAuthentik
+	case PublicRouteAuthModePublic:
+		return PublicRouteAuthModePublic
+	default:
+		return PublicRouteAuthModeUpstream
+	}
+}
+
+func writeAuthentikForwardAuthSnippet(b *strings.Builder, outpostURL string) {
+	outpostURL = strings.TrimSpace(outpostURL)
+	if outpostURL == "" {
+		outpostURL = "{$AUTHENTIK_OUTPOST_URL:https://auth.example.net}"
+	}
+	b.WriteString("(authentik_forward_auth) {\n")
+	fmt.Fprintf(b, "\treverse_proxy /outpost.goauthentik.io/* %s\n\n", outpostURL)
+	b.WriteString("\trequest_header -X-Authentik-Username\n")
+	b.WriteString("\trequest_header -X-Authentik-Groups\n")
+	b.WriteString("\trequest_header -X-Authentik-Email\n")
+	b.WriteString("\trequest_header -X-Authentik-Name\n")
+	b.WriteString("\trequest_header -X-Authentik-Uid\n")
+	b.WriteString("\trequest_header -X-Authentik-Jwt\n")
+	b.WriteString("\trequest_header -X-Authentik-Meta-Jwks\n")
+	b.WriteString("\trequest_header -X-Authentik-Meta-Outpost\n")
+	b.WriteString("\trequest_header -X-Authentik-Meta-Provider\n")
+	b.WriteString("\trequest_header -X-Authentik-Meta-App\n")
+	b.WriteString("\trequest_header -X-Authentik-Meta-Version\n\n")
+	fmt.Fprintf(b, "\tforward_auth %s {\n", outpostURL)
+	b.WriteString("\t\turi /outpost.goauthentik.io/auth/caddy\n")
+	b.WriteString("\t\theader_up X-Forwarded-Host {host}\n")
+	b.WriteString("\t\tcopy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version\n")
+	b.WriteString("\t\ttrusted_proxies private_ranges\n")
+	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
 }
 
 type routeStats struct {

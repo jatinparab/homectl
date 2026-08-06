@@ -408,12 +408,23 @@ func (m *Manager) GenerateTraefikConfig(forNodeID string) (string, error) {
 // Caddy's reverse_proxy default from overwriting it (which would break
 // Authentik forward-auth sub-requests that set this header explicitly).
 func writeRouteProxy(b *strings.Builder, r agentRoute) {
+	needsPreserveXFH := r.publicHost != "" && strings.HasPrefix(r.publicHost, "auth.")
 	if r.isLocal {
-		fmt.Fprintf(b, "\treverse_proxy %s\n", r.target)
+		if needsPreserveXFH {
+			fmt.Fprintf(b, "\treverse_proxy %s {\n", r.target)
+			fmt.Fprintf(b, "\t\theader_up Host {host}\n")
+			fmt.Fprintf(b, "\t\theader_up X-Forwarded-Host {header.X-Forwarded-Host}\n")
+			fmt.Fprintf(b, "\t}\n")
+		} else {
+			fmt.Fprintf(b, "\treverse_proxy %s\n", r.target)
+		}
 		return
 	}
 	fmt.Fprintf(b, "\treverse_proxy https://%s {\n", r.remoteHost)
 	fmt.Fprintf(b, "\t\theader_up Host {host}\n")
+	if needsPreserveXFH {
+		fmt.Fprintf(b, "\t\theader_up X-Forwarded-Host {header.X-Forwarded-Host}\n")
+	}
 	fmt.Fprintf(b, "\t\ttransport http {\n")
 	fmt.Fprintf(b, "\t\t\ttls_server_name %s\n", r.publicHost)
 	fmt.Fprintf(b, "\t\t}\n")

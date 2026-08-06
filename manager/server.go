@@ -81,6 +81,8 @@ func (m *Manager) NewServer() *http.Server {
 	mux.HandleFunc("/api/v1/public-routes/", m.handleAPIPublicRoute)
 	mux.HandleFunc("/api/v1/storage", m.handleAPIStorage)
 	mux.HandleFunc("/api/v1/storage/prune", m.handleAPIStoragePrune)
+	mux.HandleFunc("/api/v1/api-keys", m.handleAPIKeys)
+	mux.HandleFunc("/api/v1/api-keys/", m.handleAPIKey)
 
 	// UI static files (catch-all)
 	mux.Handle("/", m.ServeUI())
@@ -323,11 +325,11 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 			da.BackupSensitive = cfg.BackupSensitive
 		}
 		if da.BackupEnabled {
-			if ba, ok := backupAssignments[app.ID]; ok && ba.AgentID == agentID {
+			if ba, ok := backupAssignments[app.ID]; ok && ba.AgentID == agentID && assignmentShouldDispatch(ba) {
 				da.BackupNow = true
 			}
 		}
-		if da.BackupEnabled && pruneAssignment != nil && pruneAssignment.AgentID == agentID && pruneAssignment.AppID == app.ID {
+		if da.BackupEnabled && pruneAssignment != nil && pruneAssignment.AgentID == agentID && pruneAssignment.AppID == app.ID && assignmentShouldDispatch(pruneAssignment) {
 			da.PruneNow = true
 		}
 		if pendingRestoreApps[app.ID] {

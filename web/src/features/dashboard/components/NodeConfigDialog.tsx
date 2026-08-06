@@ -45,7 +45,12 @@ const REQUIRED_GLOBAL_FIELDS: FieldDef[] = [
   { key: 'CADDY_DNS_PROVIDER', label: 'DNS provider', description: 'Caddy DNS provider module name, for example cloudflare.', lockedKey: true, lockedScope: 'global' },
   { key: 'CADDY_ACME_EMAIL', label: 'ACME email', description: 'Email address for certificate registration and recovery.', lockedKey: true, lockedScope: 'global' },
   { key: 'CADDY_ACME_CA', label: 'ACME CA', description: 'Optional ACME directory URL, useful for staging certificates.', lockedKey: true, lockedScope: 'global' },
+  { key: 'ROOT_DOMAIN', label: 'Root domain', description: 'Public root domain used by self-hosted access examples, for example example.net.', lockedKey: true, lockedScope: 'global' },
+  { key: 'HOME_WG_IP', label: 'Home WG IP', description: 'WireGuard peer IP for the home/local service host.', lockedKey: true, lockedScope: 'global' },
+  { key: 'AUTHENTIK_CORE_URL', label: 'Authentik URL', description: 'Existing Authentik public URL, for example https://auth.example.net.', lockedKey: true, lockedScope: 'global' },
+  { key: 'AUTHENTIK_OUTPOST_URL', label: 'Authentik outpost', description: 'Forward-auth outpost URL; defaults to the Authentik public URL.', lockedKey: true, lockedScope: 'global' },
   { key: 'RESTIC_REPOSITORY', label: 'Restic repository', description: 'Repository URL used for all backup and restore jobs.', lockedKey: true, lockedScope: 'global' },
+  { key: 'HOMECTL_MAX_RAM_PERCENT', label: 'Max RAM %', description: 'Avoid assigning new apps to nodes at or above this memory usage percentage.', lockedKey: true, lockedScope: 'global' },
 ];
 
 const AGENT_NAME_FIELD: FieldDef = {

@@ -15,7 +15,7 @@ func TestAuthServiceOnboardingLoginAndSession(t *testing.T) {
 	}
 	defer store.Close()
 
-	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions)
+	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}

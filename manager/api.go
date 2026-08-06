@@ -1929,6 +1929,9 @@ func (m *Manager) handleAPIPublicRoutes(w http.ResponseWriter, r *http.Request) 
 		if route.Mode == "" {
 			route.Mode = PublicRouteModeHomelab
 		}
+		if route.AuthMode == "" {
+			route.AuthMode = PublicRouteAuthModeUpstream
+		}
 		route.ID = publicRouteID(route.Host)
 		route.CreatedAt = now
 		route.UpdatedAt = now
@@ -2164,6 +2167,9 @@ func (m *Manager) handleAPIPublicRoute(w http.ResponseWriter, r *http.Request) {
 		update.Host = normalizePublicRouteHost(update.Host)
 		if update.Mode == "" {
 			update.Mode = PublicRouteModeHomelab
+		}
+		if update.AuthMode == "" {
+			update.AuthMode = PublicRouteAuthModeUpstream
 		}
 		if err := validatePublicRoute(update); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

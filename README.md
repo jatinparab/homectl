@@ -216,6 +216,7 @@ See:
 
 - [App Repository Structure](./docs/repo-structure.md)
 - [Homectl Config](./docs/homectl-config.md)
+- [Self-Hosted Access](./docs/self-hosted-access.md)
 
 ## Development
 

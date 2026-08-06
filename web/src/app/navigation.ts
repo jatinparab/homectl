@@ -1,4 +1,4 @@
-export type Tab = 'dashboard' | 'backups' | 'storage' | 'containers' | 'routing' | 'crowdsec' | 'logs';
+export type Tab = 'dashboard' | 'backups' | 'storage' | 'containers' | 'routing' | 'crowdsec' | 'logs' | 'settings';
 
 export const TAB_PATHS: Record<Tab, string> = {
   dashboard: '/',
@@ -8,6 +8,7 @@ export const TAB_PATHS: Record<Tab, string> = {
   routing: '/routing',
   crowdsec: '/crowdsec',
   logs: '/logs',
+  settings: '/settings',
 };
 
 const PATH_TABS: Record<string, Tab> = {
@@ -18,6 +19,7 @@ const PATH_TABS: Record<string, Tab> = {
   '/routing': 'routing',
   '/crowdsec': 'crowdsec',
   '/logs': 'logs',
+  '/settings': 'settings',
 };
 
 export function tabFromPath(path: string): Tab {

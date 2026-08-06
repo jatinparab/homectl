@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
+	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -48,13 +49,20 @@ func parseResticTextProgress(line string) *common.ResticProgress {
 }
 
 const (
-	// ExecutorWorkers is the number of parallel workers for executing actions
-	ExecutorWorkers = 12
+	// DefaultExecutorWorkers limits parallel Docker/restic actions to avoid host CPU pressure.
+	DefaultExecutorWorkers = 4
+	ExecutorWorkersEnv     = "HOMECTL_EXECUTOR_WORKERS"
 
 	// BackupTimeout caps how long a single backup operation may run.
 	// If restic hangs (B2 unreachable, lock conflicts), the phase is reset
 	// and the agent can retry on next reconcile.
 	BackupTimeout = 15 * time.Minute
+
+	// RestoreTimeout caps how long a single restore operation may run.
+	RestoreTimeout = 15 * time.Minute
+
+	// PruneTimeout caps how long a single prune operation may run.
+	PruneTimeout = 2 * time.Hour
 )
 
 // ActionType represents the type of action to execute
@@ -166,11 +174,31 @@ func NewExecutor(d *docker.Docker, r Restic, agent *Agent) *Executor {
 
 // Start starts the executor workers
 func (e *Executor) Start() {
-	for i := 0; i < ExecutorWorkers; i++ {
+	workers := executorWorkerCount()
+	for i := 0; i < workers; i++ {
 		e.wg.Add(1)
 		go e.worker(i)
 	}
-	executorLog.Info("Started workers", "count", ExecutorWorkers)
+	executorLog.Info("Started workers", "count", workers)
+}
+
+func executorWorkerCount() int {
+	raw := os.Getenv(ExecutorWorkersEnv)
+	if raw == "" {
+		return DefaultExecutorWorkers
+	}
+	workers, err := strconv.Atoi(raw)
+	if err != nil {
+		executorLog.Warn("Invalid executor worker count, using default", "value", raw, "default", DefaultExecutorWorkers)
+		return DefaultExecutorWorkers
+	}
+	if workers < 1 {
+		return 1
+	}
+	if workers > 16 {
+		return 16
+	}
+	return workers
 }
 
 // Stop stops the executor
@@ -338,7 +366,9 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	if needsRestore {
 		rt.SetPhase(common.PhaseRestoring)
 		rt.PhaseLog.Clear()
-		err := e.restic.Restore(e.ctx, appID, restoreSnapshotID, func(p *common.ResticProgress) {
+		restoreCtx, restoreCancel := context.WithTimeout(e.ctx, RestoreTimeout)
+		defer restoreCancel()
+		err := e.restic.Restore(restoreCtx, appID, restoreSnapshotID, func(p *common.ResticProgress) {
 			rt.SetProgress(p)
 		}, func(line string) {
 			rt.PhaseLog.Write(line)
@@ -529,7 +559,9 @@ func (e *Executor) executePrune(appID common.AppID, rt *AppRuntime) error {
 	e.agent.runtimeMu.Unlock()
 
 	executorLog.Info("Starting prune", "app", appID)
-	pruneErr := e.restic.Prune(e.ctx, appID, func(line string) {
+	pruneCtx, pruneCancel := context.WithTimeout(e.ctx, PruneTimeout)
+	defer pruneCancel()
+	pruneErr := e.restic.Prune(pruneCtx, appID, func(line string) {
 		if p := parseResticTextProgress(line); p != nil {
 			rt.SetProgress(p)
 			if b, err := json.Marshal(p); err == nil {

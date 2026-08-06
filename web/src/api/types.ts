@@ -236,6 +236,7 @@ export interface GatewayInfo {
 }
 
 export type PublicRouteMode = "homelab" | "custom";
+export type PublicRouteAuthMode = "authentik" | "upstream" | "public";
 
 export interface PublicRouteHealth {
 	working: boolean;
@@ -253,6 +254,7 @@ export interface PublicRoute {
 	id: string;
 	host: string;
 	mode: PublicRouteMode;
+	auth_mode?: PublicRouteAuthMode;
 	custom_target?: string;
 	enabled: boolean;
 	created_at: string;

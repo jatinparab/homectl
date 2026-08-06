@@ -176,33 +176,30 @@ func (a *Agent) checkApp(appID string) appStatus {
 	}
 	status.running = running
 
-	// Only check health if running
-	if running != common.RunningStatusRunning {
-		return status
-	}
-
-	// Get app info for health check
-	app, err := a.docker.GetAppInfo(appID)
-	if err != nil {
-		sensorLog.Error("Failed to get app info", "app", appID, "err", err)
-		return status
-	}
-
-	// Health check on first port if available
-	if app.HealthHost != "" && app.HealthPort > 0 {
-		status.port = app.HealthPort
-		url := fmt.Sprintf("http://%s:%d", app.HealthHost, app.HealthPort)
-		var hostHeader string
-		if a.domainSuffix != "" {
-			hostHeader = fmt.Sprintf("%s.internal.%s", app.Name, a.domainSuffix)
-		}
-		status.health = a.healthCheck(url, hostHeader)
-	} else {
-		// No ports exposed: if container is running, consider it healthy
-		status.health = common.HealthHealthy
-	}
-
+// Only check health if running
+if running != common.RunningStatusRunning {
 	return status
+}
+
+// Container is running - consider it healthy regardless of HTTP health check.
+// Some apps (e.g. obs-streamer) require auth on all HTTP paths, making
+// a simple GET health check unreliable. Docker's running state is sufficient.
+status.health = common.HealthHealthy
+
+// Try health check but don't mark unhealthy on failure
+app, err := a.docker.GetAppInfo(appID)
+if err == nil && app.HealthHost != "" && app.HealthPort > 0 {
+	var hostHeader string
+	if a.domainSuffix != "" {
+		hostHeader = fmt.Sprintf("%s.internal.%s", app.Name, a.domainSuffix)
+	}
+	url := fmt.Sprintf("http://%s:%d", app.HealthHost, app.HealthPort)
+	if a.healthCheck(url, hostHeader) == common.HealthHealthy {
+		status.port = app.HealthPort
+	}
+}
+
+return status
 }
 
 // healthCheck performs an HTTP health check on the given URL with an optional Host header.

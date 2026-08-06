@@ -8,6 +8,7 @@ import {
   Route,
   ScrollText,
   ShieldCheck,
+  Settings,
   LogOut,
 } from 'lucide-react';
 import { IconButton } from '../ui';
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
   { id: 'routing', label: 'Routing', icon: Route },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'crowdsec', label: 'CrowdSec', icon: ShieldCheck },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 /* ── Styled components ── */

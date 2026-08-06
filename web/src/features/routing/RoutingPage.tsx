@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import styled from '@emotion/styled';
 import { useCreatePublicRoute, useDeletePublicRoute, usePublicRoutes, useUpdatePublicRoute } from '../../api/hooks';
-import type { PublicRoute, PublicRouteMode } from '../../api/types';
+import type { PublicRoute, PublicRouteAuthMode, PublicRouteMode } from '../../api/types';
 import { DesiredToggle } from '../../features/shared/components/StatusBadge';
 import { Button } from '../../components/ui';
 
@@ -19,8 +19,13 @@ function formatTime(value?: string): string {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? '--' : d.toLocaleTimeString();
 }
+function authLabel(mode?: PublicRouteAuthMode): string {
+  if (mode === 'authentik') return 'Authentik';
+  if (mode === 'public') return 'Public';
+  return 'App login';
+}
 
-const emptyForm = { id: '', host: '', mode: 'homelab' as PublicRouteMode, custom_target: '', enabled: true };
+const emptyForm = { id: '', host: '', mode: 'homelab' as PublicRouteMode, auth_mode: 'upstream' as PublicRouteAuthMode, custom_target: '', enabled: true };
 
 // ── Styled ─────────────────────────────────
 const Page = styled.div`min-height: 100vh; background: #faf9f7;`;
@@ -42,7 +47,7 @@ const FormRow = styled.form`
   grid-template-columns: 1fr;
   gap: 12px;
   align-items: end;
-  @media (min-width: 1024px) { grid-template-columns: 1.1fr 0.8fr 1.1fr auto; }
+  @media (min-width: 1024px) { grid-template-columns: 1.1fr 0.8fr 0.8fr 1.1fr auto; }
 `;
 
 const Label = styled.label`display: block;`;
@@ -73,6 +78,20 @@ const Tr = styled.tr`border-bottom: 1px solid #f7f5f0; &:hover { background: #fa
 const Td = styled.td`padding: 10px 12px;`;
 const HostName = styled.div`font-weight: 600; color: ${(p) => p.theme.colors.textPrimary};`;
 const HostMode = styled.div`font-size: 11px; color: #a8a29e;`;
+const AuthBadge = styled.span<{ $mode?: PublicRouteAuthMode }>`
+  display: inline-flex;
+  align-items: center;
+  min-width: 5.75rem;
+  justify-content: center;
+  border-radius: 3px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: ${(p) => (p.$mode === 'authentik' ? '#0f766e' : p.$mode === 'public' ? '#b45309' : '#57534e')};
+  background: ${(p) => (p.$mode === 'authentik' ? '#ccfbf1' : p.$mode === 'public' ? '#fef3c7' : '#f5f5f4')};
+  border: 1px solid ${(p) => (p.$mode === 'authentik' ? '#99f6e4' : p.$mode === 'public' ? '#fde68a' : '#e7e5e4')};
+`;
 const StatusDot = styled.span<{ $working: boolean; $enabled: boolean }>`
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: ${(p) => (p.$working ? '#10b981' : p.$enabled ? '#ef4444' : '#d6d3d1')};
@@ -107,14 +126,14 @@ export function RoutingPage() {
 
   const saving = createRoute.isPending || updateRoute.isPending;
   function resetForm() { setForm(emptyForm); setError(null); }
-  function editRoute(route: PublicRoute) { setForm({ id: route.id, host: route.host, mode: route.mode, custom_target: route.custom_target ?? '', enabled: route.enabled }); setError(null); }
+  function editRoute(route: PublicRoute) { setForm({ id: route.id, host: route.host, mode: route.mode, auth_mode: route.auth_mode ?? 'upstream', custom_target: route.custom_target ?? '', enabled: route.enabled }); setError(null); }
   function submitRoute(event: FormEvent) {
     event.preventDefault(); setError(null);
-    const payload = { host: form.host.trim(), mode: form.mode, custom_target: form.mode === 'custom' ? form.custom_target.trim() : '', enabled: form.enabled };
+    const payload = { host: form.host.trim(), mode: form.mode, auth_mode: form.auth_mode, custom_target: form.mode === 'custom' ? form.custom_target.trim() : '', enabled: form.enabled };
     (form.id ? updateRoute.mutateAsync({ id: form.id, route: payload }) : createRoute.mutateAsync(payload))
       .then(resetForm).catch((err) => setError(err instanceof Error ? err.message.trim() : 'Route update failed'));
   }
-  function toggleRoute(route: PublicRoute) { updateRoute.mutate({ id: route.id, route: { host: route.host, mode: route.mode, custom_target: route.custom_target, enabled: !route.enabled } }); }
+  function toggleRoute(route: PublicRoute) { updateRoute.mutate({ id: route.id, route: { host: route.host, mode: route.mode, auth_mode: route.auth_mode ?? 'upstream', custom_target: route.custom_target, enabled: !route.enabled } }); }
   function removeRoute(route: PublicRoute) { if (!window.confirm(`Delete public route ${route.host}?`)) return; deleteRoute.mutate(route.id); }
 
   return (
@@ -129,6 +148,10 @@ export function RoutingPage() {
             <Label>
               <LabelText>Destination</LabelText>
               <SelectField value={form.mode} onChange={(e) => setForm((v) => ({ ...v, mode: e.target.value as PublicRouteMode }))}><option value="homelab">Homelab gateway</option><option value="custom">Custom URL</option></SelectField>
+            </Label>
+            <Label>
+              <LabelText>Auth</LabelText>
+              <SelectField value={form.auth_mode} onChange={(e) => setForm((v) => ({ ...v, auth_mode: e.target.value as PublicRouteAuthMode }))}><option value="authentik">Authentik</option><option value="upstream">App login</option><option value="public">Public</option></SelectField>
             </Label>
             <Label>
               <LabelText>Custom URL</LabelText>
@@ -146,11 +169,12 @@ export function RoutingPage() {
 
           <div style={{ overflowX: 'auto' }}>
             <Table>
-              <thead><tr><Th>Route</Th><Th>Status</Th><Th>Target</Th><Th>Traffic</Th><Th></Th></tr></thead>
+              <thead><tr><Th>Route</Th><Th>Auth</Th><Th>Status</Th><Th>Target</Th><Th>Traffic</Th><Th></Th></tr></thead>
               <tbody>
                 {sortedRoutes.map((route) => (
                   <Tr key={route.id}>
                     <Td><HostName>{route.host}</HostName><HostMode>{route.mode === 'homelab' ? 'homelab gateway' : 'custom route'}</HostMode></Td>
+                    <Td><AuthBadge $mode={route.auth_mode ?? 'upstream'}>{authLabel(route.auth_mode)}</AuthBadge></Td>
                     <Td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <StatusDot $working={route.health.working} $enabled={route.enabled} />
@@ -169,7 +193,7 @@ export function RoutingPage() {
                     </Td>
                   </Tr>
                 ))}
-                {!isLoading && sortedRoutes.length === 0 && <tr><td colSpan={5}><EmptyRow>No public routes configured.</EmptyRow></td></tr>}
+                {!isLoading && sortedRoutes.length === 0 && <tr><td colSpan={6}><EmptyRow>No public routes configured.</EmptyRow></td></tr>}
               </tbody>
             </Table>
           </div>
