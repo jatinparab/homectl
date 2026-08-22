@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,11 @@ const (
 	MaxRestarts = 5
 	// UnhealthyThreshold is the number of consecutive unhealthy checks before triggering a restart
 	UnhealthyThreshold = 5
+	// BackupActivityByteThreshold is the minimum traffic observed between
+	// heartbeats before a backup-sensitive app is considered actively in use.
+	// This ignores lightweight uptime probes and idle reverse-proxy keepalives
+	// while still protecting media streams from interruption.
+	BackupActivityByteThreshold = 64 << 10
 )
 
 var agentLog = slog.With("area", "agent")
@@ -113,6 +119,11 @@ type Agent struct {
 	snapshotCancelFns map[common.AppID]context.CancelFunc
 	snapshotCacheMu   sync.RWMutex
 
+	// Per-app TCP byte samples used to distinguish real traffic from idle
+	// keepalives and lightweight monitoring probes.
+	activityMu      sync.Mutex
+	activitySamples map[common.AppID]uint64
+
 	// Storage prune state
 	storagePruneMu    sync.Mutex
 	storagePruneState StoragePruneState
@@ -153,6 +164,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		repoUnlock:        NewRepoOpState(),
 		snapshotCache:     make(map[common.AppID]*SnapshotCache),
 		snapshotCancelFns: make(map[common.AppID]context.CancelFunc),
+		activitySamples:   make(map[common.AppID]uint64),
 		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 		lastConnectedAt:   time.Now(),
 	}
@@ -911,17 +923,56 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 	return ActionNone()
 }
 
-// hasActiveTCPConnections checks if there are established TCP connections to the given port.
-// Uses `ss` on Linux. Returns false on error (e.g. macOS dev) to allow backup.
-func hasActiveTCPConnections(port int) bool {
-	cmd := exec.Command("ss", "-tn", "state", "established", fmt.Sprintf("dst :%d", port))
+var tcpBytesRe = regexp.MustCompile(`bytes_(?:sent|received):([0-9]+)`)
+
+// tcpTransferredBytes sums traffic counters for established TCP connections to
+// a service port. Uses `ss` on Linux and returns false on unsupported systems.
+func tcpTransferredBytes(port int) (uint64, bool) {
+	cmd := exec.Command("ss", "-tin", "state", "established", fmt.Sprintf("dst :%d", port))
 	output, err := cmd.Output()
 	if err != nil {
+		return 0, false
+	}
+	return parseTCPTransferredBytes(string(output)), true
+}
+
+func parseTCPTransferredBytes(output string) uint64 {
+	var total uint64
+	for _, match := range tcpBytesRe.FindAllStringSubmatch(output, -1) {
+		value, err := strconv.ParseUint(match[1], 10, 64)
+		if err == nil {
+			total += value
+		}
+	}
+	return total
+}
+
+func (a *Agent) hasActiveAppTraffic(appID common.AppID, port int) bool {
+	transferred, ok := tcpTransferredBytes(port)
+	if !ok {
 		return false
 	}
-	// ss outputs a header line; any additional lines indicate active connections
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	return len(lines) > 1
+
+	a.activityMu.Lock()
+	if a.activitySamples == nil {
+		a.activitySamples = make(map[common.AppID]uint64)
+	}
+	previous, sampled := a.activitySamples[appID]
+	a.activitySamples[appID] = transferred
+	a.activityMu.Unlock()
+	if !sampled {
+		return false
+	}
+
+	var delta uint64
+	if transferred >= previous {
+		delta = transferred - previous
+	} else {
+		// Connections were replaced between samples. Treat the current counters
+		// as new traffic instead of allowing uint64 underflow.
+		delta = transferred
+	}
+	return delta >= BackupActivityByteThreshold
 }
 
 // canRestart checks if an app can be restarted
@@ -1186,7 +1237,7 @@ func (a *Agent) GetAppReports() []common.AppReport {
 			continue
 		}
 		if report.Port > 0 {
-			report.ActiveConnections = hasActiveTCPConnections(report.Port)
+			report.ActiveConnections = a.hasActiveAppTraffic(appID, report.Port)
 			if report.ActiveConnections {
 				now := time.Now()
 				rt.mu.Lock()

@@ -335,6 +335,22 @@ func TestRebalance_SkipsQuarantinedApps(t *testing.T) {
 	}
 }
 
+func TestRebalanceSkipsAppWithActiveBackupWork(t *testing.T) {
+	apps := map[common.AppID]*App{
+		"backup-app": {ID: "backup-app", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},
+		"other-app":  {ID: "other-app", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},
+		"third-app":  {ID: "third-app", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},
+	}
+	alive := map[string]bool{"node1": true, "node2": true}
+	protected := map[common.AppID]bool{"backup-app": true}
+
+	rebalance(apps, alive, protected, nil)
+
+	if apps["backup-app"].AssignedAgent == nil || *apps["backup-app"].AssignedAgent != "node1" {
+		t.Fatal("app with active backup work was rebalanced")
+	}
+}
+
 func TestRebalance_MaxOnePerCycle(t *testing.T) {
 	apps := map[common.AppID]*App{
 		"app1": {ID: "app1", DesiredState: common.DesiredRunning, AssignedAgent: strPtr("node1")},

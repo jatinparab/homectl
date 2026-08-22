@@ -415,7 +415,10 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	}); err != nil {
 		return err
 	}
-	rt.SetPhase(common.PhaseRunning)
+	// StartWithLogs has confirmed docker compose start succeeded. Update the
+	// runtime optimistically so a sensor tick racing just behind this action
+	// cannot enqueue a duplicate start and consume JustBackedUp a second time.
+	markAppStarted(rt, common.PhaseRunning)
 
 	executorLog.Info("Started", "app", appID)
 	return nil
@@ -439,10 +442,15 @@ func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	}); err != nil {
 		return err
 	}
-	rt.SetPhase(common.PhaseEmpty)
+	markAppStarted(rt, common.PhaseEmpty)
 
 	executorLog.Info("Restarted", "app", appID)
 	return nil
+}
+
+func markAppStarted(rt *AppRuntime, phase common.Phase) {
+	rt.SetRunning(common.RunningStatusRunning)
+	rt.SetPhase(phase)
 }
 
 // executeStop stops an app

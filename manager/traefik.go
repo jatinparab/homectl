@@ -364,16 +364,19 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
 			}
 			writeRouteProxy(&b, r)
+			writeRouteHealthProbe(&b)
 			b.WriteString("}\n\n")
 			fmt.Fprintf(&b, "%s {\n", r.internalHost)
 			if dnsTokenEnv != "" {
 				fmt.Fprintf(&b, "\ttls {\n\t\tdns %s {env.%s}\n\t}\n", provider, dnsTokenEnv)
 			}
 			writeRouteProxy(&b, r)
+			writeRouteHealthProbe(&b)
 			b.WriteString("}\n\n")
 		} else {
 			fmt.Fprintf(&b, "%s, %s {\n", r.publicHost, r.internalHost)
 			writeRouteProxy(&b, r)
+			writeRouteHealthProbe(&b)
 			b.WriteString("}\n\n")
 		}
 	}
@@ -386,6 +389,15 @@ func (m *Manager) GenerateCaddyConfig(forNodeID string) (string, error) {
 	b.WriteString("}\n\n")
 
 	return b.String(), nil
+}
+
+// writeRouteHealthProbe answers manager-generated route checks at the agent
+// proxy without opening a connection to the application. App health is already
+// reported independently by the agent; this probe validates the public routing
+// path and must not count as user activity for backup-sensitive apps.
+func writeRouteHealthProbe(b *strings.Builder) {
+	b.WriteString("\t@homectl_health_check header X-Homectl-Health-Check true\n")
+	b.WriteString("\trespond @homectl_health_check 204\n")
 }
 
 // LoadAppConfigsStrict is a convenience wrapper that loads app configs with

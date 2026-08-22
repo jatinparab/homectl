@@ -19,6 +19,18 @@ import (
 
 var backupLog = slog.With("area", "backup")
 
+const (
+	// ResticMetadataTimeout bounds snapshot queries used during reconciliation and
+	// API requests. A stuck metadata lookup must never pin an executor worker or
+	// leave an app permanently marked in-flight.
+	ResticMetadataTimeout = 2 * time.Minute
+	resticWaitDelay       = 5 * time.Second
+)
+
+func resticMetadataContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, ResticMetadataTimeout)
+}
+
 // ProgressCallback is called with progress updates during restic operations
 type ProgressCallback func(*common.ResticProgress)
 
@@ -144,11 +156,13 @@ func (r *RepoRestic) resticCmdCtx(ctx context.Context, args ...string) *exec.Cmd
 		}
 		cmdArgs = append(cmdArgs, args...)
 		cmd := exec.CommandContext(ctx, "sudo", cmdArgs...)
+		cmd.WaitDelay = resticWaitDelay
 		// Provide manager-synced vars for sudo to preserve from the caller env.
 		cmd.Env = append(sanitizedAgentEnviron(), runtimeEnv...)
 		return cmd
 	}
 	cmd := exec.CommandContext(ctx, "restic", args...)
+	cmd.WaitDelay = resticWaitDelay
 	cmd.Env = append(sanitizedAgentEnviron(), runtimeEnv...)
 	return cmd
 }
@@ -441,6 +455,8 @@ type resticSnapshot struct {
 // LatestSnapshot returns the timestamp and ID of the latest snapshot for an app.
 // Returns zero time + empty string if no snapshots exist (not an error).
 func (r *RepoRestic) LatestSnapshot(ctx context.Context, appID common.AppID) (time.Time, string, error) {
+	ctx, cancel := resticMetadataContext(ctx)
+	defer cancel()
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repoURL(),
 		"snapshots",
@@ -475,6 +491,8 @@ func (r *RepoRestic) LatestSnapshot(ctx context.Context, appID common.AppID) (ti
 // Snapshot returns the timestamp and resolved ID of a specific snapshot for an app.
 // Returns zero time + empty string if the snapshot is not found (not an error).
 func (r *RepoRestic) Snapshot(ctx context.Context, appID common.AppID, snapshotID string) (time.Time, string, error) {
+	ctx, cancel := resticMetadataContext(ctx)
+	defer cancel()
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repoURL(),
 		"snapshots",
@@ -502,6 +520,8 @@ func (r *RepoRestic) Snapshot(ctx context.Context, appID common.AppID, snapshotI
 
 // ListSnapshots returns all snapshots for an app, sorted newest-first.
 func (r *RepoRestic) ListSnapshots(ctx context.Context, appID common.AppID) ([]Snapshot, error) {
+	ctx, cancel := resticMetadataContext(ctx)
+	defer cancel()
 	cmd := r.resticCmdCtx(ctx,
 		"-r", r.repoURL(),
 		"snapshots",
@@ -537,6 +557,8 @@ type resticLsEntry struct {
 
 // ListSnapshotFiles lists files in a snapshot at the given path, returning direct children only.
 func (r *RepoRestic) ListSnapshotFiles(ctx context.Context, snapshotID, path string) ([]SnapshotEntry, error) {
+	ctx, cancel := resticMetadataContext(ctx)
+	defer cancel()
 	if path == "" {
 		path = "/"
 	}

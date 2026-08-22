@@ -313,7 +313,12 @@ func (m *Manager) checkPublicRoute(ctx context.Context, route PublicRoute) Publi
 	}
 	if route.Mode == PublicRouteModeHomelab {
 		req.Host = route.Host
+		req.Header.Set("X-Homectl-Health-Check", "true")
 	}
+	// Route health checks are machine-generated probes, not user activity. Do
+	// not leave a pooled Caddy -> app connection established between checks;
+	// backup-sensitive apps use established connections to determine idleness.
+	req.Close = true
 
 	start := time.Now()
 	client := *m.httpClient
@@ -322,8 +327,13 @@ func (m *Manager) checkPublicRoute(ctx context.Context, route PublicRoute) Publi
 	}
 	if route.Mode == PublicRouteModeHomelab {
 		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{ServerName: route.Host},
+			TLSClientConfig:   &tls.Config{ServerName: route.Host},
+			DisableKeepAlives: true,
 		}
+	} else if transport, ok := client.Transport.(*http.Transport); ok {
+		transport = transport.Clone()
+		transport.DisableKeepAlives = true
+		client.Transport = transport
 	}
 	resp, err := client.Do(req)
 	result.ResponseMS = time.Since(start).Milliseconds()

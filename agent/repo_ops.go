@@ -12,6 +12,11 @@ import (
 
 var ErrRepoOpBusy = errors.New("repo operation already running")
 
+const (
+	RepoCheckTimeout  = 2 * time.Hour
+	RepoUnlockTimeout = 15 * time.Minute
+)
+
 // RepoOpState tracks repo-wide maintenance operations (check/unlock).
 // It is stored on the Agent, not per-app.
 type RepoOpState struct {
@@ -117,7 +122,7 @@ func (a *Agent) TriggerRepoUnlock() error {
 }
 
 func (a *Agent) runRepoCheck() {
-	ctx, cancel := context.WithCancel(a.sensorCtx)
+	ctx, cancel := context.WithTimeout(a.sensorCtx, RepoCheckTimeout)
 	defer cancel()
 
 	// Serialize with backup/prune lane on this node.
@@ -150,7 +155,7 @@ func (a *Agent) runRepoCheck() {
 }
 
 func (a *Agent) runRepoUnlock() {
-	ctx, cancel := context.WithCancel(a.sensorCtx)
+	ctx, cancel := context.WithTimeout(a.sensorCtx, RepoUnlockTimeout)
 	defer cancel()
 
 	// Serialize with backup/prune lane on this node.
@@ -198,7 +203,7 @@ func (a *Agent) TriggerRepoForceUnlock() error {
 }
 
 func (a *Agent) runRepoForceUnlock() {
-	ctx, cancel := context.WithCancel(a.sensorCtx)
+	ctx, cancel := context.WithTimeout(a.sensorCtx, RepoUnlockTimeout)
 	defer cancel()
 
 	// No backupMu — force unlock runs regardless of running operations.

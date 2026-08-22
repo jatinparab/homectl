@@ -52,7 +52,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	}
 
 	lastSeenMap := m.buildLastSeenMap()
-	activeApps := m.appsWithActiveConnections()
+	protectedApps := m.appsProtectedFromRebalance()
 	excludedNodes := m.buildExcludedNodes()
 	metrics := m.aliveAgentMetrics(alive)
 	maxRAMPercent := m.maxRAMPercent()
@@ -64,7 +64,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 		manualAssignmentChanged = countManuallyAssigned(apps) != before
 		assignUnassignedAppsWithMetrics(apps, alive, excludedNodes, metrics, maxRAMPercent)
 		handleMigrationsWithMetrics(apps, alive, now, excludedNodes, metrics, maxRAMPercent)
-		rebalanceWithMetrics(apps, alive, activeApps, excludedNodes, metrics, maxRAMPercent)
+		rebalanceWithMetrics(apps, alive, protectedApps, excludedNodes, metrics, maxRAMPercent)
 	})
 	if manualAssignmentChanged {
 		m.saveManualAssignments()
@@ -365,14 +365,34 @@ func (m *Manager) appsWithActiveConnections() map[common.AppID]bool {
 	return result
 }
 
-// rebalance moves at most 1 non-quarantined, non-running app from an overloaded agent to an underloaded one.
-// Only stopped apps are moved during automatic rebalancing to avoid disrupting running services.
-func rebalance(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string) {
-	rebalanceWithMetrics(apps, alive, activeApps, excludedNodes, nil, 0)
+// appsProtectedFromRebalance returns apps that must remain on their current
+// agent during automatic balancing. Moving a stopped app in the middle of a
+// backup or restore can make the destination restore stale data and prevents
+// the original backup assignment from receiving completion evidence.
+func (m *Manager) appsProtectedFromRebalance() map[common.AppID]bool {
+	result := m.appsWithActiveConnections()
+	for _, agent := range m.leaseManager.ListAgents() {
+		for _, report := range agent.AppReports {
+			if report.BackupBusy || report.PruneBusy || report.PostBackupPhase != "" ||
+				report.Phase == common.PhaseBackupStopping ||
+				report.Phase == common.PhaseBackupStopped ||
+				report.Phase == common.PhaseBackingUp ||
+				report.Phase == common.PhaseRestoring {
+				result[report.AppID] = true
+			}
+		}
+	}
+	return result
 }
 
-func rebalanceWithMetrics(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
-	rebalanceApps(apps, alive, activeApps, excludedNodes, false, metrics, maxRAMPercent)
+// rebalance moves at most 1 non-quarantined, non-running app from an overloaded agent to an underloaded one.
+// Only stopped apps are moved during automatic rebalancing to avoid disrupting running services.
+func rebalance(apps map[common.AppID]*App, alive map[string]bool, protectedApps map[common.AppID]bool, excludedNodes map[common.AppID][]string) {
+	rebalanceWithMetrics(apps, alive, protectedApps, excludedNodes, nil, 0)
+}
+
+func rebalanceWithMetrics(apps map[common.AppID]*App, alive map[string]bool, protectedApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
+	rebalanceApps(apps, alive, protectedApps, excludedNodes, false, metrics, maxRAMPercent)
 }
 
 // forceRebalance moves ALL eligible apps at once to achieve balance, including running apps.
@@ -388,7 +408,7 @@ func forceRebalanceWithMetrics(apps map[common.AppID]*App, alive map[string]bool
 // rebalanceApps is the shared implementation for both automatic and forced rebalancing.
 // When force=true, running apps can be moved and multiple moves happen in one pass.
 // When force=false, only stopped (ObservedState != running) apps are moved, max 1 per cycle.
-func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, force bool, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
+func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, protectedApps map[common.AppID]bool, excludedNodes map[common.AppID][]string, force bool, metrics map[string]common.NodeMetrics, maxRAMPercent float64) {
 	for {
 		// Count apps per agent (exclude global apps from load counting)
 		loadMap := make(map[string]int)
@@ -461,7 +481,7 @@ func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, activeApps
 				if app.ObservedState == common.ObservedRunning {
 					continue
 				}
-				if activeApps[app.ID] {
+				if protectedApps[app.ID] {
 					continue
 				}
 			}

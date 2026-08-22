@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,8 +157,36 @@ func TestGenerateAgentCaddyConfigRoutesPublicAndInternalHosts(t *testing.T) {
 		t.Fatalf("GenerateCaddyConfig: %v", err)
 	}
 
-	assertContains(t, caddyfile, "photos.example.net {\n\treverse_proxy http://homectl-photos:2283\n}")
-	assertContains(t, caddyfile, "photos.internal.example.net {\n\treverse_proxy http://homectl-photos:2283\n}")
+	assertContains(t, caddyfile, "photos.example.net {\n\treverse_proxy http://homectl-photos:2283\n")
+	assertContains(t, caddyfile, "photos.internal.example.net {\n\treverse_proxy http://homectl-photos:2283\n")
+	assertContains(t, caddyfile, "@homectl_health_check header X-Homectl-Health-Check true")
+	assertContains(t, caddyfile, "respond @homectl_health_check 204")
+}
+
+func TestCheckPublicRouteDoesNotKeepProbeConnectionAlive(t *testing.T) {
+	requestClose := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestClose = r.Close
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	m, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := m.checkPublicRoute(context.Background(), PublicRoute{
+		Host:         "probe.example.com",
+		Mode:         PublicRouteModeCustom,
+		CustomTarget: server.URL,
+		Enabled:      true,
+	})
+	if result.Status != "healthy" {
+		t.Fatalf("route status = %q, error = %q", result.Status, result.LastError)
+	}
+	if !requestClose {
+		t.Fatal("health probe did not request connection close")
+	}
 }
 
 func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
@@ -182,8 +211,8 @@ func TestGenerateAgentCaddyConfigDNSChallengeBlock(t *testing.T) {
 		t.Fatalf("GenerateCaddyConfig: %v", err)
 	}
 
-	assertContains(t, caddyfile, "photos.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
-	assertContains(t, caddyfile, "photos.internal.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n}")
+	assertContains(t, caddyfile, "photos.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n")
+	assertContains(t, caddyfile, "photos.internal.example.net {\n\ttls {\n\t\tdns cloudflare {env.CF_DNS_API_TOKEN}\n\t}\n\treverse_proxy http://homectl-photos:2283\n")
 }
 
 func TestGenerateAgentCaddyConfigExposedSubdomainsUseContainerPortService(t *testing.T) {
@@ -253,12 +282,12 @@ func TestGenerateAgentCaddyConfigExposedSubdomainsUseContainerPortService(t *tes
 		t.Fatalf("GenerateCaddyConfig: %v", err)
 	}
 
-	assertContains(t, caddyfile, "torrent.example.net, torrent.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8081\n}")
-	assertContains(t, caddyfile, "prowlarr.example.net, prowlarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:9696\n}")
-	assertContains(t, caddyfile, "radarr.example.net, radarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:7878\n}")
-	assertContains(t, caddyfile, "sonarr.example.net, sonarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8989\n}")
-	assertContains(t, caddyfile, "bazarr.example.net, bazarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6767\n}")
-	assertContains(t, caddyfile, "nzbget.example.net, nzbget.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6789\n}")
+	assertContains(t, caddyfile, "torrent.example.net, torrent.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8081\n")
+	assertContains(t, caddyfile, "prowlarr.example.net, prowlarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:9696\n")
+	assertContains(t, caddyfile, "radarr.example.net, radarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:7878\n")
+	assertContains(t, caddyfile, "sonarr.example.net, sonarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:8989\n")
+	assertContains(t, caddyfile, "bazarr.example.net, bazarr.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6767\n")
+	assertContains(t, caddyfile, "nzbget.example.net, nzbget.internal.example.net {\n\treverse_proxy http://homectl-arr-stack:6789\n")
 }
 
 func TestRequirePublicHostBasicAuthSkipsAPIPaths(t *testing.T) {
