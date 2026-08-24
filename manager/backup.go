@@ -295,6 +295,13 @@ func (m *Manager) cleanupBackupStateLocked() {
 	}
 }
 
+func restoreEnabledForAgent(enabled bool, cfg HomectlConfig, agentID, gateway string) bool {
+	if cfg.UsesGatewayOnlyBackups() && agentID != gateway {
+		return false
+	}
+	return enabled
+}
+
 // backupNodeAllowed applies node-specific backup policies to manual work.
 // Automatic work for global apps is already assigned to the current gateway.
 func (m *Manager) backupNodeAllowed(appID common.AppID, agentID string) (allowed bool, gateway string) {

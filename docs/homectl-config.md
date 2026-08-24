@@ -66,8 +66,9 @@ Back up only the current gateway for a global app that replicates its own data:
 ```
 
 With `gateway_only`, automatic and manual backup/prune work is restricted to the
-current gateway. Homectl also skips its legacy post-backup restore fan-out since
-the application is responsible for keeping replicas synchronized.
+current gateway. Homectl disables restore-on-start and skips its legacy
+post-backup restore fan-out on replicas since the application is responsible
+for keeping them synchronized.
 
 Disable backups for infrastructure apps:
 

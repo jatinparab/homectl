@@ -305,6 +305,7 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 	}
 	m.backupMu.Unlock()
 
+	gateway := m.getGatewayNode()
 	desiredApps := make([]common.DesiredApp, 0, len(agentApps))
 	restoreSent := make(map[common.AppID]bool)
 	for _, app := range agentApps {
@@ -323,6 +324,7 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		}
 		if cfg, ok := appConfigs[string(app.ID)]; ok {
 			da.BackupSensitive = cfg.BackupSensitive
+			da.RestoreEnabled = restoreEnabledForAgent(da.RestoreEnabled, cfg, agentID, gateway)
 		}
 		if da.BackupEnabled {
 			if ba, ok := backupAssignments[app.ID]; ok && ba.AgentID == agentID && assignmentShouldDispatch(ba) {
@@ -356,11 +358,10 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		m.backupMu.Unlock()
 	}
 
-	response := common.DesiredAppsResponse{Apps: desiredApps}
-
-	m.gatewayMu.Lock()
-	response.IsGateway = m.gatewayNode == agentID
-	m.gatewayMu.Unlock()
+	response := common.DesiredAppsResponse{
+		Apps:      desiredApps,
+		IsGateway: gateway == agentID,
+	}
 
 	serverLog.Debug("Returning desired apps", "agent", agentID, "count", len(response.Apps))
 

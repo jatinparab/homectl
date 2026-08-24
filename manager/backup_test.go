@@ -163,6 +163,29 @@ func TestAssignmentShouldDispatchOnlyActiveStates(t *testing.T) {
 	}
 }
 
+func TestRestoreEnabledForAgent(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		cfg     HomectlConfig
+		agent   string
+		gateway string
+		want    bool
+	}{
+		{name: "ordinary app", enabled: true, cfg: HomectlConfig{}, agent: "replica", gateway: "primary", want: true},
+		{name: "gateway only policy on gateway", enabled: true, cfg: HomectlConfig{IsGlobal: true, BackupPolicy: BackupPolicyGatewayOnly}, agent: "primary", gateway: "primary", want: true},
+		{name: "gateway only policy on replica", enabled: true, cfg: HomectlConfig{IsGlobal: true, BackupPolicy: BackupPolicyGatewayOnly}, agent: "replica", gateway: "primary", want: false},
+		{name: "globally disabled", enabled: false, cfg: HomectlConfig{IsGlobal: true, BackupPolicy: BackupPolicyGatewayOnly}, agent: "primary", gateway: "primary", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := restoreEnabledForAgent(tt.enabled, tt.cfg, tt.agent, tt.gateway); got != tt.want {
+				t.Fatalf("restoreEnabledForAgent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGatewayOnlyBackupPolicyUsesGatewayWithoutReplicaRestore(t *testing.T) {
 	repoDir := t.TempDir()
 	appDir := filepath.Join(repoDir, "docker", "mesh-app")
