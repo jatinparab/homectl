@@ -493,7 +493,7 @@ func TestRebalanceWithMetricsMovesStoppedAppOffRAMConstrainedNode(t *testing.T) 
 	}
 }
 
-func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
+func TestResolveGateway_PrefersHealthyDNSCandidate(t *testing.T) {
 	mgr, err := NewManager(t.TempDir(), 1338)
 	if err != nil {
 		t.Fatal(err)
@@ -505,7 +505,7 @@ func TestResolveGateway_PrefersHealthyAdguardCandidate(t *testing.T) {
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
-		healthyReport("adguard"),
+		healthyReport(common.DNSAppID),
 	}, common.NodeMetrics{})
 
 	mgr.gatewayNode = "node1"
@@ -525,11 +525,11 @@ func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 
 	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
-		healthyReport("adguard"),
+		healthyReport(common.DNSAppID),
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
-		healthyReport("adguard"),
+		healthyReport(common.DNSAppID),
 	}, common.NodeMetrics{})
 
 	mgr.gatewayNode = "node2"
@@ -540,7 +540,7 @@ func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 	}
 }
 
-func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
+func TestResolveGateway_ManualGatewayOverridesDNSPreference(t *testing.T) {
 	mgr, err := NewManager(t.TempDir(), 1338)
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +552,7 @@ func TestResolveGateway_ManualGatewayOverridesAdguardPreference(t *testing.T) {
 	}, common.NodeMetrics{})
 	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
 		healthyReport(common.GatewayProxyAppID),
-		healthyReport("adguard"),
+		healthyReport(common.DNSAppID),
 	}, common.NodeMetrics{})
 
 	mgr.manualGatewayNode = "node1"

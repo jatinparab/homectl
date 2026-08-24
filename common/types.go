@@ -17,7 +17,10 @@ type NodeMetrics struct {
 // AppID is a unique identifier for an application
 type AppID string
 
-const GatewayProxyAppID AppID = "caddy"
+const (
+	GatewayProxyAppID AppID = "caddy"
+	DNSAppID          AppID = "technitium"
+)
 
 // DesiredState represents the desired state of an application
 type DesiredState string

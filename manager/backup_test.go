@@ -1,6 +1,10 @@
 package manager
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,6 +160,119 @@ func TestAssignmentShouldDispatchOnlyActiveStates(t *testing.T) {
 	}
 	if assignmentShouldDispatch(nil) {
 		t.Fatal("nil assignment should not dispatch")
+	}
+}
+
+func TestGatewayOnlyBackupPolicyUsesGatewayWithoutReplicaRestore(t *testing.T) {
+	repoDir := t.TempDir()
+	appDir := filepath.Join(repoDir, "docker", "mesh-app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "homectl-config.json"), []byte(`{
+  "is_global": true,
+  "backup_policy": "gateway_only"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewManager(repoDir, 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+
+	m.appRegistry.Register("mesh-app", common.DesiredRunning, true)
+	m.gatewayMu.Lock()
+	m.gatewayNode = "primary"
+	m.gatewayMu.Unlock()
+
+	staleReport := []common.AppReport{{
+		AppID:         "mesh-app",
+		ObservedState: common.ObservedRunning,
+		Health:        common.HealthHealthy,
+		LastBackupAt:  time.Now().Add(-4 * time.Hour),
+	}}
+	m.leaseManager.Heartbeat("primary", "10.0.0.1", "", staleReport, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("replica", "10.0.0.2", "", staleReport, common.NodeMetrics{})
+
+	candidates := m.findStaleBackupApps()
+	if len(candidates) != 1 || candidates[0].AgentID != "primary" || candidates[0].AppID != "mesh-app" {
+		t.Fatalf("candidates = %#v, want mesh-app on primary only", candidates)
+	}
+
+	m.triggerGlobalRestore("primary", "mesh-app")
+	if pending := m.pendingGlobalRestores["mesh-app"]; len(pending) != 0 {
+		t.Fatalf("gateway-only backup queued replica restores: %#v", pending)
+	}
+}
+
+func TestLegacyGlobalBackupStillQueuesReplicaRestore(t *testing.T) {
+	repoDir := t.TempDir()
+	appDir := filepath.Join(repoDir, "docker", "global-app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "homectl-config.json"), []byte(`{"is_global":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewManager(repoDir, 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	m.gatewayMu.Lock()
+	m.gatewayNode = "primary"
+	m.gatewayMu.Unlock()
+	m.leaseManager.Heartbeat("primary", "10.0.0.1", "", nil, common.NodeMetrics{})
+	m.leaseManager.Heartbeat("replica", "10.0.0.2", "", nil, common.NodeMetrics{})
+
+	m.triggerGlobalRestore("primary", "global-app")
+	if !m.pendingGlobalRestores["global-app"]["replica"] {
+		t.Fatal("legacy global backup did not queue a replica restore")
+	}
+}
+
+func TestGatewayOnlyBackupPolicyRejectsManualWorkOnReplica(t *testing.T) {
+	repoDir := t.TempDir()
+	appDir := filepath.Join(repoDir, "docker", "mesh-app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "homectl-config.json"), []byte(`{
+  "is_global": true,
+  "backup_policy": "gateway_only"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewManager(repoDir, 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	m.gatewayMu.Lock()
+	m.gatewayNode = "primary"
+	m.gatewayMu.Unlock()
+	m.leaseManager.Heartbeat("replica", "10.0.0.2", "", nil, common.NodeMetrics{})
+
+	tests := []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{name: "backup", path: "/api/v1/apps/mesh-app/backup?node=replica", handler: m.handleAPITriggerBackup},
+		{name: "prune", path: "/api/v1/apps/mesh-app/prune?node=replica", handler: m.handleAPITriggerPrune},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			tt.handler(recorder, httptest.NewRequest(http.MethodPost, tt.path, nil))
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+			}
+		})
 	}
 }
 

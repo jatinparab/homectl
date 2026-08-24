@@ -17,6 +17,7 @@ Unknown fields are ignored by the current parser. The supported fields are:
 | `backup_sensitive` | boolean | `false` | Marks the app as sensitive to backup interruptions, so backup scheduling can defer around recent activity. |
 | `backup_enabled` | boolean | `true` | Enables or disables backup, restore, and prune work for this app. |
 | `backup_interval` | duration string | global default | Overrides the default backup freshness interval. Uses Go duration syntax such as `3h`, `72h`, or `168h`. |
+| `backup_policy` | string | legacy global behavior | Set to `gateway_only` for a real-time replicated global app: only the current gateway may be backed up or pruned, and successful backups do not trigger restores on replicas. |
 | `is_global` | boolean | `false` | Runs the app on every eligible connected agent instead of assigning it to one agent. |
 
 ## Examples
@@ -53,6 +54,20 @@ Run an app on every eligible node:
   "backup_interval": "3h"
 }
 ```
+
+Back up only the current gateway for a global app that replicates its own data:
+
+```json
+{
+  "is_global": true,
+  "backup_interval": "3h",
+  "backup_policy": "gateway_only"
+}
+```
+
+With `gateway_only`, automatic and manual backup/prune work is restricted to the
+current gateway. Homectl also skips its legacy post-backup restore fan-out since
+the application is responsible for keeping replicas synchronized.
 
 Disable backups for infrastructure apps:
 

@@ -67,6 +67,8 @@ func domainSuffix() (string, error) {
 	return "", fmt.Errorf("HOMECTL_DOMAIN_SUFFIX is required")
 }
 
+const BackupPolicyGatewayOnly = "gateway_only"
+
 // HomectlConfig represents the homectl-config.json file for an app
 type HomectlConfig struct {
 	ExposedSubdomains map[string]FlexPort `json:"exposed_subdomains,omitempty"`
@@ -74,7 +76,12 @@ type HomectlConfig struct {
 	BackupSensitive   bool                `json:"backup_sensitive,omitempty"`
 	BackupEnabled     *bool               `json:"backup_enabled,omitempty"`  // nil = true (default enabled)
 	BackupInterval    string              `json:"backup_interval,omitempty"` // e.g. "72h", "168h" — overrides default
+	BackupPolicy      string              `json:"backup_policy,omitempty"`   // gateway_only = no replica restore fan-out
 	IsGlobal          bool                `json:"is_global,omitempty"`       // run on all connected nodes
+}
+
+func (c HomectlConfig) UsesGatewayOnlyBackups() bool {
+	return c.IsGlobal && c.BackupPolicy == BackupPolicyGatewayOnly
 }
 
 // IsBackupEnabled returns whether backup is enabled for this app (default true)

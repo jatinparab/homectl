@@ -1031,6 +1031,14 @@ func (m *Manager) handleAPITriggerBackup(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
 		return
 	}
+	if allowed, gateway := m.backupNodeAllowed(common.AppID(appID), nodeName); !allowed {
+		if gateway == "" {
+			http.Error(w, "backup policy requires a current gateway, but none is selected", http.StatusConflict)
+		} else {
+			http.Error(w, "backup policy requires current gateway node "+gateway, http.StatusConflict)
+		}
+		return
+	}
 
 	m.backupMu.Lock()
 	defer m.backupMu.Unlock()
@@ -1085,6 +1093,14 @@ func (m *Manager) handleAPITriggerPrune(w http.ResponseWriter, r *http.Request) 
 	agent, ok := m.leaseManager.GetAgent(nodeName)
 	if !ok || time.Since(agent.LastSeen) > 30*time.Second {
 		http.Error(w, "Node is offline", http.StatusServiceUnavailable)
+		return
+	}
+	if allowed, gateway := m.backupNodeAllowed(common.AppID(appID), nodeName); !allowed {
+		if gateway == "" {
+			http.Error(w, "backup policy requires a current gateway, but none is selected", http.StatusConflict)
+		} else {
+			http.Error(w, "backup policy requires current gateway node "+gateway, http.StatusConflict)
+		}
 		return
 	}
 

@@ -263,16 +263,24 @@ func (m *Manager) cleanupBackupStateLocked() {
 			delete(m.pruneState, appID)
 		}
 	}
-	for appID := range m.backupAssignments {
-		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
+	gateway := m.getGatewayNode()
+	for appID, assignment := range m.backupAssignments {
+		cfg := appConfigs[string(appID)]
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) ||
+			(cfg.UsesGatewayOnlyBackups() && assignment.State == AssignmentPending && assignment.AgentID != gateway) {
 			delete(m.backupAssignments, appID)
 		}
 	}
-	if m.pruneAssignment != nil && (!validApps[m.pruneAssignment.AppID] || !backupEnabledForApp(m.pruneAssignment.AppID, appConfigs)) {
-		m.pruneAssignment = nil
+	if m.pruneAssignment != nil {
+		cfg := appConfigs[string(m.pruneAssignment.AppID)]
+		if !validApps[m.pruneAssignment.AppID] || !backupEnabledForApp(m.pruneAssignment.AppID, appConfigs) ||
+			(cfg.UsesGatewayOnlyBackups() && m.pruneAssignment.State == AssignmentPending && m.pruneAssignment.AgentID != gateway) {
+			m.pruneAssignment = nil
+		}
 	}
 	for appID, pending := range m.pendingGlobalRestores {
-		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) {
+		cfg := appConfigs[string(appID)]
+		if !validApps[appID] || !backupEnabledForApp(appID, appConfigs) || cfg.UsesGatewayOnlyBackups() {
 			delete(m.pendingGlobalRestores, appID)
 			continue
 		}
@@ -285,6 +293,22 @@ func (m *Manager) cleanupBackupStateLocked() {
 			delete(m.pendingGlobalRestores, appID)
 		}
 	}
+}
+
+// backupNodeAllowed applies node-specific backup policies to manual work.
+// Automatic work for global apps is already assigned to the current gateway.
+func (m *Manager) backupNodeAllowed(appID common.AppID, agentID string) (allowed bool, gateway string) {
+	appConfigs, err := m.LoadAppConfigs(nil, false)
+	if err != nil {
+		backupMgrLog.Warn("Failed to load app configs while checking backup policy", "app", appID, "err", err)
+		return true, ""
+	}
+	cfg, ok := appConfigs[string(appID)]
+	if !ok || !cfg.UsesGatewayOnlyBackups() {
+		return true, ""
+	}
+	gateway = m.getGatewayNode()
+	return gateway != "" && agentID == gateway, gateway
 }
 
 // findStaleBackupApps returns all running+healthy apps with stale backup data.
@@ -303,6 +327,7 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 		appConfigs = make(map[string]HomectlConfig)
 	}
 	now := time.Now()
+	gateway := m.getGatewayNode()
 	candidates := make([]BackupAssignment, 0)
 
 	for _, agent := range agents {
@@ -314,7 +339,7 @@ func (m *Manager) findStaleBackupApps() []BackupAssignment {
 			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
-			if cfg.IsGlobal && agent.Name != m.gatewayNode {
+			if cfg.IsGlobal && agent.Name != gateway {
 				continue
 			}
 			if report.ObservedState != common.ObservedRunning || report.Health != common.HealthHealthy {
@@ -358,6 +383,7 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 		appConfigs = make(map[string]HomectlConfig)
 	}
 	now := time.Now()
+	gateway := m.getGatewayNode()
 	var stalestTime time.Time
 
 	for _, agent := range agents {
@@ -369,7 +395,7 @@ func (m *Manager) findStalestPruneApp() (agentID string, appID common.AppID, ok 
 			if !backupEnabledForApp(report.AppID, appConfigs) {
 				continue
 			}
-			if cfg.IsGlobal && agent.Name != m.gatewayNode {
+			if cfg.IsGlobal && agent.Name != gateway {
 				continue
 			}
 			if report.ObservedState != common.ObservedRunning || report.Health != common.HealthHealthy {
@@ -457,7 +483,7 @@ func (m *Manager) triggerGlobalRestore(agentID string, appID common.AppID) {
 		appConfigs = make(map[string]HomectlConfig)
 	}
 	cfg, ok := appConfigs[string(appID)]
-	if !ok || !cfg.IsGlobal {
+	if !ok || !cfg.IsGlobal || cfg.UsesGatewayOnlyBackups() {
 		return
 	}
 

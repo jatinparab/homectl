@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jatinparab/homectl/buildinfo"
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
-	"github.com/jatinparab/homectl/buildinfo"
 )
 
 var managerLog = slog.With("area", "manager")
@@ -344,7 +344,7 @@ func (m *Manager) loadDesiredState() map[string]common.DesiredState {
 // Only stores apps whose state differs from the default (stopped).
 func (m *Manager) saveDesiredState() {
 	runByDefault := map[string]bool{
-		"adguard": true,
+		string(common.DNSAppID): true,
 	}
 
 	allApps := m.appRegistry.ListAll()
@@ -530,7 +530,7 @@ func (m *Manager) saveManualAssignments() {
 }
 
 // DiscoverApps scans docker subdirectories for apps and registers them.
-// By default, caddy and adguard have DesiredRunning state, others have DesiredStopped.
+// By default, caddy and Technitium DNS have DesiredRunning state; other apps are stopped.
 // Persisted state from the UI overrides defaults. The Register method is idempotent
 // so repeated calls are safe.
 func (m *Manager) DiscoverApps() {
@@ -565,7 +565,7 @@ func (m *Manager) DiscoverApps() {
 
 	count := 0
 	runByDefault := map[string]bool{
-		"adguard": true,
+		string(common.DNSAppID): true,
 	}
 
 	for _, entry := range entries {

@@ -76,7 +76,7 @@ func (m *Manager) reconcileOnce(now time.Time) {
 }
 
 // resolveGateway picks one online agent with the gateway proxy running+healthy as the gateway node.
-// It prefers candidates that also report adguard running+healthy. If a manual
+// It prefers candidates that also report the DNS app running+healthy. If a manual
 // gateway is set and valid, uses it.
 func (m *Manager) resolveGateway() {
 	m.gatewayMu.Lock()
@@ -147,7 +147,7 @@ func (m *Manager) gatewayCandidateRank(agentName string) int {
 	if !m.isGatewayProxyHealthy(agentName) {
 		return 0
 	}
-	if m.isAgentAppHealthy(agentName, "adguard") {
+	if m.isAgentAppHealthy(agentName, common.DNSAppID) {
 		return 2
 	}
 	return 1
