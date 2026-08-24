@@ -55,9 +55,12 @@ func EnsureKeyPair(dir string) (privateKey, publicKey string, err error) {
 	publicPath := filepath.Join(dir, "publickey")
 
 	privateBytes, err := os.ReadFile(privatePath)
-	if err == nil && strings.TrimSpace(string(privateBytes)) != "" {
+	if err == nil {
 		privateKey = strings.TrimSpace(string(privateBytes))
-	} else if errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", err
+	}
+	if privateKey == "" {
 		privateKey, err = generatePrivateKey()
 		if err != nil {
 			return "", "", err
@@ -65,8 +68,6 @@ func EnsureKeyPair(dir string) (privateKey, publicKey string, err error) {
 		if err := os.WriteFile(privatePath, []byte(privateKey+"\n"), 0600); err != nil {
 			return "", "", err
 		}
-	} else if err != nil {
-		return "", "", err
 	}
 
 	publicBytes, err := os.ReadFile(publicPath)
