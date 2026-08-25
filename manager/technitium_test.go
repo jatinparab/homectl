@@ -32,6 +32,24 @@ func TestLoadAppConfigsIncludesFirstClassTechnitium(t *testing.T) {
 	}
 }
 
+func TestManagerCreatesFirstClassTechnitiumPublicRoute(t *testing.T) {
+	t.Setenv("HOMECTL_DOMAIN_SUFFIX", "example.test")
+	repoDir := t.TempDir()
+	m, err := NewManager(repoDir, 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	m.publicRoutesMu.RLock()
+	defer m.publicRoutesMu.RUnlock()
+	for _, route := range m.publicRoutes {
+		if route.Host == "dns.example.test" && route.Enabled && route.AuthMode == PublicRouteAuthModeUpstream {
+			return
+		}
+	}
+	t.Fatal("first-class Technitium public route missing")
+}
+
 func TestDiscoverAppsRegistersTechnitiumWithoutComposeDirectory(t *testing.T) {
 	repoDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoDir, "docker"), 0o755); err != nil {

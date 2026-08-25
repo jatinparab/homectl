@@ -128,9 +128,10 @@ func (m *Manager) LoadAppConfigs(includeApps []string, strict bool) (map[string]
 	}
 	if includeTechnitium {
 		configs[string(common.DNSAppID)] = HomectlConfig{
-			BackupInterval: "3h",
-			BackupPolicy:   BackupPolicyGatewayOnly,
-			IsGlobal:       true,
+			ExposedSubdomains: map[string]FlexPort{"dns": {Port: 5380}},
+			BackupInterval:    "3h",
+			BackupPolicy:      BackupPolicyGatewayOnly,
+			IsGlobal:          true,
 		}
 	}
 

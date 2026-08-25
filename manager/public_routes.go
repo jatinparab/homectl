@@ -104,6 +104,36 @@ func (m *Manager) loadPublicRoutes() {
 	m.publicRoutesMu.Unlock()
 }
 
+func (m *Manager) ensureTechnitiumPublicRoute() {
+	suffix, err := domainSuffix()
+	if err != nil {
+		publicRouteLog.Warn("Cannot create first-class Technitium route", "err", err)
+		return
+	}
+	host := "dns." + suffix
+	m.publicRoutesMu.Lock()
+	defer m.publicRoutesMu.Unlock()
+	for _, route := range m.publicRoutes {
+		if route.Host == host {
+			return
+		}
+	}
+	now := time.Now()
+	m.publicRoutes = append(m.publicRoutes, PublicRoute{
+		ID:        publicRouteID(host),
+		Host:      host,
+		Mode:      PublicRouteModeHomelab,
+		AuthMode:  PublicRouteAuthModeUpstream,
+		Enabled:   true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	m.publicRoutes = normalizePublicRouteList(m.publicRoutes)
+	if err := m.savePublicRoutesLocked(); err != nil {
+		publicRouteLog.Error("Failed to persist first-class Technitium route", "err", err)
+	}
+}
+
 func (m *Manager) savePublicRoutesLocked() error {
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
 		return err

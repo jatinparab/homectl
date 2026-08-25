@@ -185,6 +185,7 @@ func NewManagerWithConfig(cfg Config) (*Manager, error) {
 	mgr.loadRepoState()
 	mgr.loadPruneState()
 	mgr.loadPublicRoutes()
+	mgr.ensureTechnitiumPublicRoute()
 	return mgr, nil
 }
 
