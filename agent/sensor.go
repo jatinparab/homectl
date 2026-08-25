@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/technitium"
 )
 
 var sensorLog = slog.With("area", "sensor")
@@ -68,15 +69,29 @@ func (a *Agent) sample() {
 	// Collect all app IDs to check
 	appIDs := make([]string, 0, len(entries))
 	for appID := range entries {
-		appIDs = append(appIDs, appID)
+		if common.AppID(appID) != common.DNSAppID {
+			appIDs = append(appIDs, appID)
+		}
 	}
 
-	if len(appIDs) == 0 {
-		return
-	}
-
-	// Check all apps in parallel
+	// Check all compose apps in parallel and append the first-class DNS service.
 	results := a.checkAppsParallel(appIDs)
+	if a.technitium != nil {
+		ctx, cancel := context.WithTimeout(a.sensorCtx, HealthCheckTimeout)
+		status := a.technitium.Status(ctx)
+		cancel()
+		running := common.RunningStatusStopped
+		health := common.HealthUnknown
+		if status.Running {
+			running = common.RunningStatusRunning
+		}
+		if status.Healthy {
+			health = common.HealthHealthy
+		} else if status.Running {
+			health = common.HealthUnhealthy
+		}
+		results = append(results, appStatus{appID: string(common.DNSAppID), running: running, health: health, port: technitium.AdminPort})
+	}
 
 	// Update runtime state
 	a.runtimeMu.Lock()
@@ -121,7 +136,7 @@ func (a *Agent) sample() {
 	// Mark apps not in managed list as not running.
 	// Skip caddy — it runs in-process and is managed by the reconcile loop.
 	for appID, rt := range a.runtime {
-		if !seen[appID] && appID != common.GatewayProxyAppID {
+		if !seen[appID] && appID != common.GatewayProxyAppID && appID != common.DNSAppID {
 			rt.SetRunning(common.RunningStatusStopped)
 			rt.SetHealth(common.HealthUnknown)
 		}

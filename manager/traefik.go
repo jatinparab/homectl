@@ -119,6 +119,20 @@ func (c HomectlConfig) GetBackupInterval() time.Duration {
 // Per-app config parse failures are logged with app context and skipped.
 func (m *Manager) LoadAppConfigs(includeApps []string, strict bool) (map[string]HomectlConfig, error) {
 	configs := make(map[string]HomectlConfig)
+	includeTechnitium := len(includeApps) == 0
+	for _, app := range includeApps {
+		if app == string(common.DNSAppID) {
+			includeTechnitium = true
+			break
+		}
+	}
+	if includeTechnitium {
+		configs[string(common.DNSAppID)] = HomectlConfig{
+			BackupInterval: "3h",
+			BackupPolicy:   BackupPolicyGatewayOnly,
+			IsGlobal:       true,
+		}
+	}
 
 	dockerDir := filepath.Join(m.repoDir, "docker")
 	entries, err := os.ReadDir(dockerDir)
@@ -166,7 +180,9 @@ func (m *Manager) LoadAppConfigs(includeApps []string, strict bool) (map[string]
 			continue
 		}
 
-		configs[appName] = cfg
+		if appName != string(common.DNSAppID) {
+			configs[appName] = cfg
+		}
 	}
 
 	return configs, nil

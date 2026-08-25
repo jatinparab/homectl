@@ -172,10 +172,27 @@ Agent environment variables:
 
 Shared runtime config such as `HOMECTL_LOCAL_HA_IP`, `CADDY_ACME_EMAIL`,
 `CADDY_DNS_PROVIDER`, `CADDY_DNS_TOKEN_ENV`, `CF_DNS_API_TOKEN`,
-`RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `B2_ACCOUNT_ID`, and `B2_ACCOUNT_KEY`
-belongs in manager-stored encrypted node config, not agent environment. The
+`RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`,
+`TECHNITIUM_ADMIN_PASSWORD`, `TECHNITIUM_CLUSTER_DOMAIN`, and
+`TECHNITIUM_IMAGE` belong in manager-stored encrypted node config, not agent
+environment. The
 manager compose file may include these values once to seed the encrypted config;
 afterward, edit them from the web UI node settings dialog.
+
+## First-class Technitium DNS
+
+Homectl agents directly own a `homectl-technitium` container; the app repository
+must not contain a Technitium Compose project. Set the shared administrator
+password and each node's stable `TECHNITIUM_NODE_IP` in the node settings dialog.
+The cluster domain defaults to
+`cluster.home.arpa` and the image defaults to `technitium/dns-server:15.4.0`.
+
+Every agent publishes DNS on TCP/UDP 53 and reports Technitium as a synthetic
+global app. Only the current gateway is backed up. The gateway is also kept as
+the Technitium primary: role changes first attempt a graceful promotion, then
+force-promote after two minutes if the former primary is unavailable. Returning
+former primaries are reset and rejoined as secondaries. Agent-side TCP proxies
+carry Technitium admin and cluster traffic over Homectl's WireGuard mesh.
 
 ## App Repository Layout
 

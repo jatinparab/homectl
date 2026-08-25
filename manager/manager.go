@@ -569,7 +569,7 @@ func (m *Manager) DiscoverApps() {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == string(common.DNSAppID) {
 			continue
 		}
 
@@ -608,6 +608,13 @@ func (m *Manager) DiscoverApps() {
 
 		count++
 	}
+
+	technitiumState := common.DesiredRunning
+	if state, ok := persisted[string(common.DNSAppID)]; ok {
+		technitiumState = state
+	}
+	m.appRegistry.Register(common.DNSAppID, technitiumState, true)
+	count++
 	managerLog.Info("App discovery complete", "count", count)
 }
 

@@ -409,13 +409,10 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	// Pull images + start via docker compose
 	rt.SetPhase(common.PhasePulling)
 	rt.PhaseLog.Clear()
-	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		executorLog.Debug(line, "app", appID)
-		rt.PhaseLog.Write(line)
-	}); err != nil {
+	if err := e.startApp(appID, rt); err != nil {
 		return err
 	}
-	// StartWithLogs has confirmed docker compose start succeeded. Update the
+	// The service start has succeeded. Update the
 	// runtime optimistically so a sensor tick racing just behind this action
 	// cannot enqueue a duplicate start and consume JustBackedUp a second time.
 	markAppStarted(rt, common.PhaseRunning)
@@ -424,10 +421,40 @@ func (e *Executor) executeStart(appID common.AppID, rt *AppRuntime) error {
 	return nil
 }
 
+func (e *Executor) startApp(appID common.AppID, rt *AppRuntime) error {
+	if appID == common.DNSAppID {
+		ctx, cancel := context.WithTimeout(e.ctx, 5*time.Minute)
+		defer cancel()
+		return e.agent.technitium.Ensure(ctx, e.agent.technitiumConfig())
+	}
+	return e.docker.StartWithLogs(string(appID), func(line string) {
+		executorLog.Debug(line, "app", appID)
+		rt.PhaseLog.Write(line)
+	})
+}
+
+func (e *Executor) stopApp(appID common.AppID) error {
+	if appID == common.DNSAppID {
+		ctx, cancel := context.WithTimeout(e.ctx, time.Minute)
+		defer cancel()
+		return e.agent.technitium.Stop(ctx)
+	}
+	return e.docker.Stop(string(appID))
+}
+
+func (e *Executor) downApp(appID common.AppID) error {
+	if appID == common.DNSAppID {
+		ctx, cancel := context.WithTimeout(e.ctx, time.Minute)
+		defer cancel()
+		return e.agent.technitium.Remove(ctx)
+	}
+	return e.docker.Down(string(appID))
+}
+
 // executeRestart restarts an app
 func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	// Stop first
-	if err := e.docker.Stop(string(appID)); err != nil {
+	if err := e.stopApp(appID); err != nil {
 		executorLog.Info("Stop failed during restart", "app", appID, "err", err)
 		// Continue to try start anyway
 	}
@@ -436,10 +463,7 @@ func (e *Executor) executeRestart(appID common.AppID, rt *AppRuntime) error {
 	rt.SetPhase(common.PhasePulling)
 	rt.PhaseLog.Clear()
 	rt.IncrementRestarts()
-	if err := e.docker.StartWithLogs(string(appID), func(line string) {
-		executorLog.Debug(line, "app", appID)
-		rt.PhaseLog.Write(line)
-	}); err != nil {
+	if err := e.startApp(appID, rt); err != nil {
 		return err
 	}
 	markAppStarted(rt, common.PhaseEmpty)
@@ -455,7 +479,7 @@ func markAppStarted(rt *AppRuntime, phase common.Phase) {
 
 // executeStop stops an app
 func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
-	if err := e.docker.Stop(string(appID)); err != nil {
+	if err := e.stopApp(appID); err != nil {
 		return err
 	}
 
@@ -465,7 +489,7 @@ func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
 
 // executeDown stops and removes compose resources for apps that are no longer expected on this node.
 func (e *Executor) executeDown(appID common.AppID, rt *AppRuntime) error {
-	if err := e.docker.Down(string(appID)); err != nil {
+	if err := e.downApp(appID); err != nil {
 		return err
 	}
 	executorLog.Info("Removed compose resources (down)", "app", appID)

@@ -350,6 +350,7 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 	defer gr.Close()
 
 	tr := tar.NewReader(gr)
+	seenTopLevel := make(map[string]bool)
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -359,7 +360,12 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
-		targetPath := filepath.Join(destDir, header.Name)
+		cleanName := filepath.Clean(header.Name)
+		if cleanName == "." || cleanName == ".." || filepath.IsAbs(cleanName) {
+			return fmt.Errorf("invalid file path in archive: %s", header.Name)
+		}
+		seenTopLevel[strings.Split(cleanName, string(filepath.Separator))[0]] = true
+		targetPath := filepath.Join(destDir, cleanName)
 		if !strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(destDir)) {
 			return fmt.Errorf("invalid file path in archive: %s", header.Name)
 		}
@@ -382,6 +388,19 @@ func (c *Client) SyncDockerConfigs(destDir string) error {
 				return fmt.Errorf("failed to write file %s: %w", targetPath, err)
 			}
 			outFile.Close()
+		}
+	}
+
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		return fmt.Errorf("list docker config destination: %w", err)
+	}
+	for _, entry := range entries {
+		if seenTopLevel[entry.Name()] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(destDir, entry.Name())); err != nil {
+			return fmt.Errorf("remove stale docker config %s: %w", entry.Name(), err)
 		}
 	}
 

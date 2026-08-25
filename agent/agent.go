@@ -24,6 +24,7 @@ import (
 	"github.com/jatinparab/homectl/keepalived"
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
+	"github.com/jatinparab/homectl/technitium"
 	"github.com/jatinparab/homectl/utils"
 	"github.com/jatinparab/homectl/wireguard"
 )
@@ -89,7 +90,10 @@ type Agent struct {
 
 	// Gateway state (set by manager)
 	isGateway   bool
+	gatewayNode string
+	gatewayIP   string
 	isGatewayMu sync.RWMutex
+	technitium  *technitium.Controller
 
 	// Connection state
 	connected   bool
@@ -167,6 +171,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		activitySamples:   make(map[common.AppID]uint64),
 		domainSuffix:      strings.TrimSpace(os.Getenv("HOMECTL_DOMAIN_SUFFIX")),
 		lastConnectedAt:   time.Now(),
+		technitium:        technitium.NewController(),
 	}
 	a.restic = NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true", a.configValue, a.runtimeConfigSnapshot)
 	a.managerClient.SetIdentity(name, ip)
@@ -321,6 +326,11 @@ func (a *Agent) applyBootstrap(bootstrap wireGuardBootstrapResult) {
 	a.lastConnectedAt = time.Now()
 	a.managerClient.SetIdentity(a.name, a.ip)
 	a.managerClient.SetBaseURL(a.managerURL)
+	if a.technitium != nil {
+		if err := a.technitium.StartProxies(a.sensorCtx); err != nil {
+			agentLog.Warn("Failed to start Technitium mesh proxies", "err", err)
+		}
+	}
 	agentLog.Info("WireGuard bootstrap succeeded", "name", a.name, "ip", a.ip, "managerURL", a.managerURL)
 }
 
@@ -400,6 +410,11 @@ func (a *Agent) IsAppsReady() bool {
 func (a *Agent) Start() {
 	a.wg.Add(7)
 
+	if a.technitium != nil && a.wireGuardReady {
+		if err := a.technitium.StartProxies(a.sensorCtx); err != nil {
+			agentLog.Warn("Failed to start Technitium mesh proxies", "err", err)
+		}
+	}
 	if a.readyServer == nil {
 		a.readyServer = NewReadyServer(a)
 	}
@@ -597,6 +612,26 @@ func caddyRuntimeEnvKeys() []string {
 	}
 }
 
+func (a *Agent) technitiumConfig() technitium.Config {
+	a.isGatewayMu.RLock()
+	isGateway := a.isGateway
+	gatewayNode := a.gatewayNode
+	gatewayIP := a.gatewayIP
+	a.isGatewayMu.RUnlock()
+	return technitium.Config{
+		NodeName:      a.name,
+		NodeIP:        a.configValue(common.ConfigKeyTechnitiumNodeIP),
+		GatewayNode:   gatewayNode,
+		GatewayIP:     gatewayIP,
+		IsGateway:     isGateway,
+		Password:      a.configValue(common.ConfigKeyTechnitiumAdminPassword),
+		ClusterDomain: a.configValue(common.ConfigKeyTechnitiumClusterDomain),
+		Image:         a.configValue(common.ConfigKeyTechnitiumImage),
+		DataDir:       a.appdataDir,
+		HostDataDir:   a.appdataHostDir,
+	}
+}
+
 func caddyEnvFingerprint(env map[string]string) string {
 	keys := make([]string, 0, len(env))
 	for key := range env {
@@ -733,9 +768,11 @@ func (a *Agent) reconcileOnce() {
 
 	desiredApps := response.Apps
 
-	// Update gateway status from manager
+	// Update gateway status from manager.
 	a.isGatewayMu.Lock()
 	a.isGateway = response.IsGateway
+	a.gatewayNode = response.GatewayNode
+	a.gatewayIP = response.GatewayIP
 	a.isGatewayMu.Unlock()
 
 	agentLog.Debug("Reconcile: got desired apps", "count", len(desiredApps), "gateway", response.IsGateway)
@@ -800,6 +837,18 @@ func (a *Agent) reconcileOnce() {
 		}
 
 		rt := a.getOrCreateRuntime(app.AppID)
+		if app.AppID == common.DNSAppID {
+			a.refreshTechnitiumRuntime(rt)
+			phase := rt.GetPhase()
+			if app.DesiredState == common.DesiredRunning && rt.RunningStatus() == common.RunningStatusRunning && phase != common.PhaseBackupStopping && phase != common.PhaseBackupStopped && phase != common.PhaseBackingUp {
+				ensureCtx, cancel := context.WithTimeout(a.sensorCtx, 5*time.Minute)
+				if err := a.technitium.Ensure(ensureCtx, a.technitiumConfig()); err != nil {
+					rt.SetLastError(err.Error())
+				}
+				cancel()
+				a.refreshTechnitiumRuntime(rt)
+			}
+		}
 		rt.SetBackupSensitive(app.BackupSensitive)
 		rt.SetBackupEnabled(app.BackupEnabled)
 		rt.SetRestoreEnabled(app.RestoreEnabled)
@@ -813,6 +862,43 @@ func (a *Agent) reconcileOnce() {
 		action := a.reconcileApp(app, rt)
 		if action.Type != ActionTypeNone {
 			a.executor.Submit(action)
+		}
+	}
+
+	if rt := a.getRuntime(common.DNSAppID); rt != nil && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && rt.GetPhase() == common.PhaseRunning {
+		clusterCtx, cancel := context.WithTimeout(a.sensorCtx, 6*time.Minute)
+		if err := a.technitium.ReconcileCluster(clusterCtx, a.technitiumConfig()); err != nil {
+			agentLog.Info("Technitium cluster reconcile deferred", "err", err)
+		}
+		cancel()
+	}
+}
+
+func (a *Agent) refreshTechnitiumRuntime(rt *AppRuntime) {
+	if a.technitium == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.sensorCtx, 3*time.Second)
+	status := a.technitium.Status(ctx)
+	cancel()
+	rt.SetPort(technitium.AdminPort)
+	if status.Running {
+		rt.SetRunning(common.RunningStatusRunning)
+	} else {
+		rt.SetRunning(common.RunningStatusStopped)
+	}
+	if status.Healthy {
+		rt.SetHealth(common.HealthHealthy)
+		phase := rt.GetPhase()
+		if phase != common.PhaseBackupStopping && phase != common.PhaseBackupStopped && phase != common.PhaseBackingUp {
+			rt.SetPhase(common.PhaseRunning)
+		}
+	} else if status.Running {
+		rt.SetHealth(common.HealthUnhealthy)
+	} else {
+		rt.SetHealth(common.HealthUnknown)
+		if rt.GetPhase() == common.PhaseBackupStopping {
+			rt.SetPhase(common.PhaseBackupStopped)
 		}
 	}
 }
@@ -1159,8 +1245,11 @@ func (a *Agent) Stop() {
 	}
 	a.snapshotCacheMu.Unlock()
 
-	// Stop sensor
+	// Stop sensor and first-class service proxies.
 	a.sensorCancel()
+	if a.technitium != nil {
+		a.technitium.StopProxies()
+	}
 
 	// Stop executor
 	if a.executor != nil {
@@ -1245,6 +1334,9 @@ func (a *Agent) GetAppReports() []common.AppReport {
 				rt.mu.Unlock()
 				report.LastActiveAt = now
 			}
+		}
+		if appID == common.DNSAppID {
+			report.ClusterIP = a.configValue(common.ConfigKeyTechnitiumNodeIP)
 		}
 		reports = append(reports, report)
 	}

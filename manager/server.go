@@ -358,9 +358,23 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		m.backupMu.Unlock()
 	}
 
+	gatewayIP := ""
+	if gatewayAgent, ok := m.leaseManager.GetAgent(gateway); ok {
+		for _, report := range gatewayAgent.AppReports {
+			if report.AppID == common.DNSAppID && strings.TrimSpace(report.ClusterIP) != "" {
+				gatewayIP = strings.TrimSpace(report.ClusterIP)
+				break
+			}
+		}
+		if gatewayIP == "" {
+			gatewayIP = gatewayAgent.IP
+		}
+	}
 	response := common.DesiredAppsResponse{
-		Apps:      desiredApps,
-		IsGateway: gateway == agentID,
+		Apps:        desiredApps,
+		IsGateway:   gateway == agentID,
+		GatewayNode: gateway,
+		GatewayIP:   gatewayIP,
 	}
 
 	serverLog.Debug("Returning desired apps", "agent", agentID, "count", len(response.Apps))

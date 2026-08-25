@@ -10,6 +10,7 @@ import (
 
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/logger"
+	"github.com/jatinparab/homectl/technitium"
 )
 
 const defaultAppLogsTailLines = "200"
@@ -152,7 +153,12 @@ func (a *Agent) handleManagerLinkRequest(msg common.LinkMessage) <-chan common.L
 		if err != nil || payload.AppID == "" {
 			return errMsg(http.StatusBadRequest, "invalid app logs payload")
 		}
-		cmd := a.docker.ComposeCommand(payload.AppID, "logs", "--tail="+defaultAppLogsTailLines, "--no-log-prefix=false")
+		var cmd *exec.Cmd
+		if common.AppID(payload.AppID) == common.DNSAppID {
+			cmd = exec.Command("docker", "logs", "--tail="+defaultAppLogsTailLines, technitium.ContainerName)
+		} else {
+			cmd = a.docker.ComposeCommand(payload.AppID, "logs", "--tail="+defaultAppLogsTailLines, "--no-log-prefix=false")
+		}
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil && len(strings.TrimSpace(string(out))) == 0 {
 			return errMsg(http.StatusInternalServerError, fmt.Sprintf("%s: %s", cmdErr, strings.TrimSpace(string(out))))

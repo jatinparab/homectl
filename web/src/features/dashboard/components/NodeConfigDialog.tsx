@@ -51,12 +51,23 @@ const REQUIRED_GLOBAL_FIELDS: FieldDef[] = [
   { key: 'AUTHENTIK_OUTPOST_URL', label: 'Authentik outpost', description: 'Forward-auth outpost URL; defaults to the Authentik public URL.', lockedKey: true, lockedScope: 'global' },
   { key: 'RESTIC_REPOSITORY', label: 'Restic repository', description: 'Repository URL used for all backup and restore jobs.', lockedKey: true, lockedScope: 'global' },
   { key: 'HOMECTL_MAX_RAM_PERCENT', label: 'Max RAM %', description: 'Avoid assigning new apps to nodes at or above this memory usage percentage.', lockedKey: true, lockedScope: 'global' },
+  { key: 'TECHNITIUM_CLUSTER_DOMAIN', label: 'Technitium cluster domain', description: 'Private domain used for the first-class Technitium cluster, for example cluster.home.arpa.', lockedKey: true, lockedScope: 'global' },
+  { key: 'TECHNITIUM_IMAGE', label: 'Technitium image', description: 'Container image managed directly by Homectl.', lockedKey: true, lockedScope: 'global' },
+  { key: 'TECHNITIUM_ADMIN_PASSWORD', label: 'Technitium password', description: 'Shared administrator password used to bootstrap and reconcile the Technitium cluster.', secret: true, lockedKey: true, lockedScope: 'global' },
 ];
 
 const AGENT_NAME_FIELD: FieldDef = {
   key: 'HOMECTL_AGENT_NAME',
   label: 'Agent name',
   description: 'Manager identity for this node. Saving a new name reconnects the agent.',
+  lockedKey: true,
+  lockedScope: 'local',
+};
+
+const TECHNITIUM_NODE_IP_FIELD: FieldDef = {
+  key: 'TECHNITIUM_NODE_IP',
+  label: 'Technitium node IP',
+  description: 'Stable LAN address advertised to other Technitium containers for cluster traffic.',
   lockedKey: true,
   lockedScope: 'local',
 };
@@ -76,8 +87,8 @@ const EDITABLE_ENV_FIELDS: FieldDef[] = [
   { key: 'B2_ACCOUNT_KEY', label: 'Key', description: 'Backblaze B2 application key for restic.', secret: true },
 ];
 
-const LOCKED_KEYS = new Set([...REQUIRED_GLOBAL_FIELDS, AGENT_NAME_FIELD, RESTIC_PASSWORD_FIELD].filter((field) => field.lockedKey).map((field) => field.key));
-const FIELD_DEFS = new Map([...REQUIRED_GLOBAL_FIELDS, AGENT_NAME_FIELD, RESTIC_PASSWORD_FIELD, ...EDITABLE_ENV_FIELDS].map((field) => [field.key, field]));
+const LOCKED_KEYS = new Set([...REQUIRED_GLOBAL_FIELDS, AGENT_NAME_FIELD, TECHNITIUM_NODE_IP_FIELD, RESTIC_PASSWORD_FIELD].filter((field) => field.lockedKey).map((field) => field.key));
+const FIELD_DEFS = new Map([...REQUIRED_GLOBAL_FIELDS, AGENT_NAME_FIELD, TECHNITIUM_NODE_IP_FIELD, RESTIC_PASSWORD_FIELD, ...EDITABLE_ENV_FIELDS].map((field) => [field.key, field]));
 
 const Form = styled.form`
   display: flex;
@@ -216,6 +227,8 @@ function buildRows(shared?: Record<string, string>, agent?: Record<string, strin
 
   rows.push(makeRow(AGENT_NAME_FIELD, agent?.[AGENT_NAME_FIELD.key] ?? node ?? '', 'local'));
   usedAgent.add(AGENT_NAME_FIELD.key);
+  rows.push(makeRow(TECHNITIUM_NODE_IP_FIELD, agent?.[TECHNITIUM_NODE_IP_FIELD.key] ?? '', 'local'));
+  usedAgent.add(TECHNITIUM_NODE_IP_FIELD.key);
 
   for (const field of EDITABLE_ENV_FIELDS) {
     const hasLocal = agent && Object.prototype.hasOwnProperty.call(agent, field.key);

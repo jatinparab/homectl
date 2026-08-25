@@ -91,6 +91,7 @@ type AppReport struct {
 	RestartCount      int             `json:"restart_count"`
 	Quarantined       bool            `json:"quarantined"`
 	Port              int             `json:"port,omitempty"`
+	ClusterIP         string          `json:"cluster_ip,omitempty"`
 	BackupBusy        bool            `json:"backup_busy,omitempty"`
 	PruneBusy         bool            `json:"prune_busy,omitempty"`
 	Progress          *ResticProgress `json:"progress,omitempty"`
@@ -129,27 +130,33 @@ type DesiredApp struct {
 
 // DesiredAppsResponse is the response from /agents/{id}/desired
 type DesiredAppsResponse struct {
-	Apps      []DesiredApp `json:"apps"`
-	IsGateway bool         `json:"is_gateway,omitempty"`
+	Apps        []DesiredApp `json:"apps"`
+	IsGateway   bool         `json:"is_gateway,omitempty"`
+	GatewayNode string       `json:"gateway_node,omitempty"`
+	GatewayIP   string       `json:"gateway_ip,omitempty"`
 }
 
 const (
-	ConfigKeyLocalHAIP        = "LOCAL_HA_IP"
-	ConfigKeyCaddyDNSProvider = "CADDY_DNS_PROVIDER"
-	ConfigKeyCaddyACMEEmail   = "CADDY_ACME_EMAIL"
-	ConfigKeyCaddyACMECA      = "CADDY_ACME_CA"
-	ConfigKeyCaddyDNSTokenEnv = "CADDY_DNS_TOKEN_ENV"
-	ConfigKeyCFDNSAPIToken    = "CF_DNS_API_TOKEN"
-	ConfigKeyRootDomain       = "ROOT_DOMAIN"
-	ConfigKeyHomeWGIP         = "HOME_WG_IP"
-	ConfigKeyAuthentikCoreURL = "AUTHENTIK_CORE_URL"
-	ConfigKeyAuthentikOutpost = "AUTHENTIK_OUTPOST_URL"
-	ConfigKeyResticRepository = "RESTIC_REPOSITORY"
-	ConfigKeyB2AccountID      = "B2_ACCOUNT_ID"
-	ConfigKeyB2AccountKey     = "B2_ACCOUNT_KEY"
-	ConfigKeyResticPassword   = "RESTIC_PASSWORD"
-	ConfigKeyAgentName        = "HOMECTL_AGENT_NAME"
-	ConfigKeyMaxRAMPercent    = "HOMECTL_MAX_RAM_PERCENT"
+	ConfigKeyLocalHAIP               = "LOCAL_HA_IP"
+	ConfigKeyCaddyDNSProvider        = "CADDY_DNS_PROVIDER"
+	ConfigKeyCaddyACMEEmail          = "CADDY_ACME_EMAIL"
+	ConfigKeyCaddyACMECA             = "CADDY_ACME_CA"
+	ConfigKeyCaddyDNSTokenEnv        = "CADDY_DNS_TOKEN_ENV"
+	ConfigKeyCFDNSAPIToken           = "CF_DNS_API_TOKEN"
+	ConfigKeyRootDomain              = "ROOT_DOMAIN"
+	ConfigKeyHomeWGIP                = "HOME_WG_IP"
+	ConfigKeyAuthentikCoreURL        = "AUTHENTIK_CORE_URL"
+	ConfigKeyAuthentikOutpost        = "AUTHENTIK_OUTPOST_URL"
+	ConfigKeyResticRepository        = "RESTIC_REPOSITORY"
+	ConfigKeyB2AccountID             = "B2_ACCOUNT_ID"
+	ConfigKeyB2AccountKey            = "B2_ACCOUNT_KEY"
+	ConfigKeyResticPassword          = "RESTIC_PASSWORD"
+	ConfigKeyAgentName               = "HOMECTL_AGENT_NAME"
+	ConfigKeyMaxRAMPercent           = "HOMECTL_MAX_RAM_PERCENT"
+	ConfigKeyTechnitiumAdminPassword = "TECHNITIUM_ADMIN_PASSWORD"
+	ConfigKeyTechnitiumClusterDomain = "TECHNITIUM_CLUSTER_DOMAIN"
+	ConfigKeyTechnitiumImage         = "TECHNITIUM_IMAGE"
+	ConfigKeyTechnitiumNodeIP        = "TECHNITIUM_NODE_IP"
 )
 
 var SharedAgentConfigKeys = []string{
@@ -163,6 +170,8 @@ var SharedAgentConfigKeys = []string{
 	ConfigKeyAuthentikOutpost,
 	ConfigKeyResticRepository,
 	ConfigKeyMaxRAMPercent,
+	ConfigKeyTechnitiumClusterDomain,
+	ConfigKeyTechnitiumImage,
 }
 
 var EditableAgentEnvConfigKeys = []string{
@@ -171,10 +180,12 @@ var EditableAgentEnvConfigKeys = []string{
 	ConfigKeyB2AccountID,
 	ConfigKeyB2AccountKey,
 	ConfigKeyResticPassword,
+	ConfigKeyTechnitiumAdminPassword,
 }
 
 var AgentSpecificConfigKeys = []string{
 	ConfigKeyAgentName,
+	ConfigKeyTechnitiumNodeIP,
 }
 
 type NodeConfigDocument map[string]string
