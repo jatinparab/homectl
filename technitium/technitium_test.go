@@ -189,6 +189,46 @@ func TestEnsureRollsBackExistingContainerWhenReplacementFails(t *testing.T) {
 	}
 }
 
+func TestSecondaryRefreshesPrimaryConnectionAfterAgentRestart(t *testing.T) {
+	stateCalls := 0
+	updates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/login":
+			_, _ = w.Write([]byte(`{"status":"ok","token":"session"}`))
+		case "/api/admin/cluster/state":
+			stateCalls++
+			if stateCalls == 2 {
+				_, _ = w.Write([]byte(`{"status":"ok","response":{"clusterInitialized":true,"dnsServerDomain":"node1.cluster.home.arpa","clusterNodes":[{"name":"node1.cluster.home.arpa","type":"Primary","state":"Self"}]}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"status":"ok","response":{"clusterInitialized":true,"dnsServerDomain":"node2.cluster.home.arpa","clusterNodes":[{"name":"node1.cluster.home.arpa","type":"Primary","state":"Connected"},{"name":"node2.cluster.home.arpa","type":"Secondary","state":"Self"}]}}`))
+			}
+		case "/api/admin/cluster/secondary/updatePrimary":
+			updates++
+			_, _ = w.Write([]byte(`{"status":"ok","response":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	controller := NewController()
+	controller.client = &http.Client{Transport: rewriteTransport{target: mustURL(t, server.URL)}}
+	cfg := Config{NodeName: "node2", NodeIP: "192.168.50.102", GatewayNode: "node1", GatewayIP: "192.168.50.101", Password: "secret", ClusterDomain: "cluster.home.arpa", DataDir: t.TempDir(), HostDataDir: "/srv/homectl/app-data"}
+	if err := controller.ReconcileCluster(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if updates != 1 {
+		t.Fatalf("primary updates = %d, want 1", updates)
+	}
+	if err := controller.ReconcileCluster(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if updates != 1 {
+		t.Fatalf("primary connection refreshed more than once: %d", updates)
+	}
+}
+
 func TestGatewaySecondaryPromotesGracefully(t *testing.T) {
 	var promoted string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

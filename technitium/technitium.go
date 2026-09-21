@@ -79,18 +79,20 @@ type Controller struct {
 	client        *http.Client
 	healthChecker func(context.Context) error
 
-	mu                 sync.Mutex
-	gatewayIdentity    string
-	gatewaySince       time.Time
-	lastGracefulFailed bool
-	listeners          []net.Listener
-	proxyCancel        context.CancelFunc
+	mu                   sync.Mutex
+	gatewayIdentity      string
+	gatewaySince         time.Time
+	lastGracefulFailed   bool
+	clusterRefreshNeeded bool
+	listeners            []net.Listener
+	proxyCancel          context.CancelFunc
 }
 
 func NewController() *Controller {
 	controller := &Controller{
-		runner: execRunner{},
-		client: &http.Client{Timeout: 6 * time.Minute},
+		runner:               execRunner{},
+		client:               &http.Client{Timeout: 6 * time.Minute},
+		clusterRefreshNeeded: true,
 	}
 	controller.healthChecker = controller.waitUntilHealthy
 	return controller

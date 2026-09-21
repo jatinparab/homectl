@@ -84,6 +84,7 @@ func (c *Controller) ReconcileCluster(ctx context.Context, raw Config) error {
 	}
 	gatewaySince := c.gatewaySince
 	lastGracefulFailed := c.lastGracefulFailed
+	clusterRefreshNeeded := c.clusterRefreshNeeded
 	c.mu.Unlock()
 
 	localBase := fmt.Sprintf("http://%s:%d", ContainerName, AdminPort)
@@ -105,6 +106,7 @@ func (c *Controller) ReconcileCluster(ctx context.Context, raw Config) error {
 	expectedPrimary := cfg.GatewayNode + "." + cfg.ClusterDomain
 	if cfg.IsGateway {
 		if strings.EqualFold(self.Type, "Primary") {
+			c.clearClusterRefresh()
 			return nil
 		}
 		if time.Since(gatewaySince) < PromotionDebounce {
@@ -136,7 +138,7 @@ func (c *Controller) ReconcileCluster(ctx context.Context, raw Config) error {
 	}
 
 	primary, ok := state.primary()
-	if ok && strings.EqualFold(primary.Name, expectedPrimary) {
+	if ok && strings.EqualFold(primary.Name, expectedPrimary) && strings.EqualFold(primary.State, "Connected") && !clusterRefreshNeeded {
 		return nil
 	}
 	remoteState, remoteErr := c.getClusterState(ctx, gatewayAPIBase(cfg.GatewayIP), cfg.Password)
@@ -147,7 +149,17 @@ func (c *Controller) ReconcileCluster(ctx context.Context, raw Config) error {
 	if !remoteOK || !remoteState.ClusterInitialized || !strings.EqualFold(remoteSelf.Type, "Primary") || !strings.EqualFold(remoteSelf.Name, expectedPrimary) {
 		return errors.New("gateway is not yet the Technitium primary")
 	}
-	return c.updatePrimary(ctx, localBase, cfg.Password, cfg)
+	if err := c.updatePrimary(ctx, localBase, cfg.Password, cfg); err != nil {
+		return err
+	}
+	c.clearClusterRefresh()
+	return nil
+}
+
+func (c *Controller) clearClusterRefresh() {
+	c.mu.Lock()
+	c.clusterRefreshNeeded = false
+	c.mu.Unlock()
 }
 
 func gatewayAPIBase(ip string) string {
