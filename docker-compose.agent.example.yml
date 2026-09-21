@@ -6,10 +6,16 @@ services:
     # You can later override HOMECTL_AGENT_NAME from the manager UI node settings.
     hostname: node-1
     restart: unless-stopped
+    # Bootstrap/control-plane lookups bypass the Technitium VIP so the agent can
+    # recover DNS after a cold start. Host and managed-app DNS are unchanged.
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
     environment:
       # Required bootstrap settings. Agents only need the join token and public manager URL.
       HOMECTL_JOIN_TOKEN: change-me
       HOMECTL_MANAGER_URL: https://homectl.your-domain.example
+      HOMECTL_BOOTSTRAP_DNS: 1.1.1.1,9.9.9.9
 
       # Optional local runtime settings.
       HOMECTL_COMPOSE_EXTRA_ARGS: ""

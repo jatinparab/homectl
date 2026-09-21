@@ -24,6 +24,16 @@ type fakeRunner struct {
 	responses func(args []string) ([]byte, error)
 }
 
+type fakeImageLoader struct {
+	images []string
+	err    error
+}
+
+func (l *fakeImageLoader) Ensure(_ context.Context, image string, _ func(string)) error {
+	l.images = append(l.images, image)
+	return l.err
+}
+
 func (r *fakeRunner) Run(_ context.Context, env map[string]string, args ...string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -55,6 +65,7 @@ func TestEnsurePassesPasswordOnlyThroughEnvironment(t *testing.T) {
 		NodeIP:        "10.44.0.2",
 		Password:      password,
 		ClusterDomain: "cluster.home.arpa",
+		BootstrapDNS:  []string{"1.1.1.1", "9.9.9.9"},
 		DataDir:       dataDir,
 		HostDataDir:   hostDataDir,
 	}
@@ -86,6 +97,9 @@ func TestEnsurePassesPasswordOnlyThroughEnvironment(t *testing.T) {
 	if got := filepath.Join(cfg.HostDataDir, "technitium", "config"); !containsSubstring(runCall.args, got+":/etc/dns") {
 		t.Fatalf("docker run did not mount %s", got)
 	}
+	if !containsAdjacent(runCall.args, "--dns", "1.1.1.1") || !containsAdjacent(runCall.args, "--dns", "9.9.9.9") {
+		t.Fatalf("docker run missing bootstrap DNS: %#v", runCall.args)
+	}
 }
 
 func TestEnsureKeepsMatchingRunningContainer(t *testing.T) {
@@ -109,6 +123,69 @@ func TestEnsureKeepsMatchingRunningContainer(t *testing.T) {
 		if len(call.args) > 0 && call.args[0] == "run" {
 			t.Fatal("matching running container was recreated")
 		}
+	}
+}
+
+func TestEnsureDoesNotStopExistingContainerWhenImagePreloadFails(t *testing.T) {
+	runner := &fakeRunner{responses: func(args []string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "inspect" {
+			if containsSubstring(args, "{{range .Config.Env}}") {
+				return []byte("DNS_SERVER_ADMIN_PASSWORD=secret\n"), nil
+			}
+			return []byte("true|old-hash"), nil
+		}
+		return nil, nil
+	}}
+	loader := &fakeImageLoader{err: errors.New("registry unavailable")}
+	controller := NewController()
+	controller.runner = runner
+	controller.SetImageLoader(loader)
+	cfg := Config{NodeName: "node1", NodeIP: "10.44.0.2", Password: "secret", Image: "example/dns:2", DataDir: t.TempDir(), HostDataDir: "/srv/homectl/app-data"}
+	if err := controller.Ensure(context.Background(), cfg); err == nil {
+		t.Fatal("expected preload failure")
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && (call.args[0] == "stop" || call.args[0] == "rename" || call.args[0] == "rm") {
+			t.Fatalf("working container was modified after preload failure: %#v", call.args)
+		}
+	}
+}
+
+func TestEnsureRollsBackExistingContainerWhenReplacementFails(t *testing.T) {
+	runner := &fakeRunner{responses: func(args []string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "inspect" {
+			if containsSubstring(args, "{{range .Config.Env}}") {
+				return []byte("DNS_SERVER_ADMIN_PASSWORD=secret\n"), nil
+			}
+			return []byte("true|old-hash"), nil
+		}
+		if len(args) > 0 && args[0] == "run" {
+			return []byte("replacement failed"), errors.New("exit 1")
+		}
+		return nil, nil
+	}}
+	loader := &fakeImageLoader{}
+	controller := NewController()
+	controller.runner = runner
+	controller.SetImageLoader(loader)
+	cfg := Config{NodeName: "node1", NodeIP: "10.44.0.2", Password: "secret", Image: "example/dns:2", DataDir: t.TempDir(), HostDataDir: "/srv/homectl/app-data"}
+	if err := controller.Ensure(context.Background(), cfg); err == nil {
+		t.Fatal("expected replacement failure")
+	}
+	if len(loader.images) != 1 || loader.images[0] != cfg.Image {
+		t.Fatalf("preloaded images = %#v", loader.images)
+	}
+	var restored, restarted bool
+	for _, call := range runner.calls {
+		if len(call.args) >= 3 && call.args[0] == "rename" && call.args[1] == ContainerName+"-rollback" && call.args[2] == ContainerName {
+			restored = true
+		}
+		if len(call.args) >= 2 && call.args[0] == "start" && call.args[1] == ContainerName {
+			restarted = true
+		}
+	}
+	if !restored || !restarted {
+		t.Fatalf("rollback missing: restored=%v restarted=%v calls=%#v", restored, restarted, runner.calls)
 	}
 }
 

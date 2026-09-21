@@ -103,7 +103,19 @@ docker compose -f docker-compose.example.yml up -d
 ```yaml
 HOMECTL_JOIN_TOKEN: replace-with-the-manager-token
 HOMECTL_MANAGER_URL: https://homectl.your-domain.example
+HOMECTL_BOOTSTRAP_DNS: 1.1.1.1,9.9.9.9
 ```
+
+Give the agent service matching Compose-level bootstrap resolvers:
+
+```yaml
+dns:
+  - 1.1.1.1
+  - 9.9.9.9
+```
+
+These resolvers apply only to the Homectl control-plane container. The host and
+normal managed containers can continue using the Technitium VIP.
 
 Shared Caddy, DNS, HA IP, and Restic values are stored encrypted on the manager
 and edited from each node's settings dialog in the web UI. They are synced to
@@ -166,6 +178,7 @@ Agent environment variables:
 | --- | --- | --- |
 | `HOMECTL_JOIN_TOKEN` | Yes | Must match the manager join token. |
 | `HOMECTL_MANAGER_URL` | Yes | Public manager origin served by Caddy, for example `https://homectl.your-domain.example`. |
+| `HOMECTL_BOOTSTRAP_DNS` | Recommended | Comma-separated resolvers passed only to Homectl-owned infrastructure containers such as Technitium. Match these with the agent service's Compose `dns:` list. |
 | `HOMECTL_COMPOSE_EXTRA_ARGS` | No | Extra Docker Compose options for this agent, inserted before `up`, `down`, `pull`, `ps`, `stop`, and `logs`; for example `-f docker-compose.gpu.yml --profile gpu`. Relative `-f` paths are resolved from each app directory. |
 | `HOMECTL_AGENT_NAME` | No | Optional initial agent identity seed. Prefer a stable compose `hostname:` and manage later overrides from the manager UI. |
 | `HOMECTL_RESTIC_USE_SUDO` | No | Run restic through `sudo` on the agent host when required. |
@@ -188,7 +201,11 @@ The cluster domain defaults to
 `cluster.home.arpa` and the image defaults to `technitium/dns-server:15.4.0`.
 
 Every agent publishes DNS on TCP/UDP 53 and reports Technitium as a synthetic
-global app. Only the current gateway is backed up. The gateway is also kept as
+global app. Registry images are downloaded by the agent with `skopeo` and
+imported through the Docker socket before Compose starts with daemon-side pulls
+disabled. Consequently, recovery does not depend on the host Docker daemon's
+DNS. The initial Homectl agent image must still be locally available or pulled
+successfully once; no container can bootstrap its own missing image. Only the current gateway is backed up. The gateway is also kept as
 the Technitium primary: role changes first attempt a graceful promotion, then
 force-promote after two minutes if the former primary is unavailable. Returning
 former primaries are reset and rejoined as secondaries. Agent-side TCP proxies

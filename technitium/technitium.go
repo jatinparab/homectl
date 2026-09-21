@@ -37,6 +37,7 @@ type Config struct {
 	Password      string
 	ClusterDomain string
 	Image         string
+	BootstrapDNS  []string
 	DataDir       string
 	HostDataDir   string
 }
@@ -48,6 +49,10 @@ type Status struct {
 
 type commandRunner interface {
 	Run(ctx context.Context, env map[string]string, args ...string) ([]byte, error)
+}
+
+type ImageLoader interface {
+	Ensure(ctx context.Context, image string, onLog func(string)) error
 }
 
 type execRunner struct{}
@@ -69,8 +74,10 @@ func (execRunner) Run(ctx context.Context, env map[string]string, args ...string
 }
 
 type Controller struct {
-	runner commandRunner
-	client *http.Client
+	runner        commandRunner
+	imageLoader   ImageLoader
+	client        *http.Client
+	healthChecker func(context.Context) error
 
 	mu                 sync.Mutex
 	gatewayIdentity    string
@@ -81,10 +88,16 @@ type Controller struct {
 }
 
 func NewController() *Controller {
-	return &Controller{
+	controller := &Controller{
 		runner: execRunner{},
 		client: &http.Client{Timeout: 6 * time.Minute},
 	}
+	controller.healthChecker = controller.waitUntilHealthy
+	return controller
+}
+
+func (c *Controller) SetImageLoader(loader ImageLoader) {
+	c.imageLoader = loader
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
@@ -95,6 +108,16 @@ func normalizeConfig(cfg Config) (Config, error) {
 	cfg.Image = strings.TrimSpace(cfg.Image)
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
 	cfg.HostDataDir = strings.TrimSpace(cfg.HostDataDir)
+	bootstrapDNS := make([]string, 0, len(cfg.BootstrapDNS))
+	seenDNS := map[string]bool{}
+	for _, server := range cfg.BootstrapDNS {
+		server = strings.TrimSpace(server)
+		if server != "" && !seenDNS[server] {
+			seenDNS[server] = true
+			bootstrapDNS = append(bootstrapDNS, server)
+		}
+	}
+	cfg.BootstrapDNS = bootstrapDNS
 	if cfg.ClusterDomain == "" {
 		cfg.ClusterDomain = DefaultClusterDomain
 	}
@@ -109,7 +132,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 
 func configHash(cfg Config) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		cfg.NodeName, cfg.NodeIP, cfg.Password, cfg.ClusterDomain, cfg.Image, cfg.DataDir, cfg.HostDataDir,
+		cfg.NodeName, cfg.NodeIP, cfg.Password, cfg.ClusterDomain, cfg.Image, strings.Join(cfg.BootstrapDNS, ","), cfg.DataDir, cfg.HostDataDir,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
@@ -126,6 +149,15 @@ func (c *Controller) Ensure(ctx context.Context, raw Config) error {
 		return err
 	}
 
+	rollbackName := ContainerName + "-rollback"
+	if _, err := c.runner.Run(ctx, nil, "inspect", ContainerName); err != nil {
+		// Recover an interrupted replacement before reading credentials or state.
+		if _, rollbackErr := c.runner.Run(ctx, nil, "inspect", rollbackName); rollbackErr == nil {
+			_, _ = c.runner.Run(ctx, nil, "rename", rollbackName, ContainerName)
+			_, _ = c.runner.Run(ctx, nil, "start", ContainerName)
+		}
+	}
+
 	existingPassword := c.containerPassword(ctx, ContainerName)
 	if existingPassword == "" {
 		existingPassword = c.containerPassword(ctx, LegacyContainerName)
@@ -136,6 +168,25 @@ func (c *Controller) Ensure(ctx context.Context, raw Config) error {
 		}
 	}
 
+	hash := configHash(cfg)
+	inspectFormat := "{{.State.Running}}|{{index .Config.Labels \"" + ConfigHashLabel + "\"}}"
+	out, inspectErr := c.runner.Run(ctx, nil, "inspect", "--format", inspectFormat, ContainerName)
+	hasExisting := inspectErr == nil
+	if hasExisting {
+		parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 2)
+		if len(parts) == 2 && parts[0] == "true" && parts[1] == hash {
+			return nil
+		}
+	}
+
+	// Acquire the image before stopping the working DNS server. The image loader
+	// runs in the agent container, so this does not depend on dockerd DNS.
+	if c.imageLoader != nil {
+		if err := c.imageLoader.Ensure(ctx, cfg.Image, nil); err != nil {
+			return err
+		}
+	}
+
 	_, _ = c.runner.Run(ctx, nil, "rm", "-f", LegacyContainerName)
 	if _, err := c.runner.Run(ctx, nil, "network", "inspect", SharedNetwork); err != nil {
 		if out, createErr := c.runner.Run(ctx, nil, "network", "create", SharedNetwork); createErr != nil {
@@ -143,14 +194,15 @@ func (c *Controller) Ensure(ctx context.Context, raw Config) error {
 		}
 	}
 
-	hash := configHash(cfg)
-	out, inspectErr := c.runner.Run(ctx, nil, "inspect", "--format", "{{.State.Running}}|{{index .Config.Labels \""+ConfigHashLabel+"\"}}", ContainerName)
-	if inspectErr == nil {
-		parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 2)
-		if len(parts) == 2 && parts[0] == "true" && parts[1] == hash {
-			return nil
+	if hasExisting {
+		_, _ = c.runner.Run(ctx, nil, "rm", "-f", rollbackName)
+		if out, err := c.runner.Run(ctx, nil, "stop", ContainerName); err != nil {
+			return fmt.Errorf("stop existing Technitium: %w: %s", err, strings.TrimSpace(string(out)))
 		}
-		_, _ = c.runner.Run(ctx, nil, "rm", "-f", ContainerName)
+		if out, err := c.runner.Run(ctx, nil, "rename", ContainerName, rollbackName); err != nil {
+			_, _ = c.runner.Run(ctx, nil, "start", ContainerName)
+			return fmt.Errorf("stage existing Technitium for rollback: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 
 	domain := cfg.NodeName + "." + cfg.ClusterDomain
@@ -170,13 +222,62 @@ func (c *Controller) Ensure(ctx context.Context, raw Config) error {
 		"-e", "DNS_SERVER_STATS_MAX_STAT_FILE_DAYS=30",
 		"-v", filepath.Join(cfg.HostDataDir, "technitium", "config") + ":/etc/dns",
 		"-v", filepath.Join(cfg.HostDataDir, "technitium", "logs") + ":/var/log/technitium/dns",
-		cfg.Image,
 	}
+	for _, server := range cfg.BootstrapDNS {
+		args = append(args, "--dns", server)
+	}
+	args = append(args, cfg.Image)
 	out, err = c.runner.Run(ctx, map[string]string{"DNS_SERVER_ADMIN_PASSWORD": cfg.Password}, args...)
 	if err != nil {
+		_, _ = c.runner.Run(ctx, nil, "rm", "-f", ContainerName)
+		c.rollbackContainer(ctx, rollbackName, hasExisting)
 		return fmt.Errorf("start Technitium: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	if hasExisting && c.healthChecker != nil {
+		if err := c.healthChecker(ctx); err != nil {
+			_, _ = c.runner.Run(ctx, nil, "rm", "-f", ContainerName)
+			c.rollbackContainer(ctx, rollbackName, true)
+			return fmt.Errorf("replacement Technitium did not become healthy: %w", err)
+		}
+	}
+	if hasExisting {
+		_, _ = c.runner.Run(ctx, nil, "rm", "-f", rollbackName)
+	}
 	return nil
+}
+
+func (c *Controller) rollbackContainer(ctx context.Context, rollbackName string, available bool) {
+	if !available {
+		return
+	}
+	_, _ = c.runner.Run(ctx, nil, "rename", rollbackName, ContainerName)
+	_, _ = c.runner.Run(ctx, nil, "start", ContainerName)
+}
+
+func (c *Controller) waitUntilHealthy(ctx context.Context) error {
+	deadline := time.NewTimer(45 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ContainerName+":5380/api/status", nil)
+		if err == nil {
+			response, requestErr := c.client.Do(request)
+			if requestErr == nil {
+				response.Body.Close()
+				if response.StatusCode == http.StatusOK {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("health check timed out")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *Controller) containerPassword(ctx context.Context, container string) string {

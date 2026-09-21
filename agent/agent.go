@@ -21,6 +21,7 @@ import (
 	"github.com/jatinparab/homectl/common"
 	"github.com/jatinparab/homectl/config"
 	"github.com/jatinparab/homectl/docker"
+	"github.com/jatinparab/homectl/imagecache"
 	"github.com/jatinparab/homectl/keepalived"
 	"github.com/jatinparab/homectl/logger"
 	"github.com/jatinparab/homectl/manager/client"
@@ -173,6 +174,7 @@ func NewAgent(name, ip string, cfg *config.Config, agentCfg Config, managerURL, 
 		lastConnectedAt:   time.Now(),
 		technitium:        technitium.NewController(),
 	}
+	a.technitium.SetImageLoader(imagecache.New())
 	a.restic = NewRepoRestic(config.AppDataDir, os.Getenv("HOMECTL_RESTIC_USE_SUDO") == "true", a.configValue, a.runtimeConfigSnapshot)
 	a.managerClient.SetIdentity(name, ip)
 	a.managerClient.SetJoinToken(strings.TrimSpace(os.Getenv("HOMECTL_JOIN_TOKEN")))
@@ -627,9 +629,27 @@ func (a *Agent) technitiumConfig() technitium.Config {
 		Password:      a.configValue(common.ConfigKeyTechnitiumAdminPassword),
 		ClusterDomain: a.configValue(common.ConfigKeyTechnitiumClusterDomain),
 		Image:         a.configValue(common.ConfigKeyTechnitiumImage),
+		BootstrapDNS:  bootstrapDNSFromEnv(),
 		DataDir:       a.appdataDir,
 		HostDataDir:   a.appdataHostDir,
 	}
+}
+
+func bootstrapDNSFromEnv() []string {
+	raw := strings.TrimSpace(os.Getenv("HOMECTL_BOOTSTRAP_DNS"))
+	if raw == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == ' ' }) {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func caddyEnvFingerprint(env map[string]string) string {

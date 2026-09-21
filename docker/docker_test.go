@@ -168,6 +168,28 @@ func envContains(env []string, want string) bool {
 	return false
 }
 
+func TestDockerfileBaseImagesResolvesArgsAndSkipsStages(t *testing.T) {
+	content := `ARG BASE=alpine:3.20
+FROM ${BASE} AS builder
+FROM builder AS reused
+FROM busybox:1.36
+`
+	images, err := dockerfileBaseImages(content, map[string]any{"BASE": "alpine:3.21"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alpine:3.21", "busybox:1.36"}
+	if !reflect.DeepEqual(images, want) {
+		t.Fatalf("images = %#v, want %#v", images, want)
+	}
+}
+
+func TestDockerfileBaseImagesRejectsUnresolvedFromArg(t *testing.T) {
+	if _, err := dockerfileBaseImages("FROM ${MISSING}\n", nil); err == nil {
+		t.Fatal("expected unresolved build argument error")
+	}
+}
+
 func TestComposeEnvOverridesInheritedAPPDATA(t *testing.T) {
 	t.Setenv("APPDATA", "/wrong")
 	d := NewDocker("/tmp/docker", "/srv/homectl/app-data")

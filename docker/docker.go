@@ -3,6 +3,7 @@ package docker
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,12 +12,14 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jatinparab/homectl/common"
+	"github.com/jatinparab/homectl/imagecache"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,6 +61,7 @@ type Docker struct {
 	httpClient       *http.Client
 	dockerApps       map[string]DockerApp
 	fileReader       FileReader
+	imageLoader      *imagecache.Loader
 	ctx              context.Context
 }
 
@@ -76,9 +80,10 @@ func NewDocker(rootDir, appdataDir string) *Docker {
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second,
 		},
-		dockerApps: make(map[string]DockerApp),
-		fileReader: &LocalFileReader{},
-		ctx:        context.Background(),
+		dockerApps:  make(map[string]DockerApp),
+		fileReader:  &LocalFileReader{},
+		imageLoader: imagecache.New(),
+		ctx:         context.Background(),
 	}
 }
 
@@ -100,8 +105,10 @@ func NewDockerWithFileReader(rootDir string, reader FileReader) *Docker {
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second,
 		},
-		dockerApps: make(map[string]DockerApp),
-		fileReader: reader,
+		dockerApps:  make(map[string]DockerApp),
+		fileReader:  reader,
+		imageLoader: imagecache.New(),
+		ctx:         context.Background(),
 	}
 }
 
@@ -717,36 +724,100 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 	return nil
 }
 
-// pullTimeout is the maximum duration allowed for a docker compose pull.
+// pullTimeout is the maximum duration allowed for registry image preloading.
 const pullTimeout = 15 * time.Minute
 
-// Pull pulls images for a docker compose service, streaming output line-by-line.
+type renderedCompose struct {
+	Services map[string]renderedComposeService `json:"services"`
+}
+
+type renderedComposeService struct {
+	Image string                `json:"image"`
+	Build *renderedComposeBuild `json:"build"`
+}
+
+type renderedComposeBuild struct {
+	Context          string         `json:"context"`
+	Dockerfile       string         `json:"dockerfile"`
+	DockerfileInline string         `json:"dockerfile_inline"`
+	Args             map[string]any `json:"args"`
+}
+
+// Pull preloads all registry images in the agent process. Skopeo resolves and
+// downloads registry content using the agent container's DNS, then imports the
+// images through the Docker socket. Dockerd itself never needs registry DNS.
 func (d *Docker) Pull(appID string, onLog func(string)) error {
 	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
-	ctx := context.Background()
-	cmd := d.ComposeCommandContext(ctx, appID, "--progress=plain", "pull")
-	if err := d.streamCommand(cmd, onLog); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("docker compose pull timed out after %s", pullTimeout)
+
+	ctx, cancel := context.WithTimeout(d.ctx, pullTimeout)
+	defer cancel()
+	cmd := d.ComposeCommandContext(ctx, appID, "config", "--format", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("render docker compose config: %w", err)
+	}
+	var rendered renderedCompose
+	if err := json.Unmarshal(output, &rendered); err != nil {
+		return fmt.Errorf("parse rendered docker compose config: %w", err)
+	}
+
+	serviceNames := make([]string, 0, len(rendered.Services))
+	for name := range rendered.Services {
+		serviceNames = append(serviceNames, name)
+	}
+	sort.Strings(serviceNames)
+
+	seen := make(map[string]bool)
+	for _, name := range serviceNames {
+		service := rendered.Services[name]
+		if service.Build == nil && strings.TrimSpace(service.Image) != "" {
+			image := strings.TrimSpace(service.Image)
+			if !seen[image] {
+				seen[image] = true
+				if onLog != nil {
+					onLog("preloading image " + image)
+				}
+				if err := d.imageLoader.Refresh(ctx, image, onLog); err != nil {
+					return err
+				}
+			}
 		}
-		return fmt.Errorf("docker compose pull failed: %w", err)
+		if service.Build != nil {
+			baseImages, err := composeBuildBaseImages(service.Build)
+			if err != nil {
+				return fmt.Errorf("inspect build images for service %s: %w", name, err)
+			}
+			for _, image := range baseImages {
+				if seen[image] {
+					continue
+				}
+				seen[image] = true
+				if onLog != nil {
+					onLog("preloading build base image " + image)
+				}
+				if err := d.imageLoader.Ensure(ctx, image, onLog); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("image preload timed out after %s", pullTimeout)
 	}
 	return nil
 }
 
-// StartWithLogs pulls images (with streaming) then starts the service, streaming output.
-// Uses --build to rebuild images when Dockerfile or build context changes.
+// StartWithLogs preloads images in the agent, then starts Compose with
+// daemon-side pulls disabled. Uses --build for local build contexts.
 func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
-	// Pull images first
 	if err := d.Pull(appID, onLog); err != nil {
 		return err
 	}
 
-	// Then run docker compose up -d with --build to pick up local changes
-	cmd := d.ComposeCommand(appID, "up", "-d", "--build")
+	cmd := d.ComposeCommand(appID, "up", "-d", "--build", "--pull", "never")
 	if err := d.streamCommand(cmd, onLog); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
@@ -764,6 +835,100 @@ func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
 	}
 
 	return nil
+}
+
+func composeBuildBaseImages(build *renderedComposeBuild) ([]string, error) {
+	if build == nil {
+		return nil, nil
+	}
+	content := build.DockerfileInline
+	if strings.TrimSpace(content) == "" {
+		dockerfile := strings.TrimSpace(build.Dockerfile)
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		data, err := os.ReadFile(filepath.Join(build.Context, dockerfile))
+		if err != nil {
+			return nil, err
+		}
+		content = string(data)
+	}
+	return dockerfileBaseImages(content, build.Args)
+}
+
+func dockerfileBaseImages(content string, buildArgs map[string]any) ([]string, error) {
+	values := make(map[string]string, len(buildArgs))
+	for key, value := range buildArgs {
+		if value != nil {
+			values[key] = fmt.Sprint(value)
+		}
+	}
+
+	logicalLines := []string{}
+	var current strings.Builder
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasSuffix(line, "\\") {
+			current.WriteString(strings.TrimSpace(strings.TrimSuffix(line, "\\")))
+			current.WriteByte(' ')
+			continue
+		}
+		current.WriteString(line)
+		logicalLines = append(logicalLines, current.String())
+		current.Reset()
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if current.Len() > 0 {
+		logicalLines = append(logicalLines, current.String())
+	}
+
+	aliases := map[string]bool{}
+	seen := map[string]bool{}
+	images := []string{}
+	for _, line := range logicalLines {
+		line = strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch strings.ToUpper(fields[0]) {
+		case "ARG":
+			key, value, hasValue := strings.Cut(fields[1], "=")
+			if _, supplied := values[key]; !supplied && hasValue {
+				values[key] = value
+			}
+		case "FROM":
+			index := 1
+			for index < len(fields) && strings.HasPrefix(fields[index], "--") {
+				index++
+			}
+			if index >= len(fields) {
+				return nil, fmt.Errorf("invalid FROM instruction %q", line)
+			}
+			missing := ""
+			image := os.Expand(fields[index], func(key string) string {
+				value, ok := values[key]
+				if !ok {
+					missing = key
+				}
+				return value
+			})
+			if missing != "" {
+				return nil, fmt.Errorf("unresolved build argument %s in FROM", missing)
+			}
+			if image != "" && image != "scratch" && !aliases[strings.ToLower(image)] && !seen[image] {
+				seen[image] = true
+				images = append(images, image)
+			}
+			if index+2 < len(fields) && strings.EqualFold(fields[index+1], "AS") {
+				aliases[strings.ToLower(fields[index+2])] = true
+			}
+		}
+	}
+	return images, nil
 }
 
 // Stop gracefully stops a docker compose application without removing containers.
