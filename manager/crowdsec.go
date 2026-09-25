@@ -171,6 +171,10 @@ func crowdSecSSHAcquisPath() string {
 	return filepath.Join(crowdSecEtcDir(), "acquis.d", "homectl-ssh.yaml")
 }
 
+func crowdSecBudgetWhitelistPath() string {
+	return filepath.Join(crowdSecEtcDir(), "postoverflows", "s01-whitelist", "homectl-budget.yaml")
+}
+
 func crowdSecSSHLogPath() string {
 	return os.Getenv("HOMECTL_CROWDSEC_SSH_LOG")
 }
@@ -462,9 +466,23 @@ func copyDir(src, dst string) error {
 	})
 }
 
+const crowdSecBudgetWhitelist = `name: homectl/budget-actual
+description: Prevent Actual Budget's normal asset and sync requests from triggering false-positive remediation
+whitelist:
+  reason: Actual Budget legitimately serves SQL migration assets and makes many non-static sync requests
+  expression:
+    - (evt.Overflow.Alert.Scenario == "crowdsecurity/http-sensitive-files" || evt.Overflow.Alert.Scenario == "crowdsecurity/http-crawl-non_statics") && all(evt.Overflow.Alert.Events, {.GetMeta("target_fqdn") == "budget.example.net"})
+`
+
 func writeCrowdSecAcquisition() error {
 	if err := os.MkdirAll(filepath.Dir(crowdSecCaddyAcquisPath()), 0755); err != nil {
 		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(crowdSecBudgetWhitelistPath()), 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(crowdSecBudgetWhitelistPath(), []byte(crowdSecBudgetWhitelist), 0644); err != nil {
+		return fmt.Errorf("write Actual Budget whitelist: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(crowdSecEtcDir(), "acquis.yaml"), []byte("# homectl writes acquisition sources under acquis.d\n"), 0644); err != nil {
 		return err

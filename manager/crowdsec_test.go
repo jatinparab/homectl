@@ -4,11 +4,24 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestCrowdSecBudgetWhitelistTargetsOnlyBudgetFalsePositives(t *testing.T) {
+	for _, want := range []string{
+		`evt.Overflow.Alert.Scenario == "crowdsecurity/http-sensitive-files"`,
+		`evt.Overflow.Alert.Scenario == "crowdsecurity/http-crawl-non_statics"`,
+		`all(evt.Overflow.Alert.Events, {.GetMeta("target_fqdn") == "budget.example.net"})`,
+	} {
+		if !strings.Contains(crowdSecBudgetWhitelist, want) {
+			t.Errorf("Budget whitelist is missing %q", want)
+		}
+	}
+}
 
 func TestInstallCrowdSecHubItemsUsesCachedHubWithoutNetworkUpdate(t *testing.T) {
 	var calls [][]string
