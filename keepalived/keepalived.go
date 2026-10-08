@@ -1,7 +1,9 @@
 package keepalived
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,102 @@ import (
 )
 
 const ContainerName = "homectl-keepalived"
+const DNSContainerName = "homectl-dns-keepalived"
+
+// EnsureDNS manages an independent election: the DNS owner need not be the
+// HTTP gateway or Technitium primary. VRID 45 is distinct from gateway VRID 44.
+func EnsureDNS(configDir, hostConfigDir, dnsIP, gatewayIP string) error {
+	if dnsIP == "" {
+		out, err := exec.Command("docker", "rm", "-f", DNSContainerName).CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "No such container") {
+			return fmt.Errorf("remove DNS keepalived: %w: %s", err, out)
+		}
+		return nil
+	}
+	ip := net.ParseIP(dnsIP)
+	if ip == nil || ip.To4() == nil || dnsIP != ip.To4().String() || !ip.IsGlobalUnicast() || ip.Equal(net.ParseIP(gatewayIP)) {
+		return fmt.Errorf("DNS VIP must be a separate IPv4 address")
+	}
+	iface, err := hostInterface()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	// The ready port is published on host loopback. DNS election must not
+	// depend on Caddy, the manager, or gateway designation.
+	check := "#!/bin/sh\nwget -qO- --timeout=3 http://127.0.0.1:1337/dns-ready >/dev/null\n"
+	if err := os.WriteFile(filepath.Join(configDir, "check.sh"), []byte(check), 0755); err != nil {
+		return err
+	}
+	content := dnsConfig(iface, dnsIP)
+	path := filepath.Join(configDir, "keepalived.conf")
+	previous, _ := os.ReadFile(path)
+	if string(previous) == content {
+		out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", DNSContainerName).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
+			return nil // unrelated config changes must not reset a working election
+		}
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return err
+	}
+	return reconcileNamedContainer(hostConfigDir, DNSContainerName)
+}
+
+func dnsConfig(iface, ip string) string {
+	return fmt.Sprintf(`global_defs {
+	enable_script_security
+	script_user root
+}
+
+vrrp_script dns_ready {
+	script "/etc/keepalived/check.sh"
+	interval 2
+	timeout 4
+	fall 2
+	rise 3
+	init_fail
+}
+
+vrrp_instance DNS_VIP {
+	state BACKUP
+	interface %s
+	virtual_router_id 45
+	priority 120
+	advert_int 1
+	nopreempt
+
+	virtual_ipaddress {
+		%s
+	}
+	track_script {
+		dns_ready
+	}
+}
+`, iface, ip)
+}
+
+// OwnsDNSVIP checks actual host addresses in the host-network VRRP container,
+// rather than trusting a possibly stale notify marker. Errors fail closed.
+func OwnsDNSVIP(ctx context.Context, vip string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "docker", "exec", DNSContainerName, "ip", "-o", "-4", "addr", "show").Output()
+	if err != nil {
+		return false, fmt.Errorf("inspect DNS VIP ownership: %w", err)
+	}
+	return hasVIP(string(out), vip), nil
+}
+
+func hasVIP(addresses, vip string) bool {
+	for _, field := range strings.Fields(addresses) {
+		ip, _, err := net.ParseCIDR(field)
+		if err == nil && ip.Equal(net.ParseIP(vip)) {
+			return true
+		}
+	}
+	return false
+}
 
 func Ensure(configDir, hostConfigDir, haIP string) error {
 	if haIP == "" {
@@ -76,11 +174,15 @@ func Stop() error {
 }
 
 func reconcileContainer(configDir string) error {
-	_ = exec.Command("docker", "rm", "-f", ContainerName).Run()
+	return reconcileNamedContainer(configDir, ContainerName)
+}
+
+func reconcileNamedContainer(configDir, name string) error {
+	_ = exec.Command("docker", "rm", "-f", name).Run()
 
 	args := []string{
 		"run", "-d",
-		"--name", ContainerName,
+		"--name", name,
 		"--restart", "unless-stopped",
 		"--network", "host",
 		"--cap-add", "NET_ADMIN",

@@ -38,6 +38,7 @@ func (rs *ReadyServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ready", rs.handleReady)
 	mux.HandleFunc("/is-gateway", rs.handleReady)
+	mux.HandleFunc("/dns-ready", rs.handleDNSReady)
 	mux.HandleFunc("/health", rs.handleHealth)
 
 	// Backup trigger endpoint

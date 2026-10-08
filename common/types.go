@@ -138,6 +138,7 @@ type DesiredAppsResponse struct {
 
 const (
 	ConfigKeyLocalHAIP               = "LOCAL_HA_IP"
+	ConfigKeyDNSHAIP                 = "DNS_HA_IP"
 	ConfigKeyCaddyDNSProvider        = "CADDY_DNS_PROVIDER"
 	ConfigKeyCaddyACMEEmail          = "CADDY_ACME_EMAIL"
 	ConfigKeyCaddyACMECA             = "CADDY_ACME_CA"
@@ -161,6 +162,7 @@ const (
 
 var SharedAgentConfigKeys = []string{
 	ConfigKeyLocalHAIP,
+	ConfigKeyDNSHAIP,
 	ConfigKeyCaddyDNSProvider,
 	ConfigKeyCaddyACMEEmail,
 	ConfigKeyCaddyACMECA,

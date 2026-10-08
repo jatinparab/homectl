@@ -284,6 +284,8 @@ func TestFormerPrimaryRemovesStaleClusterZoneBeforeRejoin(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte(`{"status":"ok","response":{}}`))
 			}
+		case "/api/settings/set":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/api/zones/delete":
 			_ = r.ParseForm()
 			deletedZone = r.Form.Get("zone")

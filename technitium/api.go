@@ -93,6 +93,19 @@ func (c *Controller) ReconcileCluster(ctx context.Context, raw Config) error {
 		return err
 	}
 	if !state.ClusterInitialized {
+		// A restored backup can retain another node's server domain. Docker's
+		// DNS_SERVER_DOMAIN only seeds fresh data; repair the local identity
+		// before joining, without renaming an established cluster member.
+		expectedDomain := cfg.NodeName + "." + cfg.ClusterDomain
+		if !strings.EqualFold(state.DNSServerDomain, expectedDomain) {
+			token, err := c.login(ctx, localBase, cfg.Password)
+			if err != nil {
+				return err
+			}
+			if _, err := c.postForm(ctx, localBase+"/api/settings/set", token, url.Values{"dnsServerDomain": {expectedDomain}}); err != nil {
+				return fmt.Errorf("repair uninitialized node identity: %w", err)
+			}
+		}
 		if cfg.IsGateway {
 			return c.initializeCluster(ctx, localBase, cfg)
 		}

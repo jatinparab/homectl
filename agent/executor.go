@@ -479,7 +479,24 @@ func markAppStarted(rt *AppRuntime, phase common.Phase) {
 
 // executeStop stops an app
 func (e *Executor) executeStop(appID common.AppID, rt *AppRuntime) error {
+	if appID == common.DNSAppID && rt.GetPhase() == common.PhaseBackupStopping {
+		if err := e.agent.prepareDNSBackup(e.ctx); err != nil {
+			// Restore eligibility and postpone, rather than getting stuck in the
+			// stop phase or retrying the drain on every reconcile tick.
+			retryAt := time.Now().Add(5 * time.Minute)
+			e.agent.dnsBackupRetryAt.Store(retryAt.UnixNano())
+			e.agent.runtimeMu.Lock()
+			rt.Backup.BackupDefer = retryAt
+			rt.Backup.LastError = err.Error()
+			e.agent.runtimeMu.Unlock()
+			rt.SetPhase(common.PhaseRunning)
+			return err
+		}
+	}
 	if err := e.stopApp(appID); err != nil {
+		if rt.GetPhase() == common.PhaseBackupStopping {
+			rt.SetPhase(common.PhaseRunning)
+		}
 		return err
 	}
 

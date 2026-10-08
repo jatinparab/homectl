@@ -41,7 +41,8 @@ type EnvRow = {
 };
 
 const REQUIRED_GLOBAL_FIELDS: FieldDef[] = [
-  { key: 'LOCAL_HA_IP', label: 'Local HA IP', description: 'Virtual IP used by keepalived on gateway-capable nodes.', lockedKey: true, lockedScope: 'global' },
+  { key: 'LOCAL_HA_IP', label: 'Local HA IP', description: 'HTTP virtual IP used by keepalived on the gateway.', lockedKey: true, lockedScope: 'global' },
+  { key: 'DNS_HA_IP', label: 'DNS HA IP', description: 'Separate DNS virtual IP, elected by local DNS readiness independently of the gateway.', lockedKey: true, lockedScope: 'global' },
   { key: 'CADDY_DNS_PROVIDER', label: 'DNS provider', description: 'Caddy DNS provider module name, for example cloudflare.', lockedKey: true, lockedScope: 'global' },
   { key: 'CADDY_ACME_EMAIL', label: 'ACME email', description: 'Email address for certificate registration and recovery.', lockedKey: true, lockedScope: 'global' },
   { key: 'CADDY_ACME_CA', label: 'ACME CA', description: 'Optional ACME directory URL, useful for staging certificates.', lockedKey: true, lockedScope: 'global' },

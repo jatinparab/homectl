@@ -183,7 +183,7 @@ Agent environment variables:
 | `HOMECTL_AGENT_NAME` | No | Optional initial agent identity seed. Prefer a stable compose `hostname:` and manage later overrides from the manager UI. |
 | `HOMECTL_RESTIC_USE_SUDO` | No | Run restic through `sudo` on the agent host when required. |
 
-Shared runtime config such as `HOMECTL_LOCAL_HA_IP`, `CADDY_ACME_EMAIL`,
+Shared runtime config such as `HOMECTL_LOCAL_HA_IP`, `DNS_HA_IP`, `CADDY_ACME_EMAIL`,
 `CADDY_DNS_PROVIDER`, `CADDY_DNS_TOKEN_ENV`, `CF_DNS_API_TOKEN`,
 `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`,
 `TECHNITIUM_ADMIN_PASSWORD`, `TECHNITIUM_CLUSTER_DOMAIN`, and
@@ -210,6 +210,36 @@ the Technitium primary: role changes first attempt a graceful promotion, then
 force-promote after two minutes if the former primary is unavailable. Returning
 former primaries are reset and rejoined as secondaries. Agent-side TCP proxies
 carry Technitium admin and cluster traffic over Homectl's WireGuard mesh.
+
+### Dedicated DNS virtual IP
+
+Set shared `DNS_HA_IP` to a reserved, unused LAN IPv4 address (for example
+`192.168.50.251`), distinct from the HTTP/gateway `LOCAL_HA_IP` (for example
+`192.168.50.250`). Remove conflicting DHCP reservations and exclude both VIPs from
+DHCP allocation before advertising them. Leaving `DNS_HA_IP` empty disables
+this election and preserves legacy behavior.
+
+`homectl-dns-keepalived` uses an independent VRRP instance (ID 45; HTTP uses 44).
+It probes the agent's host-loopback `/dns-ready` endpoint. Eligibility requires
+healthy, running Technitium and successful authoritative cluster SOA queries on
+**both UDP and TCP** through the configured `TECHNITIUM_NODE_IP:53`. These checks
+require neither internet access nor a reachable manager. A healthy secondary can
+own the DNS VIP without becoming gateway or cluster primary. Ownership is sticky
+(`nopreempt`); recovering nodes do not steal it back. With DNS HA configured,
+gateway selection depends on Caddy health, not temporary DNS backup state.
+
+Before a DNS backup stops the resolver, the agent withdraws eligibility and
+waits up to 30 seconds for local VIP removal and three consecutive successful
+UDP/TCP checks through the replacement VIP. Without a working replacement, it
+leaves DNS running and postpones backup retries for five minutes. An unexpected
+failure instead incurs VRRP detection/election delay (roughly a few seconds),
+so clients should retry DNS queries. VRRP requires inter-node LAN connectivity;
+a network partition can produce duplicate owners and is not a quorum guarantee.
+
+Deploy and verify VIP ownership, local/public UDP/TCP resolution, and failover
+before pointing router DHCP/system DNS at the DNS VIP. Arm an independent,
+persistent router/network/DNS rollback watchdog before router changes; an agent
+session cannot provide recovery if the change disconnects it.
 
 ## App Repository Layout
 

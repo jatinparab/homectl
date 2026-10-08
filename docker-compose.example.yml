@@ -22,7 +22,8 @@ services:
       # Shared node config seed values.
       # These are stored encrypted by the manager and synced to agents in memory.
       # After first startup, edit them from the node settings dialog in the web UI.
-      HOMECTL_LOCAL_HA_IP: 192.168.50.250
+      HOMECTL_LOCAL_HA_IP: 192.168.50.250 # HTTP/gateway VIP
+      # DNS_HA_IP: 192.168.50.251 # optional separate, reserved DNS VIP
       CADDY_ACME_EMAIL: you@example.com
       CADDY_DNS_PROVIDER: cloudflare
       CADDY_DNS_TOKEN_ENV: CF_DNS_API_TOKEN

@@ -516,6 +516,27 @@ func TestResolveGateway_PrefersHealthyDNSCandidate(t *testing.T) {
 	}
 }
 
+func TestResolveGateway_DNSBackupDoesNotMoveGatewayWithDedicatedVIP(t *testing.T) {
+	t.Setenv(common.ConfigKeyDNSHAIP, "192.168.50.251")
+	mgr, err := NewManager(t.TempDir(), 1338)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop()
+	mgr.leaseManager.Heartbeat("node1", "10.0.0.1", "", []common.AppReport{
+		healthyReport(common.GatewayProxyAppID),
+		{AppID: common.DNSAppID, ObservedState: common.ObservedStopped, Phase: common.PhaseBackingUp},
+	}, common.NodeMetrics{})
+	mgr.leaseManager.Heartbeat("node2", "10.0.0.2", "", []common.AppReport{
+		healthyReport(common.GatewayProxyAppID), healthyReport(common.DNSAppID),
+	}, common.NodeMetrics{})
+	mgr.gatewayNode = "node1"
+	mgr.resolveGateway()
+	if mgr.gatewayNode != "node1" {
+		t.Fatalf("DNS maintenance changed gateway to %s", mgr.gatewayNode)
+	}
+}
+
 func TestResolveGateway_KeepsCurrentPreferredCandidate(t *testing.T) {
 	mgr, err := NewManager(t.TempDir(), 1338)
 	if err != nil {

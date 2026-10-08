@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jatinparab/homectl/buildinfo"
@@ -90,11 +91,13 @@ type Agent struct {
 	readyServer         *ReadyServer
 
 	// Gateway state (set by manager)
-	isGateway   bool
-	gatewayNode string
-	gatewayIP   string
-	isGatewayMu sync.RWMutex
-	technitium  *technitium.Controller
+	isGateway        bool
+	gatewayNode      string
+	gatewayIP        string
+	isGatewayMu      sync.RWMutex
+	technitium       *technitium.Controller
+	dnsDraining      atomic.Bool  // withdraw DNS VIP before a planned backup stop
+	dnsBackupRetryAt atomic.Int64 // throttle a still-pending manager backup after a failed handoff
 
 	// Connection state
 	connected   bool
@@ -681,6 +684,7 @@ func (a *Agent) applyRuntimeConfig() {
 	if haIP := a.configValue(common.ConfigKeyLocalHAIP); haIP != "" {
 		a.ensureKeepalived(haIP)
 	}
+	a.ensureDNSKeepalived()
 	caddyEnv := a.caddyRuntimeEnv()
 	fingerprint := caddyEnvFingerprint(caddyEnv)
 	if IsCaddyRunning() && fingerprint != a.caddyEnvFingerprint {
@@ -1015,6 +1019,9 @@ func (a *Agent) reconcileApp(app common.DesiredApp, rt *AppRuntime) Action {
 
 	// Running + healthy: check if manager assigned BackupNow
 	if app.BackupEnabled && app.BackupNow && rt.RunningStatus() == common.RunningStatusRunning && rt.GetHealth() == common.HealthHealthy && !rt.IsPostProcessing() {
+		if app.AppID == common.DNSAppID && time.Now().UnixNano() < a.dnsBackupRetryAt.Load() {
+			return ActionNone()
+		}
 		agentLog.Info("Reconcile: manager requested backup, transitioning to BackupStopping", "app", app.AppID)
 		rt.SetPhase(common.PhaseBackupStopping)
 		return ActionStop(app.AppID)

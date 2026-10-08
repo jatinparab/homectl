@@ -147,6 +147,11 @@ func (m *Manager) gatewayCandidateRank(agentName string) int {
 	if !m.isGatewayProxyHealthy(agentName) {
 		return 0
 	}
+	// A dedicated DNS VIP elects its own healthy owner. DNS maintenance must
+	// not change the HTTP gateway, cluster primary, or backup source.
+	if m.configValue(common.ConfigKeyDNSHAIP) != "" {
+		return 1
+	}
 	if m.isAgentAppHealthy(agentName, common.DNSAppID) {
 		return 2
 	}
