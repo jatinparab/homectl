@@ -10,16 +10,16 @@ for host in "$@"; do
 	echo "==> Restarting agent on $host..."
 	if ! ssh "${USER}@${host}" "set -e
 		if docker compose version >/dev/null 2>&1; then
-			compose='docker compose'
+			compose() { docker compose \"\$@\"; }
 		elif command -v docker-compose >/dev/null 2>&1; then
-			compose='docker-compose'
+			compose() { docker-compose \"\$@\"; }
 		else
 			echo 'ERROR: Docker Compose is unavailable' >&2
 			exit 1
 		fi
 		cd '${COMPOSE_DIR}'
-		HOMECTL_IMAGE=homectl/agent:local \$compose down
-		HOMECTL_IMAGE=homectl/agent:local \$compose up -d"; then
+		HOMECTL_IMAGE=homectl/agent:local compose down
+		HOMECTL_IMAGE=homectl/agent:local compose up -d"; then
 		echo "ERROR: agent deployment failed on $host" >&2
 		failed=1
 	fi
