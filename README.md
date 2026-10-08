@@ -231,7 +231,9 @@ gateway selection depends on Caddy health, not temporary DNS backup state.
 Before a DNS backup stops the resolver, the agent withdraws eligibility and
 waits up to 30 seconds for local VIP removal and three consecutive successful
 UDP/TCP checks through the replacement VIP. Without a working replacement, it
-leaves DNS running and postpones backup retries for five minutes. An unexpected
+leaves DNS running and postpones backup retries for five minutes. Completed DNS
+backups suppress stale pending requests for one minute; failed uploads retain
+longer backup backoff. An unexpected
 failure instead incurs VRRP detection/election delay (roughly a few seconds),
 so clients should retry DNS queries. VRRP requires inter-node LAN connectivity;
 a network partition can produce duplicate owners and is not a quorum guarantee.

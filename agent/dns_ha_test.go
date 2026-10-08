@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,6 +78,50 @@ func TestDNSHandoffRefusesNoReplacement(t *testing.T) {
 	err := waitDNSHandoff(ctx, time.Millisecond, func(context.Context) (bool, error) { return false, nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+type dnsBackupProbe struct {
+	Restic
+	backupErr error
+}
+
+func (p dnsBackupProbe) Backup(context.Context, common.AppID, ProgressCallback, LogCallback) error {
+	return p.backupErr
+}
+
+func (dnsBackupProbe) ListSnapshots(context.Context, common.AppID) ([]Snapshot, error) {
+	return nil, nil
+}
+
+func TestDNSBackupCompletionDoesNotReplayPendingRequest(t *testing.T) {
+	for _, backupErr := range []error{nil, errors.New("upload failed")} {
+		a := dnsTestAgent()
+		a.stateDir = t.TempDir()
+		a.backupCond = sync.NewCond(&a.backupMu)
+		a.snapshotCache = make(map[common.AppID]*SnapshotCache)
+		a.snapshotCancelFns = make(map[common.AppID]context.CancelFunc)
+		probe := dnsBackupProbe{backupErr: backupErr}
+		a.restic = probe
+		rt := a.runtime[common.DNSAppID]
+		err := (&Executor{agent: a, restic: probe, ctx: context.Background()}).executeBackup(common.DNSAppID, rt)
+		if !errors.Is(err, backupErr) {
+			t.Fatalf("backup error = %v, want %v", err, backupErr)
+		}
+		if a.dnsBackupRetryAt.Load() < time.Now().Add(50*time.Second).UnixNano() {
+			t.Fatal("completed backup has no replay cooldown")
+		}
+		if backupErr != nil && a.dnsBackupRetryAt.Load() < rt.Backup.BackupDefer.UnixNano() {
+			t.Fatal("upload failure backoff not preserved")
+		}
+		rt.SetPhase(common.PhaseRunning) // resolver has recovered
+		app := common.DesiredApp{AppID: common.DNSAppID, DesiredState: common.DesiredRunning, BackupEnabled: true, BackupNow: true}
+		if action := a.reconcileApp(app, rt); action.Type != ActionTypeNone {
+			t.Fatalf("completed backup repeated pending request: %v", action)
+		}
+		if !a.dnsEligible() {
+			t.Fatal("cooldown must leave recovered DNS eligible")
+		}
 	}
 }
 

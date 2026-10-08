@@ -569,6 +569,16 @@ func (e *Executor) executeBackup(appID common.AppID, rt *AppRuntime) error {
 		rt.Backup.BackupDefer = time.Time{} // Reset defer on success
 		rt.Backup.JustBackedUp = true
 	}
+	if appID == common.DNSAppID {
+		// A completed assignment can remain BackupNow until the manager's
+		// next reconciliation. Do not immediately stop the recovered resolver
+		// again for that stale request; preserve longer failure backoff too.
+		retryAt := time.Now().Add(time.Minute)
+		if rt.Backup.BackupDefer.After(retryAt) {
+			retryAt = rt.Backup.BackupDefer
+		}
+		e.agent.dnsBackupRetryAt.Store(retryAt.UnixNano())
+	}
 	rt.Backup.InProgress = false
 	e.agent.runtimeMu.Unlock()
 
