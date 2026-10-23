@@ -108,6 +108,7 @@ type Manager struct {
 	agentLinks  map[string]*agentLinkPeer // by agent name
 	tcpListener net.Listener
 
+	wireGuardMu   sync.Mutex // serialize peer allocation, persistence and kernel reconciliation
 	wgCleanupStop chan struct{}
 	startedAt     time.Time
 

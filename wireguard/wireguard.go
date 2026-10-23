@@ -131,9 +131,11 @@ func EnsureAgent(cfg AgentConfig) error {
 	if ip := net.ParseIP(strings.TrimSpace(cfg.EndpointIP)); ip == nil || ip.To4() == nil {
 		return fmt.Errorf("invalid manager endpoint IP %q", cfg.EndpointIP)
 	}
-	if net.ParseIP(strings.TrimSpace(cfg.Address)) == nil {
-		return fmt.Errorf("invalid agent WireGuard address %q", cfg.Address)
+	address := net.ParseIP(strings.TrimSpace(cfg.Address))
+	if address == nil || address.To4() == nil {
+		return fmt.Errorf("invalid agent WireGuard IPv4 address %q", cfg.Address)
 	}
+	cfg.Address = address.To4().String()
 	if err := os.MkdirAll(cfg.ConfigDir, 0700); err != nil {
 		return err
 	}
@@ -146,7 +148,41 @@ func EnsureAgent(cfg AgentConfig) error {
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", DefaultNetwork)
 	fmt.Fprintf(&b, "Endpoint = %s:%d\n", strings.TrimSpace(cfg.EndpointIP), cfg.EndpointPort)
 	fmt.Fprintf(&b, "PersistentKeepalive = 25\n")
-	return applyConfig(cfg.ConfigDir, b.String())
+	if err := applyConfig(cfg.ConfigDir, b.String()); err != nil {
+		return err
+	}
+	return syncAgentAddress(strings.TrimSpace(cfg.Address))
+}
+
+// wg syncconf deliberately ignores wg-quick's Address directive. A rejoining
+// agent can receive a different reservation while wg0 still exists, so update
+// the kernel address as well as the config and reported identity.
+func syncAgentAddress(address string) error {
+	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", InterfaceName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inspect agent WireGuard address: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	want := address + "/24"
+	var addresses []string
+	fields := strings.Fields(string(out))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "inet" {
+			addresses = append(addresses, fields[i+1])
+		}
+	}
+	if len(addresses) == 1 && addresses[0] == want {
+		return nil
+	}
+	// wg0 belongs exclusively to Homectl. Flush stale IPv4 addresses before
+	// adding the assignment; deleting a primary after adding a secondary can
+	// otherwise cause Linux to remove both addresses in the same subnet.
+	if out, err := exec.Command("ip", "-4", "addr", "flush", "dev", InterfaceName).CombinedOutput(); err != nil {
+		return fmt.Errorf("clear stale agent WireGuard address: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("ip", "-4", "addr", "add", want, "dev", InterfaceName).CombinedOutput(); err != nil {
+		return fmt.Errorf("assign agent WireGuard address: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func IsActive() bool {

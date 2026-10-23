@@ -2,10 +2,12 @@ package manager
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,9 +102,11 @@ func (m *Manager) handleAgentJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) JoinAgent(name, publicKey string) (common.AgentJoinResponse, error) {
-	if len(publicKey) != 44 {
-		return common.AgentJoinResponse{}, fmt.Errorf("invalid wireguard public key length")
+	if err := validateWireGuardPeer(name, publicKey); err != nil {
+		return common.AgentJoinResponse{}, err
 	}
+	m.wireGuardMu.Lock()
+	defer m.wireGuardMu.Unlock()
 	privateKey, managerPublicKey, err := wireguard.EnsureKeyPair(m.wireGuardDir())
 	if err != nil {
 		return common.AgentJoinResponse{}, err
@@ -116,7 +120,10 @@ func (m *Manager) JoinAgent(name, publicKey string) (common.AgentJoinResponse, e
 	if err != nil {
 		return common.AgentJoinResponse{}, err
 	}
-	peers, peer := upsertWireGuardPeer(peers, name, publicKey)
+	peers, peer, err := upsertWireGuardPeer(peers, name, publicKey)
+	if err != nil {
+		return common.AgentJoinResponse{}, err
+	}
 	if err := m.saveWireGuardPeers(peers); err != nil {
 		return common.AgentJoinResponse{}, err
 	}
@@ -136,6 +143,8 @@ func (m *Manager) JoinAgent(name, publicKey string) (common.AgentJoinResponse, e
 }
 
 func (m *Manager) EnsureWireGuard() error {
+	m.wireGuardMu.Lock()
+	defer m.wireGuardMu.Unlock()
 	privateKey, _, err := wireguard.EnsureKeyPair(m.wireGuardDir())
 	if err != nil {
 		return err
@@ -143,6 +152,16 @@ func (m *Manager) EnsureWireGuard() error {
 	peers, err := m.loadWireGuardPeers()
 	if err != nil {
 		return err
+	}
+	peers, repaired, err := normalizeWireGuardPeers(peers)
+	if err != nil {
+		return err
+	}
+	if repaired {
+		if err := m.saveWireGuardPeers(peers); err != nil {
+			return err
+		}
+		managerLog.Warn("Repaired conflicting or invalid WireGuard peer addresses")
 	}
 	return m.reconcileWireGuard(privateKey, peers)
 }
@@ -189,29 +208,118 @@ func (m *Manager) saveWireGuardPeers(peers []wireGuardPeerState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.wireGuardPeersPath(), data, 0600)
+	// Readers such as public-route generation do not take wireGuardMu. Rename
+	// a complete, private file rather than exposing truncated/partial JSON.
+	file, err := os.CreateTemp(m.wireGuardDir(), ".wireguard-peers-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), m.wireGuardPeersPath())
 }
 
-func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]wireGuardPeerState, wireGuardPeerState) {
+var wireGuardNetwork = netip.MustParsePrefix(wireguard.DefaultNetwork)
+
+func validWireGuardPeerAddress(address string) bool {
+	ip, err := netip.ParseAddr(address)
+	return err == nil && ip.Is4() && wireGuardNetwork.Contains(ip) &&
+		ip != wireGuardNetwork.Addr() && address != wireguard.ManagerAddress && ip.As4()[3] != 255
+}
+
+func nextWireGuardPeerAddress(used map[string]bool) (string, error) {
+	// The /24's network, manager (.1), and broadcast addresses are reserved.
+	for ip := wireGuardNetwork.Addr().Next().Next(); wireGuardNetwork.Contains(ip) && ip.As4()[3] != 255; ip = ip.Next() {
+		if !used[ip.String()] {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("WireGuard address pool exhausted")
+}
+
+// Preserve all unique valid reservations before filling any gaps. This avoids
+// moving a healthy peer just because an earlier invalid/duplicate entry needs
+// repair. Alphabetical ordering makes legacy collision repair deterministic.
+func normalizeWireGuardPeers(peers []wireGuardPeerState) ([]wireGuardPeerState, bool, error) {
+	peers = append([]wireGuardPeerState(nil), peers...)
+	sort.Slice(peers, func(i, j int) bool { return peers[i].Name < peers[j].Name })
+	used := make(map[string]bool)
+	names := make(map[string]bool)
+	var repair []int
+	for i, peer := range peers {
+		if peer.Name == "" || names[peer.Name] {
+			return nil, false, fmt.Errorf("empty or duplicate WireGuard peer name")
+		}
+		names[peer.Name] = true
+		if !validWireGuardPeerAddress(peer.Address) || used[peer.Address] {
+			repair = append(repair, i)
+			continue
+		}
+		used[peer.Address] = true
+	}
+	for _, i := range repair {
+		address, err := nextWireGuardPeerAddress(used)
+		if err != nil {
+			return nil, false, err
+		}
+		peers[i].Address = address
+		used[address] = true
+	}
+	return peers, len(repair) != 0, nil
+}
+
+func validateWireGuardPeer(name, publicKey string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("WireGuard peer name is required")
+	}
+	key, err := base64.StdEncoding.DecodeString(publicKey)
+	if err != nil || len(key) != 32 || len(publicKey) != 44 {
+		return fmt.Errorf("invalid WireGuard public key")
+	}
+	return nil
+}
+
+func upsertWireGuardPeer(peers []wireGuardPeerState, name, publicKey string) ([]wireGuardPeerState, wireGuardPeerState, error) {
+	if err := validateWireGuardPeer(name, publicKey); err != nil {
+		return nil, wireGuardPeerState{}, err
+	}
+	for _, peer := range peers {
+		if peer.Name != name && peer.PublicKey == publicKey {
+			return nil, wireGuardPeerState{}, fmt.Errorf("WireGuard public key already belongs to another agent")
+		}
+	}
+	peers, _, err := normalizeWireGuardPeers(peers)
+	if err != nil {
+		return nil, wireGuardPeerState{}, err
+	}
+	used := make(map[string]bool, len(peers))
 	for i := range peers {
 		if peers[i].Name == name {
 			peers[i].PublicKey = publicKey
-			return peers, peers[i]
+			return peers, peers[i], nil
 		}
+		used[peers[i].Address] = true
 	}
-	if len(publicKey) != 44 {
-		return peers, wireGuardPeerState{}
+	address, err := nextWireGuardPeerAddress(used)
+	if err != nil {
+		return nil, wireGuardPeerState{}, err
 	}
-	peer := wireGuardPeerState{
-		Name:      name,
-		PublicKey: publicKey,
-		Address:   fmt.Sprintf("10.44.0.%d", len(peers)+2),
-	}
-	peers = append(peers, peer)
-	return peers, peer
+	peer := wireGuardPeerState{Name: name, PublicKey: publicKey, Address: address}
+	return append(peers, peer), peer, nil
 }
 
 func (m *Manager) CleanupStaleWireGuardPeers() error {
+	m.wireGuardMu.Lock()
+	defer m.wireGuardMu.Unlock()
 	peers, err := m.loadWireGuardPeers()
 	if err != nil {
 		return err

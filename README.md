@@ -139,6 +139,14 @@ and `ADMIN_PASSWORD`. Agents join through that same public origin at `/api/join`
 authenticated by `HOMECTL_JOIN_TOKEN`. After join, steady-state control traffic
 uses `http://10.44.0.1:1338` over WireGuard.
 
+The manager reserves unique overlay addresses from `10.44.0.2` through
+`10.44.0.254`, preserving each named agent's reservation across key rotation and
+rejoins. Address allocation checks existing reservations rather than peer count,
+so removing stale peers cannot create a collision. Startup automatically repairs
+legacy duplicate/invalid reservations while retaining other valid addresses.
+Disconnected agents re-bootstrap and update the live `wg0` address if reassigned;
+LAN addresses and DNS/HTTP virtual IPs are independent of this overlay.
+
 The manager image uses stock Caddy and issues certificates for public manager
 hosts through normal ACME HTTP/TLS-ALPN challenges. `CADDY_DNS_PROVIDER` and
 `CADDY_DNS_TOKEN_ENV` control the Caddyfile generated for gateway agents. Agents
