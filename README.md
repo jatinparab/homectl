@@ -211,9 +211,20 @@ The cluster domain defaults to
 Every agent publishes DNS on TCP/UDP 53 and reports Technitium as a synthetic
 global app. Registry images are downloaded by the agent with `skopeo` and
 imported through the Docker socket before Compose starts with daemon-side pulls
-disabled. Consequently, recovery does not depend on the host Docker daemon's
-DNS. The initial Homectl agent image must still be locally available or pulled
-successfully once; no container can bootstrap its own missing image. Only the current gateway is backed up. The gateway is also kept as
+disabled. Normal starts, health restarts, and backup recovery reuse local
+images, including `:latest`; only missing image references are downloaded.
+First-time downloads stage original OCI layers under `/config/image-cache`,
+retaining completed layers across failed attempts and agent restarts. Layers
+are then converted locally to gzip before Docker import, including OCI/zstd
+images. Staging is removed after a successful import; interrupted partial blobs
+are discarded on retry without removing completed layers.
+A restart is not an image update: to deploy a new version, change the configured
+tag/digest in the app repository, sync, and restart through the manager API.
+Consequently, recovery does not
+depend on the host Docker daemon's DNS. The initial Homectl agent image must
+still be locally available or pulled successfully once; no container can
+bootstrap its own missing image. Only the current gateway is backed up. The
+gateway is also kept as
 the Technitium primary: role changes first attempt a graceful promotion, then
 force-promote after two minutes if the former primary is unavailable. Returning
 former primaries are reset and rejoined as secondaries. Agent-side TCP proxies
@@ -291,6 +302,21 @@ See:
 - [App Repository Structure](./docs/repo-structure.md)
 - [Homectl Config](./docs/homectl-config.md)
 - [Self-Hosted Access](./docs/self-hosted-access.md)
+
+### Manager restart recovery
+
+The manager persists automatic and manual singleton placements atomically in
+`/config/state/placements.json`. Restarting the manager restores those placements
+without turning automatic assignments into manual pins. Older installations or
+invalid snapshots recover ownership from running and backup/restore reports.
+
+For the first three minutes after startup, automatic placement changes pause
+while agents reconnect. If ownership is still unknown, desired-state requests
+return a retryable 503 rather than a partial list that would stop existing apps.
+After this bounded window, unassigned apps and missing owners are handled normally;
+regular dead-agent failover retains its three-minute heartbeat grace period.
+Only the assigned node can update a singleton app’s observed state, and automatic
+balancing requires an explicitly stopped app, not an unknown startup report.
 
 ## Development
 

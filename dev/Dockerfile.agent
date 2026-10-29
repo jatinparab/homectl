@@ -1,6 +1,6 @@
 # Copy Go toolchain from the official image into the dind base so we get a
 # known version without downloading it at runtime.
-FROM golang:1.25-alpine AS gobase
+FROM golang:1.27-alpine AS gobase
 
 FROM docker:27-dind
 RUN apk add --no-cache docker-compose git wireguard-tools caddy

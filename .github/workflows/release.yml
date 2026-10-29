@@ -100,7 +100,7 @@ jobs:
           context: .
           file: ./Dockerfile.manager
           build-args: |
-            CROWDSEC_VERSION=v1.7.8
+            CROWDSEC_VERSION=v1.8.2
             HOMECTL_VERSION=${{ steps.next.outputs.value }}
             HOMECTL_COMMIT=${{ github.sha }}
             HOMECTL_BUILD_DATE=${{ github.event.head_commit.timestamp }}

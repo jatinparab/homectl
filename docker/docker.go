@@ -724,7 +724,8 @@ func (d *Docker) streamCommand(cmd *exec.Cmd, onLog func(string)) error {
 	return nil
 }
 
-// pullTimeout is the maximum duration allowed for registry image preloading.
+// pullTimeout bounds each registry image preload (large multi-service apps may
+// need longer overall). Cache fallback gets its own short deadline.
 const pullTimeout = 15 * time.Minute
 
 type renderedCompose struct {
@@ -743,19 +744,24 @@ type renderedComposeBuild struct {
 	Args             map[string]any `json:"args"`
 }
 
-// Pull preloads all registry images in the agent process. Skopeo resolves and
-// downloads registry content using the agent container's DNS, then imports the
-// images through the Docker socket. Dockerd itself never needs registry DNS.
+// Pull refreshes registry images explicitly. Normal starts use cached images
+// instead so backup recovery and health restarts do not depend on a registry.
 func (d *Docker) Pull(appID string, onLog func(string)) error {
+	return d.preloadImages(appID, onLog, true)
+}
+
+// preloadImages uses the agent's DNS and imports images through the Docker
+// socket. Dockerd itself never needs registry DNS.
+func (d *Docker) preloadImages(appID string, onLog func(string), refresh bool) error {
 	path := filepath.Join(d.rootDir, appID, "docker-compose.yml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("docker compose file not found: %s", path)
 	}
 
 	ctx, cancel := context.WithTimeout(d.ctx, pullTimeout)
-	defer cancel()
 	cmd := d.ComposeCommandContext(ctx, appID, "config", "--format", "json")
 	output, err := cmd.Output()
+	cancel()
 	if err != nil {
 		return fmt.Errorf("render docker compose config: %w", err)
 	}
@@ -770,6 +776,14 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 	}
 	sort.Strings(serviceNames)
 
+	loadImage := func(image string, refresh bool) error {
+		ctx, cancel := context.WithTimeout(d.ctx, pullTimeout)
+		defer cancel()
+		if refresh {
+			return d.imageLoader.Refresh(ctx, image, onLog)
+		}
+		return d.imageLoader.Ensure(ctx, image, onLog)
+	}
 	seen := make(map[string]bool)
 	for _, name := range serviceNames {
 		service := rendered.Services[name]
@@ -780,7 +794,7 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 				if onLog != nil {
 					onLog("preloading image " + image)
 				}
-				if err := d.imageLoader.Refresh(ctx, image, onLog); err != nil {
+				if err := loadImage(image, refresh); err != nil {
 					return err
 				}
 			}
@@ -798,22 +812,20 @@ func (d *Docker) Pull(appID string, onLog func(string)) error {
 				if onLog != nil {
 					onLog("preloading build base image " + image)
 				}
-				if err := d.imageLoader.Ensure(ctx, image, onLog); err != nil {
+				if err := loadImage(image, false); err != nil {
 					return err
 				}
 			}
 		}
 	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("image preload timed out after %s", pullTimeout)
-	}
 	return nil
 }
 
-// StartWithLogs preloads images in the agent, then starts Compose with
-// daemon-side pulls disabled. Uses --build for local build contexts.
+// StartWithLogs reuses local images, downloading only missing references, then
+// starts Compose with daemon-side pulls disabled (including :latest and services
+// with pull_policy: always). Uses --build for local build contexts.
 func (d *Docker) StartWithLogs(appID string, onLog func(string)) error {
-	if err := d.Pull(appID, onLog); err != nil {
+	if err := d.preloadImages(appID, onLog, false); err != nil {
 		return err
 	}
 

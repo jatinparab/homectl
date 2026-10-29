@@ -216,16 +216,7 @@ func (m *Manager) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.leaseManager.Heartbeat(req.Name, req.IP, req.Version, req.Reports, req.Metrics)
-
-	// Adopt running apps that have no assignment (e.g. after manager restart)
-	m.appRegistry.AdoptRunningApps(req.Name, req.Reports)
-
-	// Update app registry with reported state
-	now := time.Now()
-	for _, report := range req.Reports {
-		m.appRegistry.UpdateFromReport(report, req.Name, now)
-	}
+	m.applyHeartbeat(req)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

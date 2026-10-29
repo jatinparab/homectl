@@ -20,7 +20,7 @@ import (
 const (
 	ContainerName        = "homectl-technitium"
 	LegacyContainerName  = "homectl-technitium-technitium-1"
-	DefaultImage         = "technitium/dns-server:15.4.0"
+	DefaultImage         = "technitium/dns-server:15.6.2"
 	DefaultClusterDomain = "cluster.home.arpa"
 	SharedNetwork        = "homectl-docker-network"
 	ConfigHashLabel      = "com.homectl.technitium.config-hash"

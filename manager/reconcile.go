@@ -58,16 +58,19 @@ func (m *Manager) reconcileOnce(now time.Time) {
 	maxRAMPercent := m.maxRAMPercent()
 
 	var manualAssignmentChanged bool
-	m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
-		before := countManuallyAssigned(apps)
-		handleDeadAgents(apps, alive, lastSeenMap, now)
-		manualAssignmentChanged = countManuallyAssigned(apps) != before
-		assignUnassignedAppsWithMetrics(apps, alive, excludedNodes, metrics, maxRAMPercent)
-		handleMigrationsWithMetrics(apps, alive, now, excludedNodes, metrics, maxRAMPercent)
-		rebalanceWithMetrics(apps, alive, protectedApps, excludedNodes, metrics, maxRAMPercent)
-	})
-	if manualAssignmentChanged {
-		m.saveManualAssignments()
+	if !m.recoveringPlacements(now) {
+		m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
+			before := countManuallyAssigned(apps)
+			handleDeadAgents(apps, alive, lastSeenMap, now)
+			manualAssignmentChanged = countManuallyAssigned(apps) != before
+			assignUnassignedAppsWithMetrics(apps, alive, excludedNodes, metrics, maxRAMPercent)
+			handleMigrationsWithMetrics(apps, alive, now, excludedNodes, metrics, maxRAMPercent)
+			rebalanceWithMetrics(apps, alive, protectedApps, excludedNodes, metrics, maxRAMPercent)
+		})
+		if manualAssignmentChanged {
+			m.saveManualAssignments()
+		}
+		m.savePlacements()
 	}
 
 	m.resolveGateway()
@@ -483,7 +486,7 @@ func rebalanceApps(apps map[common.AppID]*App, alive map[string]bool, protectedA
 			}
 			if !force {
 				// Automatic rebalance: skip running apps and apps with active connections
-				if app.ObservedState == common.ObservedRunning {
+				if app.ObservedState != common.ObservedStopped {
 					continue
 				}
 				if protectedApps[app.ID] {
@@ -535,6 +538,7 @@ func (m *Manager) ForceRebalance() {
 		forceRebalanceWithMetrics(apps, alive, excludedNodes, metrics, m.maxRAMPercent())
 	})
 
+	m.savePlacements()
 	reconcileLog.Info("Force rebalance completed")
 }
 

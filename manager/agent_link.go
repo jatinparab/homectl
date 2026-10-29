@@ -253,6 +253,9 @@ func (m *Manager) applyHeartbeat(req HeartbeatRequest) {
 	for _, report := range req.Reports {
 		m.appRegistry.UpdateFromReport(report, req.Name, now)
 	}
+	if m.appsDiscovered.Load() {
+		m.savePlacements()
+	}
 }
 
 type rawResponse struct {

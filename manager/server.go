@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jatinparab/homectl/common"
 )
@@ -269,12 +270,24 @@ func (m *Manager) handleDesiredApps(w http.ResponseWriter, r *http.Request, agen
 		return
 	}
 
+	if !m.appsDiscovered.Load() {
+		http.Error(w, "Waiting for app discovery", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Don't send desired apps until the agent has heartbeated at least once.
 	// The first heartbeat triggers AdoptRunningApps which preserves existing
 	// placement. Without this gate the manager could reassign apps before
 	// learning what the agent is already running.
 	if _, ok := m.leaseManager.GetAgent(agentID); !ok {
 		http.Error(w, "Waiting for first heartbeat", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Empty initial heartbeats are not evidence that other nodes have no
+	// workloads. A partial desired set would tell them to tear down apps.
+	if m.recoveringPlacements(time.Now()) && m.hasUnplacedRunningApps() {
+		http.Error(w, "Recovering app placements from agent reports", http.StatusServiceUnavailable)
 		return
 	}
 

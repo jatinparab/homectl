@@ -769,6 +769,7 @@ func (m *Manager) handleAPIAppReassign(w http.ResponseWriter, r *http.Request) {
 		}
 
 		m.saveManualAssignments()
+		m.savePlacements()
 		apiLog.Info("App manually reassigned", "app", appID, "node", node)
 
 	case http.MethodDelete:
@@ -778,6 +779,7 @@ func (m *Manager) handleAPIAppReassign(w http.ResponseWriter, r *http.Request) {
 		}
 
 		m.saveManualAssignments()
+		m.savePlacements()
 		apiLog.Info("Manual assignment cleared", "app", appID)
 
 	default:

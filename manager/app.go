@@ -139,6 +139,12 @@ func (r *AppRegistry) UpdateFromReport(report common.AppReport, agentName string
 		return
 	}
 
+	// Old nodes keep reporting stopped/unknown apps after migration. Only
+	// the owner can update singleton state; otherwise a stale report can
+	// make a healthy workload look stopped and eligible for rebalancing.
+	if !app.IsGlobal && (app.AssignedAgent == nil || *app.AssignedAgent != agentName) {
+		return
+	}
 	app.ObservedState = report.ObservedState
 	app.Health = report.Health
 	app.RestartCount = report.RestartCount
@@ -150,8 +156,8 @@ func (r *AppRegistry) UpdateFromReport(report common.AppReport, agentName string
 	app.LastSeen = now
 }
 
-// AdoptRunningApps claims assignment for non-global apps that an agent reports as
-// running but that have no AssignedAgent. This preserves existing placement after
+// AdoptRunningApps claims assignment for unassigned non-global workloads that
+// are running or temporarily stopped for backup/restore. This preserves existing placement after
 // a manager restart instead of redistributing from scratch.
 func (r *AppRegistry) AdoptRunningApps(agentName string, reports []common.AppReport) {
 	r.mu.Lock()
@@ -168,7 +174,7 @@ func (r *AppRegistry) AdoptRunningApps(agentName string, reports []common.AppRep
 		if app.AssignedAgent != nil {
 			continue
 		}
-		if report.ObservedState != common.ObservedRunning {
+		if !reportOwnsWorkload(report) {
 			continue
 		}
 		agent := agentName

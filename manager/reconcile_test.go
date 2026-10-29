@@ -298,6 +298,9 @@ func TestRebalance_OverloadedToUnderloaded(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
+	for _, app := range apps {
+		app.ObservedState = common.ObservedStopped
+	}
 	rebalance(apps, alive, nil, nil)
 
 	// One app should have moved to node2
@@ -360,6 +363,9 @@ func TestRebalance_MaxOnePerCycle(t *testing.T) {
 	}
 	alive := map[string]bool{"node1": true, "node2": true}
 
+	for _, app := range apps {
+		app.ObservedState = common.ObservedStopped
+	}
 	rebalance(apps, alive, nil, nil)
 
 	node2Count := 0
@@ -486,6 +492,7 @@ func TestRebalanceWithMetricsMovesStoppedAppOffRAMConstrainedNode(t *testing.T) 
 		"node2": {MemoryTotal: 8 << 30, MemoryUsed: 2 << 30, MemoryPercent: 25},
 	}
 
+	apps["app1"].ObservedState = common.ObservedStopped
 	rebalanceWithMetrics(apps, alive, nil, nil, metrics, 80)
 
 	if apps["app1"].AssignedAgent == nil || *apps["app1"].AssignedAgent != "node2" {
@@ -623,7 +630,8 @@ func TestReconcileOnce_FullIntegration(t *testing.T) {
 		apps["app1"].AssignedAgent = &dead
 	})
 
-	// Run reconcile
+	// This test covers steady-state scheduling, not startup recovery.
+	mgr.placementRecoveryUntil = time.Time{}
 	mgr.reconcileOnce(time.Now())
 
 	// app1: dead-node is dead -> unassigned -> reassigned to least-loaded

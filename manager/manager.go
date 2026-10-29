@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jatinparab/homectl/buildinfo"
@@ -70,6 +71,14 @@ type Manager struct {
 	reconcileCancel context.CancelFunc
 	runtimeCtx      context.Context
 	runtimeOnce     sync.Once
+
+	placementSaveMu        sync.Mutex
+	lastPlacementData      []byte
+	restoredPlacements     map[string]appPlacement
+	hasPlacementSnapshot   bool
+	placementRecoveryUntil time.Time
+	appsDiscovered         atomic.Bool
+	discoveryMu            sync.Mutex
 
 	backupMu              sync.Mutex
 	backupAssignments     map[common.AppID]*BackupAssignment
@@ -135,10 +144,11 @@ func NewManagerWithConfig(cfg Config) (*Manager, error) {
 		stateDir = filepath.Join(cfg.RepoDir, ".homectl")
 	}
 	mgr := &Manager{
-		repoDir:      cfg.RepoDir,
-		stateDir:     stateDir,
-		port:         cfg.Port,
-		leaseManager: NewLeaseManager(cfg.Lease),
+		repoDir:                cfg.RepoDir,
+		stateDir:               stateDir,
+		port:                   cfg.Port,
+		placementRecoveryUntil: time.Now().Add(deadAgentGracePeriod),
+		leaseManager:           NewLeaseManager(cfg.Lease),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -183,6 +193,7 @@ func NewManagerWithConfig(cfg Config) (*Manager, error) {
 	mgr.store = store
 	mgr.auth = authSvc
 	mgr.agentConfig = agentConfigSvc
+	mgr.loadPlacements()
 	mgr.loadRepoState()
 	mgr.loadPruneState()
 	mgr.loadPublicRoutes()
@@ -212,11 +223,12 @@ func (m *Manager) StartRuntimeOnce(ctx context.Context) {
 		}
 		m.leaseManager.Start()
 		m.startWireGuardCleanup()
+		m.placementRecoveryUntil = time.Now().Add(deadAgentGracePeriod)
+		m.DiscoverApps()
 		if err := m.StartAgentTCPServer(); err != nil {
 			managerLog.Error("Failed to start agent TCP server", "err", err)
 			return
 		}
-		m.DiscoverApps()
 		m.StartReconcileLoop(ctx)
 		m.StartCrowdSecBootstrap(ctx)
 		m.StartPublicRouteLoop(ctx)
@@ -536,6 +548,8 @@ func (m *Manager) saveManualAssignments() {
 // Persisted state from the UI overrides defaults. The Register method is idempotent
 // so repeated calls are safe.
 func (m *Manager) DiscoverApps() {
+	m.discoveryMu.Lock()
+	defer m.discoveryMu.Unlock()
 	// Always register the built-in gateway proxy (caddy runs in-process on each agent).
 	m.appRegistry.Register(common.GatewayProxyAppID, common.DesiredRunning, true)
 
@@ -591,7 +605,18 @@ func (m *Manager) DiscoverApps() {
 		}
 		// If config loading failed, isGlobal defaults to false (safe default)
 
+		isNew := m.appRegistry.Get(appID) == nil
 		m.appRegistry.Register(appID, desiredState, isGlobal)
+		if isNew && !isGlobal {
+			if placement, ok := m.restoredPlacements[string(appID)]; ok {
+				m.appRegistry.WithLock(func(apps map[common.AppID]*App) {
+					app := apps[appID]
+					node := placement.Agent
+					app.AssignedAgent = &node
+					app.ManuallyAssigned = placement.Manual
+				})
+			}
+		}
 
 		// Apply restore-disabled state
 		if restoreDisabled[entry.Name()] {
@@ -604,7 +629,7 @@ func (m *Manager) DiscoverApps() {
 		}
 
 		// Restore manual assignment
-		if node, ok := manualAssignments[entry.Name()]; ok {
+		if node, ok := manualAssignments[entry.Name()]; ok && !m.hasPlacementSnapshot {
 			m.appRegistry.ReassignAgent(appID, node)
 		}
 
@@ -617,6 +642,8 @@ func (m *Manager) DiscoverApps() {
 	}
 	m.appRegistry.Register(common.DNSAppID, technitiumState, true)
 	count++
+	m.appsDiscovered.Store(true)
+	m.savePlacements()
 	managerLog.Info("App discovery complete", "count", count)
 }
 

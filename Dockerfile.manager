@@ -1,8 +1,8 @@
-ARG CROWDSEC_VERSION=v1.7.8
+ARG CROWDSEC_VERSION=v1.8.2
 ARG HOMECTL_VERSION=dev
 ARG HOMECTL_COMMIT=unknown
 ARG HOMECTL_BUILD_DATE=unknown
-FROM golang:1.25-alpine AS caddy-builder
+FROM golang:1.27-alpine AS caddy-builder
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     apk add --no-cache git && \
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY web/ ./
 RUN npm --loglevel=error run build
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27-alpine AS builder
 ARG HOMECTL_VERSION
 ARG HOMECTL_COMMIT
 ARG HOMECTL_BUILD_DATE
@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   -ldflags="-s -w -X github.com/jatinparab/homectl/buildinfo.Version=${HOMECTL_VERSION} -X github.com/jatinparab/homectl/buildinfo.Commit=${HOMECTL_COMMIT} -X github.com/jatinparab/homectl/buildinfo.BuildDate=${HOMECTL_BUILD_DATE} -X github.com/jatinparab/homectl/buildinfo.Component=manager" \
   -o /out/manager ./manager/cmd
 
-FROM alpine:3.20
+FROM alpine:3.22
 RUN apk add --no-cache ca-certificates docker-cli docker-cli-compose openssh-client wireguard-tools
 COPY --from=builder /out/manager /usr/local/bin/manager
 COPY --from=caddy-builder /usr/local/bin/caddy /usr/local/bin/caddy
