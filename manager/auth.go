@@ -27,12 +27,15 @@ type AuthService struct {
 	onboardingMu        sync.RWMutex
 	onboardingRequired  bool
 	onboardingTokenHash string
-	tokenDelivered      func(token string) // optional callback for secure token delivery
 }
 
 type currentUserContextKey struct{}
 
 func NewAuthService(ctx context.Context, users UserRepository, sessions SessionRepository, apiKeys APIKeyRepository) (*AuthService, error) {
+	return newAuthService(ctx, users, sessions, apiKeys, nil)
+}
+
+func newAuthService(ctx context.Context, users UserRepository, sessions SessionRepository, apiKeys APIKeyRepository, deliverOnboardingToken func(string) error) (*AuthService, error) {
 	count, err := users.CountUsers(ctx)
 	if err != nil {
 		return nil, err
@@ -50,13 +53,11 @@ func NewAuthService(ctx context.Context, users UserRepository, sessions SessionR
 			return nil, err
 		}
 		svc.onboardingTokenHash = tokenHash(token)
-		// Deliver token via callback (file or other secure channel) if set.
-		// Avoid logging the token value — it grants admin-equivalent access.
-		if svc.tokenDelivered != nil {
-			svc.tokenDelivered(token)
+		if deliverOnboardingToken != nil {
+			if err := deliverOnboardingToken(token); err != nil {
+				return nil, fmt.Errorf("deliver onboarding token: %w", err)
+			}
 		}
-		authLog.Warn("First user onboarding — complete via the UI. " +
-			"A token delivery callback will deliver the token securely.")
 	}
 	return svc, nil
 }
@@ -68,13 +69,6 @@ func (a *AuthService) OnboardingRequired() bool {
 	a.onboardingMu.RLock()
 	defer a.onboardingMu.RUnlock()
 	return a.onboardingRequired
-}
-
-// SetTokenDelivered sets a callback that receives the onboarding token.
-// Use this to deliver the token securely (e.g., to a file) instead of
-// logging it in plaintext. Call before NewAuthService returns.
-func (a *AuthService) SetTokenDelivered(fn func(token string)) {
-	a.tokenDelivered = fn
 }
 
 func (a *AuthService) CompleteOnboarding(ctx context.Context, token, username, password, confirm string) (User, error) {

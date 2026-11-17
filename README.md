@@ -53,7 +53,7 @@ listener.
 - TCP `80` and `443` open to users and new agents so Caddy can issue
   certificates, serve the manager UI, and expose `/api/join`
 - A long random shared `HOMECTL_JOIN_TOKEN`
-- A Git repository containing app definitions in the required [app repository structure](./docs/repo-structure.md)
+- An app-definition directory mounted at `/homelab` with the [app repository structure](./docs/repo-structure.md)
 - A config directory mounted at `/config` in each Homectl container
 - On agents, a host directory bind-mounted at `/app-data` for managed app data
 - Optional: a configured Restic repository for backups
@@ -64,96 +64,8 @@ only on hosts you intend Homectl to manage.
 
 ## Quickstart
 
-1. Build local images:
-
-```sh
-make docker-images
-```
-
-2. On the manager host, copy `docker-compose.example.yml` and edit:
-
-```yaml
-HOMECTL_JOIN_TOKEN: replace-with-a-long-random-token
-HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
-HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
-HOMECTL_DOMAIN_SUFFIX: your-domain.example
-HOMECTL_PUBLIC_HOST: homectl.your-domain.example
-ADMIN_USER: admin
-ADMIN_PASSWORD: replace-me
-
-# Initial encrypted shared node config seed values:
-HOMECTL_LOCAL_HA_IP: 192.168.50.250
-CADDY_ACME_EMAIL: you@example.com
-CADDY_DNS_PROVIDER: cloudflare
-CADDY_DNS_TOKEN_ENV: CF_DNS_API_TOKEN
-CF_DNS_API_TOKEN: replace-with-cloudflare-token
-RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
-RESTIC_PASSWORD: replace-with-restic-password
-```
-
-3. Start the manager:
-
-```sh
-docker compose -f docker-compose.example.yml up -d
-```
-
-4. On each agent host, copy `docker-compose.agent.example.yml`, set a stable
-   `hostname:` for that node, and edit only the bootstrap values:
-
-```yaml
-HOMECTL_JOIN_TOKEN: replace-with-the-manager-token
-HOMECTL_MANAGER_URL: https://homectl.your-domain.example
-HOMECTL_BOOTSTRAP_DNS: 1.1.1.1,9.9.9.9
-```
-
-Give the agent service matching Compose-level bootstrap resolvers:
-
-```yaml
-dns:
-  - 1.1.1.1
-  - 9.9.9.9
-```
-
-These resolvers apply only to the Homectl control-plane container. The host and
-normal managed containers can continue using the Technitium VIP.
-
-Shared Caddy, DNS, HA IP, and Restic values are stored encrypted on the manager
-and edited from each node's settings dialog in the web UI. They are synced to
-agents in memory; do not duplicate those secrets in agent compose files.
-
-5. Start the agent:
-
-```sh
-docker compose -f docker-compose.agent.example.yml up -d
-```
-
-6. Open the manager UI through Caddy:
-
-```text
-https://homectl.your-domain.example
-```
-
-The manager generates a Caddy site for `HOMECTL_PUBLIC_HOST` and reverse proxies
-it to the internal manager HTTP server. The browser UI prompts for `ADMIN_USER`
-and `ADMIN_PASSWORD`. Agents join through that same public origin at `/api/join`,
-authenticated by `HOMECTL_JOIN_TOKEN`. After join, steady-state control traffic
-uses `http://10.44.0.1:1338` over WireGuard.
-
-The manager reserves unique overlay addresses from `10.44.0.2` through
-`10.44.0.254`, preserving each named agent's reservation across key rotation and
-rejoins. Address allocation checks existing reservations rather than peer count,
-so removing stale peers cannot create a collision. Startup automatically repairs
-legacy duplicate/invalid reservations while retaining other valid addresses.
-Disconnected agents re-bootstrap and update the live `wg0` address if reassigned;
-LAN addresses and DNS/HTTP virtual IPs are independent of this overlay.
-
-The manager image uses stock Caddy and issues certificates for public manager
-hosts through normal ACME HTTP/TLS-ALPN challenges. `CADDY_DNS_PROVIDER` and
-`CADDY_DNS_TOKEN_ENV` control the Caddyfile generated for gateway agents. Agents
-use the DNS-enabled Caddy build and receive the configured token, for example
-`CF_DNS_API_TOKEN`, from encrypted manager-stored node config when wildcard or
-private-VIP hostnames such as `*.internal.your-domain.example` must have public
-CA certificates.
+Follow the [two-node quickstart](docs/quickstart.md) to install the preview and
+run a sample Docker Compose app on an agent.
 
 ## Configuration
 
@@ -163,9 +75,6 @@ Manager environment variables:
 | --- | --- | --- |
 | `HOMECTL_JOIN_TOKEN` | Yes | Shared token agents present during join and TCP link setup. |
 | `HOMECTL_WG_ENDPOINT_IP` | Yes | Public IPv4 address agents use for WireGuard. |
-| `HOMECTL_GIT_REPO` | Yes | Git URL for the app-definition repository. |
-| `HOMECTL_GIT_TOKEN` | If the Git repo requires auth | Token used for non-interactive HTTPS Git clone/sync. `HOMECTL_GITHUB_TOKEN` and `GITHUB_TOKEN` are also accepted. |
-| `HOMECTL_GIT_USERNAME` | No | HTTPS Git username when using `HOMECTL_GIT_TOKEN`; defaults to `x-access-token` for GitHub PATs. |
 | `HOMECTL_DOMAIN_SUFFIX` | Yes | Base domain for generated app routes. |
 | `HOMECTL_PUBLIC_HOST` | Yes | Public hostname reserved for the manager UI. |
 | `ADMIN_USER` | Recommended | Basic-auth username for the public manager UI host. |
@@ -174,8 +83,8 @@ Manager environment variables:
 | `CADDY_DNS_PROVIDER` | If gateway wildcard TLS is needed | DNS provider name for generated agent Caddyfiles, for example `cloudflare`. |
 | `HOMECTL_CONFIG_ENCRYPTION_KEY` | No | Optional base64-encoded 32-byte key used to encrypt manager-owned agent config at rest. If omitted, the manager generates and persists one under `/config/state/agent-config-encryption.key`. |
 
-On first startup with no local users, the manager logs a temporary onboarding
-token. Open the manager UI, create the first admin user with that token, then
+On first startup with no local users, the manager writes a temporary onboarding
+token to `/config/state/onboarding-token` inside the container. Open the manager UI, create the first admin user with that token, then
 log in again with the new username and password. Until the first user exists,
 the manager serves only onboarding, health, and agent join endpoints; other
 manager runtime services start after onboarding completes.
@@ -267,14 +176,11 @@ session cannot provide recovery if the change disconnects it.
 Homectl expects apps under:
 
 ```text
-/config/repo/docker/<app-name>/docker-compose.yml
+/homelab/docker/<app-name>/docker-compose.yml
 ```
 
-On first manager startup, Homectl clones `HOMECTL_GIT_REPO` into
-`/config/repo`. On later syncs, it fetches the configured upstream branch,
-resets the checkout to that remote state, and removes untracked and ignored
-files. Treat the Git remote as authoritative for everything under
-`/config/repo`.
+The manager scans the mounted directory and distributes the app definitions to
+agents. Update the files on the manager host and sync through the manager UI.
 
 ## Runtime Paths
 

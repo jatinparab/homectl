@@ -1,0 +1,141 @@
+---
+import "@fontsource-variable/geist";
+
+const repo = "https://github.com/jatinparab/homectl";
+const quickstart = repo + "/blob/v0.2.0/docs/quickstart.md";
+const description = "An open-source control plane for Docker Compose apps across your homelab.";
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="canonical" href="https://homectl.jatinparab.com/" />
+    <meta property="og:title" content="homectl · Docker Compose across your homelab" />
+    <meta property="og:description" content={description} />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#eff0ed" />
+    <title>homectl · Docker Compose across your homelab</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="shell top">
+      <a class="wordmark" href="/">homectl</a>
+      <nav aria-label="Main navigation">
+        <a href="#architecture">How it works</a>
+        <a href={repo}>GitHub</a>
+      </nav>
+    </header>
+    <main id="main" class="shell">
+      <section class="hero" aria-labelledby="title">
+        <div class="intro">
+          <p class="preview"><span></span> Early preview</p>
+          <h1 id="title">Run Docker Compose apps across your homelab</h1>
+          <p class="lede">Give your Docker hosts one dashboard. Track which apps are running and where, with a built-in WireGuard network connecting your nodes.</p>
+          <div class="actions">
+            <a class="primary" href={quickstart}>Get started</a>
+            <a class="secondary" href={repo}>View on GitHub</a>
+          </div>
+        </div>
+
+        <figure class="topology" aria-labelledby="topology-caption">
+          <figcaption id="topology-caption"><span>Cluster topology</span><span>Example deployment</span></figcaption>
+          <div class="manager node">
+            <span class="port" aria-hidden="true"></span>
+            <div><strong>Manager</strong><small>Dashboard, scheduling, desired state</small></div>
+          </div>
+          <div class="overlay">WireGuard overlay</div>
+          <div class="agents">
+            <div class="node"><div><strong>Agent 01</strong><small>Docker host</small></div></div>
+            <div class="node"><div><strong>Agent 02</strong><small>Docker host</small></div></div>
+          </div>
+        </figure>
+      </section>
+
+      <section class="architecture" id="architecture" aria-labelledby="architecture-title">
+        <h2 id="architecture-title">How it works</h2>
+        <dl>
+          <div><dt>Define apps with Compose</dt><dd>Keep your Compose files in a directory on the manager host. The manager reads those definitions and tracks the desired state.</dd></div>
+          <div><dt>Run apps on your hosts</dt><dd>Agents run assigned apps on their local Docker engines. Use the manager dashboard to see app status and node placement.</dd></div>
+          <div><dt>Connect across networks</dt><dd>Agents join over HTTPS and use the built-in WireGuard overlay for ongoing control traffic.</dd></div>
+        </dl>
+      </section>
+
+      <section class="install" aria-labelledby="install-title">
+        <div>
+          <h2 id="install-title">Start with two hosts</h2>
+          <p>Use two Linux hosts with Docker Engine and Compose v2. The manager needs a public IPv4 address, DNS, TCP ports 80 and 443, and UDP port 51844 reachable from the agent. Use hosts you intend homectl to administer because it mounts the Docker socket.</p>
+        </div>
+        <a class="primary" href={quickstart}>Read the quickstart</a>
+      </section>
+    </main>
+    <footer class="shell footer"><span class="wordmark">homectl</span><a href={repo + "/blob/v0.2.0/LICENSE"}>MIT license</a></footer>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    color-scheme: light;
+    --paper: #eff0ed;
+    --ink: #172424;
+    --muted: #465b58;
+    --line: #bcc9c4;
+    --panel: #173634;
+    --mint: #b7ecd4;
+    font-family: "Geist Variable", system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    line-height: 1.55;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  a { color: inherit; text-underline-offset: .25em; }
+  a:focus-visible { outline: 3px solid #00766e; outline-offset: 5px; }
+  .skip { position: absolute; left: 1rem; top: 1rem; transform: translateY(-180%); }
+  .skip:focus { transform: none; background: white; z-index: 1; }
+  .shell { width: min(100% - 3rem, 76rem); margin-inline: auto; }
+  .top, footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1.25rem; }
+  .top { border-bottom: 1px solid var(--line); }
+  .wordmark { font-family: ui-monospace, monospace; font-weight: 750; font-size: 1.2rem; letter-spacing: -.065em; text-decoration: none; }
+  nav { display: flex; gap: clamp(.9rem, 3vw, 2rem); font-size: .9rem; }
+  nav a { text-decoration: none; }
+  nav a:hover { text-decoration: underline; }
+  .hero { display: grid; grid-template-columns: 1.12fr 1fr; gap: clamp(2rem, 6vw, 6rem); align-items: center; padding-block: clamp(3.5rem, 10vw, 8rem); }
+  .preview { display: inline-flex; align-items: center; gap: .55rem; font-weight: 650; font-size: .82rem; color: var(--muted); }
+  .preview span, .port { width: .55rem; height: .55rem; border-radius: 50%; background: #00766e; }
+  h1, h2, p { margin: 0; }
+  h1 { max-width: 12ch; font-size: clamp(3rem, 6vw, 5.65rem); line-height: .99; letter-spacing: -.08em; margin-block: .85rem 1.5rem; }
+  .lede, dd, .install p { color: var(--muted); }
+  .lede { font-size: clamp(1rem, 1.8vw, 1.25rem); max-width: 39ch; }
+  .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.25rem; margin-top: 1.75rem; }
+  .primary { display: inline-block; background: var(--panel); color: white; text-decoration: none; border-radius: .35rem; padding: .76rem 1.1rem; font-weight: 700; white-space: nowrap; }
+  .primary:hover { background: #265451; }
+  .secondary { font-weight: 650; }
+  .topology { padding: clamp(1rem, 3vw, 2rem); margin: 0; border-radius: .8rem; background: var(--panel); color: white; }
+  figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .35rem 1rem; color: var(--mint); font-size: .78rem; padding-bottom: 1.5rem; }
+  .node { display: flex; gap: .6rem; align-items: center; background: #244b47; border: 1px solid #61847c; border-radius: .4rem; padding: .8rem; }
+  .node small { display: block; color: #d6e7df; font-size: .8rem; }
+  .port { background: var(--mint); flex: 0 0 .55rem; }
+  .overlay { color: var(--mint); font-family: ui-monospace, monospace; font-size: .8rem; padding: .45rem; margin-block: 1rem; border-block: 1px dashed #7ca89a; text-align: center; }
+  .agents { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; }
+  .architecture { padding-block: 2.5rem 3.25rem; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(1.85rem, 3vw, 2.6rem); line-height: 1.12; letter-spacing: -.05em; }
+  dl { margin: 1.55rem 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6rem; }
+  dt { font-weight: 720; margin-bottom: .3rem; }
+  dd { margin: 0; max-width: 36ch; }
+  .install { display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; padding: clamp(1.25rem, 4vw, 2.6rem); background: #dce8e1; border-radius: .65rem; }
+  .install p { margin-top: .65rem; max-width: 63ch; }
+  .shell.footer { margin-top: 2.5rem; border-top: 1px solid var(--line); }
+  @media (max-width: 52rem) {
+    .hero { grid-template-columns: 1fr; }
+    h1 { max-width: 15ch; }
+    .topology { max-width: 33rem; width: 100%; }
+  }
+  @media (max-width: 36rem) {
+    .shell { width: calc(100% - 2rem); }
+    dl { grid-template-columns: 1fr; }
+    .install { align-items: flex-start; flex-direction: column; }
+    h1 { font-size: clamp(2.7rem, 11.5vw, 3.75rem); }
+  }
+</style>

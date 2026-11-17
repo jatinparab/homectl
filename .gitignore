@@ -44,3 +44,7 @@ go.work.sum
 # Local Pi runtime state
 .atl/
 .pi/
+
+site/node_modules/
+site/.astro/
+site/dist/

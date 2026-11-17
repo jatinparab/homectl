@@ -166,19 +166,19 @@ func NewManagerWithConfig(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	authSvc, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
+	// Deliver the token through the mounted state directory, without logging it.
+	tokenFile := filepath.Join(stateDir, "onboarding-token")
+	authSvc, err := newAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys, func(token string) error {
+		if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+			return err
+		}
+		managerLog.Info("First user onboarding token written", "path", tokenFile)
+		return nil
+	})
 	if err != nil {
+		store.Close()
 		return nil, fmt.Errorf("init auth service: %w", err)
 	}
-	// Deliver onboarding token to a dedicated file to avoid plaintext in logs.
-	tokenFile := filepath.Join(stateDir, "onboarding-token")
-	authSvc.SetTokenDelivered(func(token string) {
-		if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
-			managerLog.Error("Failed to write onboarding token file", "err", err)
-		}
-		managerLog.Warn("First user onboarding — the admin token has been written to " + tokenFile +
-			". Anyone with access to that file can create the first admin account.")
-	})
 	agentConfigKey, err := ensureAgentConfigEncryptionKey(stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("ensure agent config encryption key: %w", err)
