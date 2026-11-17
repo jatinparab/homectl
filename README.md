@@ -86,8 +86,8 @@ Manager environment variables:
 | `CADDY_DNS_PROVIDER` | If gateway wildcard TLS is needed | DNS provider name for generated agent Caddyfiles, for example `cloudflare`. |
 | `HOMECTL_CONFIG_ENCRYPTION_KEY` | No | Optional base64-encoded 32-byte key used to encrypt manager-owned agent config at rest. If omitted, the manager generates and persists one under `/config/state/agent-config-encryption.key`. |
 
-On first startup with no local users, the manager logs a temporary onboarding
-token. Open the manager UI, create the first admin user with that token, then
+On first startup with no local users, the manager writes a temporary onboarding
+token to `/config/state/onboarding-token` inside the container. Open the manager UI, create the first admin user with that token, then
 log in again with the new username and password. Until the first user exists,
 the manager serves only onboarding, health, and agent join endpoints; other
 manager runtime services start after onboarding completes.

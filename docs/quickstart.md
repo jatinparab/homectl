@@ -24,13 +24,19 @@ the gateway VIP.
    Set `HOMECTL_JOIN_TOKEN`, `ADMIN_PASSWORD`, and `CF_DNS_API_TOKEN` in an
    untracked local `.env` file. Use a long random join token and admin password.
    Review the optional settings and run `docker compose up -d`.
-4. On the agent host, copy `docker-compose.agent.example.yml` to `compose.yaml`.
+4. Open the manager hostname. If prompted for HTTP Basic authentication, use
+   the `ADMIN_USER` and `ADMIN_PASSWORD` from the manager configuration. On the
+   manager host, read the one-time setup token with
+   `docker compose exec -T manager cat /config/state/onboarding-token`. Keep
+   the token private. Enter it in the setup screen to create the first admin
+   account, then sign in with that account.
+5. On the agent host, copy `docker-compose.agent.example.yml` to `compose.yaml`.
    Set the image to `ghcr.io/jatinparab/homectl/agent:v0.2.0`, give it a stable
    hostname, and point `HOMECTL_MANAGER_URL` at the manager HTTPS origin. Set
    the same `HOMECTL_JOIN_TOKEN` in a local `.env` file and run
    `docker compose up -d`.
 
-Sign in at the manager hostname. Check that the agent is online and that the
+In the manager dashboard, check that the agent is online and that the
 `hello` app is running on that agent. The initial join uses HTTPS. After join,
 the agent uses the WireGuard overlay for manager traffic at
 `http://10.44.0.1:1338` with the default configuration. On the agent, use
