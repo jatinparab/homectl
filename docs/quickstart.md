@@ -5,9 +5,9 @@ the Docker socket, which gives it administrative access to the Docker host.
 
 The manager needs a reachable public IPv4 address, DNS pointing to that address,
 TCP 80 and 443 for HTTPS, and UDP 51844 reachable from the agent for WireGuard.
-Use a DNS zone you control and a scoped token for the DNS provider configured in
-the manager Compose file. Reserve an unused address in the relevant LAN if using
-the gateway VIP.
+Use a DNS zone you control. For an optional gateway VIP, reserve an unused LAN
+address. Set a scoped DNS token only if you configure DNS-based certificate
+issuance for agent gateways.
 
 1. Check out the release on both hosts.
 
@@ -16,13 +16,14 @@ the gateway VIP.
    cd homectl
    ```
 
-2. Copy the contents of `examples/homelab/` to the root of a Git repository
-   readable by the cluster and push it. Set `HOMECTL_GIT_REPO` to its URL.
+2. On the manager host, create `/opt/homectl/homelab/` and copy the contents of
+   `examples/homelab/` into it. The supplied Compose file mounts this directory
+   at `/homelab`, where the manager discovers `docker/hello/docker-compose.yml`.
 3. On the manager host, copy `docker-compose.example.yml` to `compose.yaml`.
    Set the image to `ghcr.io/jatinparab/homectl/manager:v0.2.0`. Fill in the
    public IPv4 address, manager hostname, domain suffix, and Caddy settings.
-   Set `HOMECTL_JOIN_TOKEN`, `ADMIN_PASSWORD`, and `CF_DNS_API_TOKEN` in an
-   untracked local `.env` file. Use a long random join token and admin password.
+   Set `HOMECTL_JOIN_TOKEN` and `ADMIN_PASSWORD` in an untracked local `.env`
+   file. Use a long random join token and admin password.
    Review the optional settings and run `docker compose up -d`.
 4. Open the manager hostname. If prompted for HTTP Basic authentication, use
    the `ADMIN_USER` and `ADMIN_PASSWORD` from the manager configuration. On the
@@ -36,12 +37,15 @@ the gateway VIP.
    the same `HOMECTL_JOIN_TOKEN` in a local `.env` file and run
    `docker compose up -d`.
 
-In the manager dashboard, check that the agent is online and that the
-`hello` app is running on that agent. The initial join uses HTTPS. After join,
+In the manager dashboard, check that the agent is online. Start `hello` from its
+app controls and wait for it to report running on the agent. Automatic
+placement can take up to three minutes while the manager recovers prior
+assignments after startup. The initial join uses HTTPS. After join,
 the agent uses the WireGuard overlay for manager traffic at
 `http://10.44.0.1:1338` with the default configuration. On the agent, use
 `docker ps` to confirm the Nginx container is running. The sample app needs no
-public route or backup storage.
+public route or backup storage. If you want homectl to run DNS for your
+cluster, configure [Technitium](../README.md#first-class-technitium-dns) separately.
 
 Use `docker compose down` on the agent and manager to stop the control-plane
 containers. On disposable hosts, delete the hosts when you finish to remove

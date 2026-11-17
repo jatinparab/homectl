@@ -15,7 +15,11 @@ func TestAuthServiceOnboardingLoginAndSession(t *testing.T) {
 	}
 	defer store.Close()
 
-	auth, err := NewAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys)
+	var setupToken string
+	auth, err := newAuthService(context.Background(), store.Users, store.Sessions, store.APIKeys, func(token string) error {
+		setupToken = token
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}
@@ -26,11 +30,11 @@ func TestAuthServiceOnboardingLoginAndSession(t *testing.T) {
 		t.Fatal("expected invalid onboarding token to fail")
 	}
 
-	auth.onboardingMu.Lock()
-	auth.onboardingTokenHash = tokenHash("setup-token")
-	auth.onboardingMu.Unlock()
+	if setupToken == "" {
+		t.Fatal("expected the setup token to be delivered during initialization")
+	}
 
-	if _, err := auth.CompleteOnboarding(context.Background(), "setup-token", "Admin", "very-secure-password", "very-secure-password"); err != nil {
+	if _, err := auth.CompleteOnboarding(context.Background(), setupToken, "Admin", "very-secure-password", "very-secure-password"); err != nil {
 		t.Fatalf("CompleteOnboarding: %v", err)
 	}
 	if auth.OnboardingRequired() {

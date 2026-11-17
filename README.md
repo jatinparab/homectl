@@ -53,7 +53,7 @@ listener.
 - TCP `80` and `443` open to users and new agents so Caddy can issue
   certificates, serve the manager UI, and expose `/api/join`
 - A long random shared `HOMECTL_JOIN_TOKEN`
-- A Git repository containing app definitions in the required [app repository structure](./docs/repo-structure.md)
+- An app-definition directory mounted at `/homelab` with the [app repository structure](./docs/repo-structure.md)
 - A config directory mounted at `/config` in each Homectl container
 - On agents, a host directory bind-mounted at `/app-data` for managed app data
 - Optional: a configured Restic repository for backups
@@ -75,9 +75,6 @@ Manager environment variables:
 | --- | --- | --- |
 | `HOMECTL_JOIN_TOKEN` | Yes | Shared token agents present during join and TCP link setup. |
 | `HOMECTL_WG_ENDPOINT_IP` | Yes | Public IPv4 address agents use for WireGuard. |
-| `HOMECTL_GIT_REPO` | Yes | Git URL for the app-definition repository. |
-| `HOMECTL_GIT_TOKEN` | If the Git repo requires auth | Token used for non-interactive HTTPS Git clone/sync. `HOMECTL_GITHUB_TOKEN` and `GITHUB_TOKEN` are also accepted. |
-| `HOMECTL_GIT_USERNAME` | No | HTTPS Git username when using `HOMECTL_GIT_TOKEN`; defaults to `x-access-token` for GitHub PATs. |
 | `HOMECTL_DOMAIN_SUFFIX` | Yes | Base domain for generated app routes. |
 | `HOMECTL_PUBLIC_HOST` | Yes | Public hostname reserved for the manager UI. |
 | `ADMIN_USER` | Recommended | Basic-auth username for the public manager UI host. |
@@ -179,14 +176,11 @@ session cannot provide recovery if the change disconnects it.
 Homectl expects apps under:
 
 ```text
-/config/repo/docker/<app-name>/docker-compose.yml
+/homelab/docker/<app-name>/docker-compose.yml
 ```
 
-On first manager startup, Homectl clones `HOMECTL_GIT_REPO` into
-`/config/repo`. On later syncs, it fetches the configured upstream branch,
-resets the checkout to that remote state, and removes untracked and ignored
-files. Treat the Git remote as authoritative for everything under
-`/config/repo`.
+The manager scans the mounted directory and distributes the app definitions to
+agents. Update the files on the manager host and sync through the manager UI.
 
 ## Runtime Paths
 

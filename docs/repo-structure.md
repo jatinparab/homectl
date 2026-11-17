@@ -1,6 +1,8 @@
 # App repository structure
 
-Point `HOMECTL_GIT_REPO` at a Git repository containing a `docker/` directory.
+Mount an app-definition directory containing a `docker/` directory at
+`/homelab` in the manager container. You can manage these files with Git on
+the host.
 Each immediate child directory defines one app and its name becomes the app ID.
 
 ```text
