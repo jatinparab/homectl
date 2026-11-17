@@ -60,6 +60,13 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install WireGuard tools
+        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
+
       - name: Run tests
         run: go test ./...
 

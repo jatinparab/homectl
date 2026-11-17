@@ -5,19 +5,19 @@ services:
     restart: unless-stopped
     environment:
       # Required manager/bootstrap settings
-      HOMECTL_JOIN_TOKEN: change-me
+      HOMECTL_JOIN_TOKEN: ${HOMECTL_JOIN_TOKEN:?set a shared join token}
       HOMECTL_WG_ENDPOINT_IP: 203.0.113.10
       HOMECTL_GIT_REPO: https://github.com/your-org/homelab.git
       HOMECTL_DOMAIN_SUFFIX: your-domain.example
       HOMECTL_PUBLIC_HOST: homectl.your-domain.example
       ROOT_DOMAIN: example.net
       HOME_WG_IP: 10.44.0.2
-      AUTHENTIK_CORE_URL: https://auth.example.net
-      AUTHENTIK_OUTPOST_URL: https://auth.example.net
+      # AUTHENTIK_CORE_URL: https://auth.example.net
+      # AUTHENTIK_OUTPOST_URL: https://auth.example.net
 
       # Admin UI bootstrap/basic-auth fallback
       ADMIN_USER: admin
-      ADMIN_PASSWORD: change-me
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set an admin password}
 
       # Shared node config seed values.
       # These are stored encrypted by the manager and synced to agents in memory.
@@ -27,9 +27,9 @@ services:
       CADDY_ACME_EMAIL: you@example.com
       CADDY_DNS_PROVIDER: cloudflare
       CADDY_DNS_TOKEN_ENV: CF_DNS_API_TOKEN
-      CF_DNS_API_TOKEN: change-me
-      RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
-      RESTIC_PASSWORD: change-me
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:?set your DNS API token}
+      # RESTIC_REPOSITORY: s3:https://s3.example.com/bucket/path
+      # RESTIC_PASSWORD: change-me
       # B2_ACCOUNT_ID: change-me
       # B2_ACCOUNT_KEY: change-me
       # CADDY_ACME_CA: https://acme-staging-v02.api.letsencrypt.org/directory
@@ -52,7 +52,7 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.docker/config.json:/root/.docker/config.json:ro
+      # - ~/.docker/config.json:/root/.docker/config.json:ro
       - /opt/homectl/config:/config
       - /opt/homectl/homelab:/homelab
       # - /var/log:/var/log/host:ro  # mount host logs read-only (for CrowdSec SSH monitoring)

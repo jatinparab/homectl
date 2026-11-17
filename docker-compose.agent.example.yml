@@ -13,7 +13,7 @@ services:
       - 9.9.9.9
     environment:
       # Required bootstrap settings. Agents only need the join token and public manager URL.
-      HOMECTL_JOIN_TOKEN: change-me
+      HOMECTL_JOIN_TOKEN: ${HOMECTL_JOIN_TOKEN:?set the manager join token}
       HOMECTL_MANAGER_URL: https://homectl.your-domain.example
       HOMECTL_BOOTSTRAP_DNS: 1.1.1.1,9.9.9.9
 
@@ -34,6 +34,6 @@ services:
       - "51844:51844/udp"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.docker/config.json:/root/.docker/config.json:ro
+      # - ~/.docker/config.json:/root/.docker/config.json:ro
       - /opt/homectl/config:/config
       - /opt/homectl/app-data:/app-data
